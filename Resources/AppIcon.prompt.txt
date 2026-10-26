@@ -1,0 +1,11 @@
+Generated with the built-in image_gen tool; transparent_background=true.
+
+Use case: logo-brand.
+Asset type: final production macOS app icon for Beamly, a minimal premium AirPlay video player with a mint-green interface.
+Primary request: Create one exceptionally polished Liquid Glass app icon, ready to use as the actual application icon, not a presentation mockup.
+Composition: square image, exact front view, perfectly centered single macOS continuous rounded-square tile occupying about 88% of the canvas with even clear transparent padding around it. All artwork fits inside the canvas. Strong simple silhouette legible at 16 and 32 pixels.
+Design: one bold floating video-screen emblem made of thick clear frosted glass, with a small softly rounded triangular play symbol centered within it. The screen emblem is a simple horizontal rounded rectangular ring, with beautifully sculpted rounded edges. No monitor stand. The emblem should occupy about 60% of the tile width. A luminous ivory and pale mint play triangle is visually unmistakable.
+Materials: layered translucent optical glass, a substantial rounded-square glass base, softly frosted inner surfaces, clean refraction, restrained pearl-white edge highlights, realistic depth and soft internal occlusion. Light gently bends through the curved rim. A clean bright highlight travels along the upper left rim; subtle mint caustic light pools at the lower right inside the tile. Understated, precise Apple-style material rendering rather than a neon gaming icon.
+Color: a rich deep blue-green / forest-teal base blending into clear pale aqua and mint, with luminous cool white glass highlights. Contemporary, calm, elegant. The central screen and play sign have clear contrast against the tile.
+Lighting: soft studio illumination from upper left, controlled specular reflections, tiny soft shadow under the icon for depth.
+Constraints: a SINGLE finished icon only, orthographic front face, balanced symmetry, no scene or environment, no perspective tilt, no surrounding desktop, no frame outside the icon, no text, no letters, no branding text, no watermark, no ornamental details, no fake checkerboard. The area outside the rounded-square icon and its subtle shadow must have genuine alpha transparency.

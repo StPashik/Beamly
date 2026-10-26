@@ -1,0 +1,21 @@
+.build/
+build/
+.swiftpm/
+.DS_Store
+*.xcuserstate
+xcuserdata/
+dist/
+node_modules/
+*.tgz
+.npmrc
+.env
+.env.*
+*.p12
+*.p8
+*.mobileprovision
+
+# Local investigation records and screenshots are not part of the public project.
+Docs/rea-*.json
+Docs/Beamer-*.md
+Docs/Peamer-*.png
+Docs/Validation.md

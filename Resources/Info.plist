@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>CFBundleName</key><string>Beamly</string>
+    <key>CFBundleDisplayName</key><string>Beamly</string>
+    <!-- Keep the original identifier to preserve existing preferences. -->
+    <key>CFBundleIdentifier</key><string>app.peamer.mac</string>
+    <key>CFBundleExecutable</key><string>Beamly</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>1.0.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.video</string>
+    <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSLocalNetworkUsageDescription</key><string>Beamly передаёт выбранное видео на ваш Apple TV или телевизор через AirPlay.</string>
+    <key>NSBonjourServices</key><array><string>_airplay._tcp</string><string>_raop._tcp</string></array>
+    <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/><key>NSAllowsArbitraryLoadsForMedia</key><true/></dict>
+    <key>CFBundleDocumentTypes</key><array><dict>
+        <key>CFBundleTypeName</key><string>Видео</string>
+        <key>CFBundleTypeRole</key><string>Viewer</string>
+        <key>LSHandlerRank</key><string>Alternate</string>
+        <key>LSItemContentTypes</key><array><string>public.movie</string><string>public.folder</string></array>
+        <key>CFBundleTypeExtensions</key><array><string>mp4</string><string>m4v</string><string>mov</string><string>mkv</string><string>avi</string><string>webm</string><string>mpeg</string><string>mpg</string><string>m2ts</string><string>mts</string><string>ts</string><string>flv</string><string>vob</string><string>wmv</string></array>
+    </dict><dict>
+        <key>CFBundleTypeName</key><string>Субтитры</string>
+        <key>CFBundleTypeRole</key><string>Viewer</string>
+        <key>LSHandlerRank</key><string>Alternate</string>
+        <key>CFBundleTypeExtensions</key><array><string>srt</string><string>ass</string><string>ssa</string><string>vtt</string></array>
+    </dict></array>
+</dict></plist>

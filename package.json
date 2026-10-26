@@ -1,0 +1,16 @@
+{
+  "name": "@stpashik/beamly",
+  "version": "1.0.0",
+  "description": "Installer and launcher for the native Beamly macOS AirPlay video player",
+  "license": "MIT",
+  "author": "StPashik",
+  "homepage": "https://github.com/StPashik/Beamly#readme",
+  "repository": { "type": "git", "url": "https://github.com/StPashik/Beamly.git" },
+  "bugs": { "url": "https://github.com/StPashik/Beamly/issues" },
+  "os": ["darwin"],
+  "cpu": ["arm64", "x64"],
+  "engines": { "node": ">=18" },
+  "bin": { "beamly": "bin/beamly.cjs" },
+  "files": ["bin/", "LICENSE", "README.md"],
+  "scripts": { "test": "node --test Tests/InstallerTests/*.test.cjs" }
+}
