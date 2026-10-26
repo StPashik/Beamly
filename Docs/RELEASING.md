@@ -8,7 +8,7 @@ Use GitFlow: start `release/<version>` from an up-to-date `develop`, and perform
 2. Run `Scripts/test.sh` with FFmpeg installed.
 3. Run `Scripts/release.sh`. This produces `dist/Beamly-VERSION-universal.zip`, `dist/SHA256SUMS`, and a cask with that archive's SHA-256 checksum. It verifies both architectures and the local signature.
 4. Run `npm test` and `npm pack --dry-run`. Check the ZIP contains only `Beamly.app` and that no private files are staged in Git.
-5. Commit the source changes, including the generated cask, and push the release branch. Verify the checks (locally, or in CI if enabled), then open a pull request from the release branch into `main`. Merge it with a merge commit. Update local `main`, tag that merge commit, and publish the exact archive whose checksum was committed. For example, for a future `1.1.0` release:
+5. Commit the source changes, including the generated cask, and push the release branch. Open a pull request from the release branch into `main` and wait for CI to pass. Merge it with a merge commit. Update local `main`, tag that merge commit, and publish the exact archive whose checksum was committed. For example, for a future `1.1.0` release:
 
 ```sh
 git switch main
@@ -25,9 +25,9 @@ gh release create v1.1.0 \
 
 The npm installer can be installed directly from the tagged GitHub repository. Publishing `@stpashik/beamly` to npm is a separate, optional action requiring access to that npm scope; GitHub access does not grant npm publishing access.
 
-## Optional GitHub Actions
+## GitHub Actions
 
-[ci.example.yml](ci.example.yml) runs the Swift tests, universal build, and npm installer checks on a macOS 26 runner. To enable it, copy it to `.github/workflows/ci.yml` and commit using a GitHub account or token with permission to write workflows. The initial publishing credentials do not have that permission; the first release was checked locally instead.
+[ci.yml](../.github/workflows/ci.yml) runs the Swift tests, universal build, and npm installer checks on a macOS 26 runner. It checks pull requests targeting `develop` or `main`, and pushes to both branches. The workflow uses read-only repository access and does not publish releases or modify the Homebrew cask in Git. Updating workflow files requires a GitHub account or token with permission to write workflows.
 
 ## Signing and notarization
 

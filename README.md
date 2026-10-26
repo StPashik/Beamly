@@ -124,6 +124,8 @@ npm pack --dry-run            # Inspect the files included in the npm package
 
 Run `Scripts/release.sh` before `npm test`; the installation test uses the actual release ZIP. FFmpeg integration tests skip when FFmpeg is missing. Tests generate their own small videos and use isolated playlists, settings, and installation directories.
 
+[GitHub Actions](.github/workflows/ci.yml) runs these checks for pull requests targeting `develop` or `main`, and for pushes to both branches. CI builds and verifies the application; publishing a release remains a separate maintainer action.
+
 See [release instructions](Docs/RELEASING.md) and the [media HTTP contract](Docs/Media-HTTP.md). The icon's [PNG source](Resources/AppIcon.png) and [imagegen prompt](Resources/AppIcon.prompt.txt) are included; `swift Scripts/make-icon.swift Resources/AppIcon.icns` repacks its macOS sizes.
 
 ## Privacy and limitations
