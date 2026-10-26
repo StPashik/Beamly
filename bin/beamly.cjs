@@ -55,7 +55,7 @@ async function main() {
   const command = process.argv[2] || 'open';
   if (command === '--version') { console.log(version); return; }
   if (command === '--help' || command === '-h') {
-    console.log('Beamly — native macOS AirPlay player\n\nbeamly install   Download, verify, and install to ~/Applications\nbeamly           Open the installed app\nbeamly --version Show the installer version\n\nFFmpeg is installed separately: brew install ffmpeg');
+    console.log('Beamly — native macOS AirPlay player\n\nbeamly install   Download, verify, and install to ~/Applications\nbeamly           Open the installed app\nbeamly --version Show the installer version\n\nFFmpeg is installed separately: brew install ffmpeg-full');
     return;
   }
   if (process.platform !== 'darwin') throw new Error('Beamly requires macOS 14 or later.');

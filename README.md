@@ -25,13 +25,15 @@ The current application interface is in Russian. The documentation and command-l
 - An Apple TV or compatible AirPlay receiver on the same local network.
 - **FFmpeg and ffprobe** for conversion and external subtitles. Compatible MP4/MOV files can use AVFoundation without them.
 
-Install FFmpeg with [Homebrew](https://brew.sh):
+Install FFmpeg with subtitle rendering support using [Homebrew](https://brew.sh):
 
 ```sh
-brew install ffmpeg
+brew install ffmpeg-full
 ```
 
-Beamly looks in `/opt/homebrew/bin`, `/usr/local/bin`, and the folder selected in Settings. FFmpeg is a separate dependency and is not included in the release archive.
+Current source builds use the folder selected in Settings first, then bundled tools, Homebrew's `ffmpeg-full` installation, and the standard `/opt/homebrew/bin` and `/usr/local/bin` directories. The full Homebrew build includes the `subtitles` filter required for burning text subtitles; the regular formula may omit it. FFmpeg is a separate dependency and is not included in the release archive.
+
+In the released Beamly 1.0.0, select the `ffmpeg-full` bin folder in Settings if it is not detected: `/opt/homebrew/opt/ffmpeg-full/bin` on Apple Silicon or `/usr/local/opt/ffmpeg-full/bin` on Intel.
 
 ## Install
 

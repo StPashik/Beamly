@@ -75,9 +75,12 @@ public struct FFmpegTools: Sendable {
     public var ffprobeURL: URL? { locate("ffprobe") }
 
     private func locate(_ name: String) -> URL? {
+        // ffmpeg-full includes subtitle rendering but is keg-only in Homebrew.
         let directories = [customDirectory,
                            Bundle.main.resourceURL?.appendingPathComponent("Tools", isDirectory: true),
                            Bundle.main.resourceURL,
+                           URL(fileURLWithPath: "/opt/homebrew/opt/ffmpeg-full/bin", isDirectory: true),
+                           URL(fileURLWithPath: "/usr/local/opt/ffmpeg-full/bin", isDirectory: true),
                            URL(fileURLWithPath: "/opt/homebrew/bin", isDirectory: true),
                            URL(fileURLWithPath: "/usr/local/bin", isDirectory: true)].compactMap { $0 }
         return directories.map { $0.appendingPathComponent(name) }
