@@ -56,7 +56,7 @@ brew tap stpashik/beamly https://github.com/StPashik/Beamly.git
 brew install --cask stpashik/beamly/beamly
 ```
 
-The cask installs the universal app and FFmpeg, and verifies the archive's pinned SHA-256 checksum. This is a third-party tap, separate from Homebrew's official cask collection.
+The cask installs the universal app and verifies the archive's pinned SHA-256 checksum. Install FFmpeg separately for conversion and external subtitles; installing Beamly does not upgrade your existing media-tool dependencies. This is a third-party tap, separate from Homebrew's official cask collection.
 
 ### npm
 
@@ -70,7 +70,13 @@ beamly
 
 The npm package is a small installer and launcher for the native app. It downloads the matching GitHub release, checks its SHA-256 checksum and code-signature integrity, then installs into `~/Applications` without administrator access. FFmpeg is installed separately. It refuses to overwrite an existing application; quit and move the old app to the Trash before reinstalling. Your queue and settings are stored outside the application.
 
-The command above installs directly from GitHub; it does not require the package to be published on the npm registry. There are no npm dependencies or automatic post-install scripts.
+The command above installs directly from GitHub; it does not require the package to be published on the npm registry. With **npm 12 or later**, explicitly allow this GitHub dependency for the command:
+
+```sh
+npm install --global --allow-git=root github:StPashik/Beamly#v1.0.0
+```
+
+There are no npm dependencies or automatic post-install scripts. The flag is per-command; no global npm configuration needs to be changed.
 
 ### First launch
 

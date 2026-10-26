@@ -24,12 +24,12 @@ cask "beamly" do
   desc "Native AirPlay player for local videos"
   homepage "https://github.com/StPashik/Beamly"
 
-  depends_on macos: ">= :sonoma"
-  depends_on formula: "ffmpeg"
+  depends_on macos: :sonoma
 
   app "Beamly.app"
 
   caveats <<~EOS
+    For MKV conversion and external subtitles, install FFmpeg separately: brew install ffmpeg
     This community build is ad-hoc signed and is not notarized by Apple.
     If macOS blocks the first launch, review System Settings > Privacy & Security.
     See https://github.com/StPashik/Beamly#first-launch for details.

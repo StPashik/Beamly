@@ -13,7 +13,7 @@ First public open-source release, under the MIT license.
 
 Download and extract `Beamly-1.0.0-universal.zip`, then move `Beamly.app` to Applications. `SHA256SUMS` verifies the download. Installation through Homebrew and npm is documented in the [README](https://github.com/StPashik/Beamly#install).
 
-**This community build is ad-hoc signed and is not notarized by Apple.** macOS may block its first launch; see the [first-launch instructions](https://github.com/StPashik/Beamly#first-launch). FFmpeg is installed separately, or automatically by the Homebrew cask. The application UI is currently in Russian.
+**This community build is ad-hoc signed and is not notarized by Apple.** macOS may block its first launch; see the [first-launch instructions](https://github.com/StPashik/Beamly#first-launch). Install FFmpeg separately for conversion and external subtitles. The application UI is currently in Russian.
 
 ## Known limitations
 
