@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
+    branches: [main, develop]
 
 permissions:
   contents: read
@@ -23,7 +24,7 @@ jobs:
           node-version: "24"
           package-manager-cache: false
       - name: Install media tools
-        run: brew install ffmpeg
+        run: brew install ffmpeg-full
       - name: Test Swift application and core
         run: Scripts/test.sh
       - name: Build and verify universal release

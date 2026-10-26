@@ -25,13 +25,15 @@ The current application interface is in Russian. The documentation and command-l
 - An Apple TV or compatible AirPlay receiver on the same local network.
 - **FFmpeg and ffprobe** for conversion and external subtitles. Compatible MP4/MOV files can use AVFoundation without them.
 
-Install FFmpeg with [Homebrew](https://brew.sh):
+Install FFmpeg with subtitle rendering support using [Homebrew](https://brew.sh):
 
 ```sh
-brew install ffmpeg
+brew install ffmpeg-full
 ```
 
-Beamly looks in `/opt/homebrew/bin`, `/usr/local/bin`, and the folder selected in Settings. FFmpeg is a separate dependency and is not included in the release archive.
+Current source builds use the folder selected in Settings first, then bundled tools, Homebrew's `ffmpeg-full` installation, and the standard `/opt/homebrew/bin` and `/usr/local/bin` directories. The full Homebrew build includes the `subtitles` filter required for burning text subtitles; the regular formula may omit it. FFmpeg is a separate dependency and is not included in the release archive.
+
+In the released Beamly 1.0.0, select the `ffmpeg-full` bin folder in Settings if it is not detected: `/opt/homebrew/opt/ffmpeg-full/bin` on Apple Silicon or `/usr/local/opt/ffmpeg-full/bin` on Intel.
 
 ## Install
 
@@ -123,6 +125,8 @@ npm pack --dry-run            # Inspect the files included in the npm package
 ```
 
 Run `Scripts/release.sh` before `npm test`; the installation test uses the actual release ZIP. FFmpeg integration tests skip when FFmpeg is missing. Tests generate their own small videos and use isolated playlists, settings, and installation directories.
+
+[GitHub Actions](.github/workflows/ci.yml) runs these checks for pull requests targeting `develop` or `main`, and for pushes to both branches. CI builds and verifies the application; publishing a release remains a separate maintainer action.
 
 See [release instructions](Docs/RELEASING.md) and the [media HTTP contract](Docs/Media-HTTP.md). The icon's [PNG source](Resources/AppIcon.png) and [imagegen prompt](Resources/AppIcon.prompt.txt) are included; `swift Scripts/make-icon.swift Resources/AppIcon.icns` repacks its macOS sizes.
 
