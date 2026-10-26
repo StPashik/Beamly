@@ -6,7 +6,7 @@ Requirements: Xcode 26 or later, FFmpeg, Node.js/npm, Git, and an authenticated 
 2. Run `Scripts/test.sh` with FFmpeg installed.
 3. Run `Scripts/release.sh`. This produces `dist/Beamly-VERSION-universal.zip`, `dist/SHA256SUMS`, and a cask with that archive's SHA-256 checksum. It verifies both architectures and the local signature.
 4. Run `npm test` and `npm pack --dry-run`. Check the ZIP contains only `Beamly.app` and that no private files are staged in Git.
-5. Commit the source changes, including the generated cask. Push the commit and check CI. Tag that exact commit, then publish the exact archive whose checksum was committed:
+5. Commit the source changes, including the generated cask. Push the commit and verify the checks (locally, or in CI if enabled). Tag that exact commit, then publish the exact archive whose checksum was committed:
 
 ```sh
 git tag -a v1.0.0 -m "Beamly 1.0.0"
@@ -19,6 +19,10 @@ gh release create v1.0.0 \
 6. Download the published assets, verify `SHA256SUMS`, and try both installers in isolated installation directories. The cask must retain the checksum of the uploaded ZIP; a rebuilt ZIP may have a different checksum.
 
 The npm installer can be installed directly from the tagged GitHub repository. Publishing `@stpashik/beamly` to npm is a separate, optional action requiring access to that npm scope; GitHub access does not grant npm publishing access.
+
+## Optional GitHub Actions
+
+[ci.example.yml](ci.example.yml) runs the Swift tests, universal build, and npm installer checks on a macOS 26 runner. To enable it, copy it to `.github/workflows/ci.yml` and commit using a GitHub account or token with permission to write workflows. The initial publishing credentials do not have that permission; the first release was checked locally instead.
 
 ## Signing and notarization
 
