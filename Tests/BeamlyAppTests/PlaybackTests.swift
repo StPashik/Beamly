@@ -6,6 +6,96 @@ import SwiftUI
 
 final class PlaybackTests: XCTestCase {
     @MainActor
+    func test4KHEVCResumeSeekAudioAndTextSubtitlesKeepOriginalVideo() async throws {
+        let tools = FFmpegTools()
+        guard let ffmpeg = tools.ffmpegURL else { throw XCTSkip("FFmpeg is required") }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-4k-player-\(UUID())")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let input = folder.appendingPathComponent("4K HDR.mkv")
+        let caption = folder.appendingPathComponent("captions.srt")
+        try "1\n00:00:00,500 --> 00:00:07,000\nBeamly 4K subtitle\n".write(to: caption, atomically: true, encoding: .utf8)
+        let process = Process()
+        process.executableURL = ffmpeg
+        process.arguments = ["-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "color=c=blue:size=3840x2160:rate=24:duration=8,drawbox=x=0:y=0:w=iw:h=ih:color=red:t=fill:enable='lt(t,2)'",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=8", "-f", "lavfi", "-i", "sine=frequency=880:duration=8", "-i", caption.path,
+            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s", "-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p10le",
+            "-x265-params", "pools=2:frame-threads=2:keyint=48:min-keyint=48:scenecut=0:open-gop=0:log-level=error:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc",
+            "-c:a:0", "aac", "-ac:a:0", "2", "-c:a:1", "ac3", "-ac:a:1", "6", "-c:s", "srt", input.path]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run(); process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        let suite = "app.beamly.4k-test.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.set(false, forKey: "autoPlay")
+        var playlist = Playlist()
+        playlist.append([input])
+        playlist.items[0].position = 3.5
+        let state = folder.appendingPathComponent("playlist.json")
+        try JSONEncoder().encode(playlist).write(to: state)
+        let player = AirPlayTestPlayer()
+        let model = AppModel(stateURL: state, defaults: defaults, player: player)
+        defer { model.shutdown(); defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        model.select(playlist.items[0].id, autoPlay: false)
+        try await wait(diagnostic: model.errorMessage ?? "no player error") { !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        XCTAssertNil(model.errorMessage)
+        XCTAssertTrue(model.isVideoCopied)
+        XCTAssertTrue(model.isUsingHLS)
+        XCTAssertEqual(model.position, 3.5, accuracy: 0.15)
+        XCTAssertEqual(model.info?.width, 3840)
+        XCTAssertTrue(model.info?.isHDR == true)
+        let item = try XCTUnwrap(player.currentItem)
+        let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+        item.add(output)
+        model.volume = 0
+        player.setExternalPlaybackActive(true)
+        try await wait { model.isExternal }
+        model.togglePlay()
+        var frame: CVPixelBuffer?
+        try await wait {
+            frame = output.copyPixelBuffer(forItemTime: player.currentTime(), itemTimeForDisplay: nil)
+            return frame != nil && model.position > 3.7
+        }
+        XCTAssertEqual(CVPixelBufferGetWidth(try XCTUnwrap(frame)), 3840)
+        XCTAssertEqual(CVPixelBufferGetHeight(try XCTUnwrap(frame)), 2160)
+        let buffer = try XCTUnwrap(frame)
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        let pixel = try XCTUnwrap(CVPixelBufferGetBaseAddress(buffer)).assumingMemoryBound(to: UInt8.self)
+        // The saved position is blue; a timestamp-only fix showing the first GOP would still be red.
+        XCTAssertGreaterThan(Int(pixel[0]), Int(pixel[2]) + 20)
+        CVPixelBufferUnlockBaseAddress(buffer, .readOnly)
+        model.togglePlay()
+        try await wait { !model.isPlaying }
+        model.seek(6.4)
+        try await wait { !model.isPreparing && abs(model.position - 6.4) < 0.2 }
+        XCTAssertTrue(model.isVideoCopied)
+        model.seek(1.3)
+        try await wait { !model.isPreparing && abs(model.position - 1.3) < 0.2 }
+        XCTAssertTrue(model.isVideoCopied)
+        model.setAudio(2)
+        try await wait(diagnostic: model.errorMessage ?? "no player error") { !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        XCTAssertNil(model.errorMessage)
+        XCTAssertEqual(model.audioID, 2)
+        XCTAssertEqual(model.position, 1.3, accuracy: 0.2)
+        XCTAssertTrue(model.isVideoCopied)
+        model.setSubtitle(3)
+        try await wait(diagnostic: model.errorMessage ?? "no player error") { !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        let subtitles = try await player.currentItem?.asset.loadMediaSelectionGroup(for: .legible)
+        let group = try XCTUnwrap(subtitles)
+        XCTAssertNotNil(player.currentItem?.currentMediaSelection.selectedMediaOption(in: group))
+        XCTAssertTrue(model.isVideoCopied)
+        model.add([caption])
+        try await wait { model.externalSubtitle == caption && !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        XCTAssertTrue(model.isVideoCopied)
+        XCTAssertEqual(model.position, 1.3, accuracy: 0.2)
+        model.setSubtitle(nil)
+        try await wait(diagnostic: model.errorMessage ?? "no player error") { !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        XCTAssertTrue(model.isVideoCopied)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: input.path))
+    }
+
+    @MainActor
     func testDirectTracksHLSRoundtripRemovalAndCancellation() async throws {
         let tools = FFmpegTools()
         guard let ffmpeg = tools.ffmpegURL, tools.ffprobeURL != nil else { throw XCTSkip("FFmpeg не установлен") }
@@ -45,7 +135,7 @@ final class PlaybackTests: XCTestCase {
         model.select(saved.items[0].id, autoPlay: false)
         try await wait { model.player.currentItem?.status == .readyToPlay && !model.isPreparing }
         XCTAssertNil(model.errorMessage)
-        XCTAssertFalse(model.isTranscoding)
+        XCTAssertFalse(model.isUsingHLS)
         XCTAssertEqual(model.audioOptions.count, 2)
         model.volume = 0
         // Neither a manual request nor automatic preparation may play locally.
@@ -87,12 +177,12 @@ final class PlaybackTests: XCTestCase {
         XCTAssertNotNil(nativeItem.currentMediaSelection.selectedMediaOption(in: audioGroup))
 
         model.add([subtitle])
-        try await wait { model.isTranscoding && !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
+        try await wait(diagnostic: model.errorMessage ?? "no player error") { model.isUsingHLS && !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
         XCTAssertNil(model.errorMessage)
         XCTAssertEqual(model.externalSubtitle, subtitle)
         let embedded = try XCTUnwrap(model.subtitleOptions.first)
         model.setSubtitle(embedded.id)
-        try await wait { !model.isTranscoding && !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
+        try await wait { !model.isUsingHLS && !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
         let restoredItem = try XCTUnwrap(model.player.currentItem)
         let loadedCaptions = try await restoredItem.asset.loadMediaSelectionGroup(for: .legible)
         let captions = try XCTUnwrap(loadedCaptions)
@@ -137,10 +227,10 @@ final class PlaybackTests: XCTestCase {
     }
 
     @MainActor
-    private func wait(file: StaticString = #filePath, line: UInt = #line, _ condition: () -> Bool) async throws {
+    private func wait(diagnostic: @autoclosure () -> String = "", file: StaticString = #filePath, line: UInt = #line, _ condition: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(25)
         while !condition() && Date() < deadline { try await Task.sleep(nanoseconds: 100_000_000) }
-        XCTAssertTrue(condition(), "Playback did not reach expected state", file: file, line: line)
+        XCTAssertTrue(condition(), "Playback did not reach expected state: \(diagnostic())", file: file, line: line)
         if !condition() { throw CocoaError(.fileReadUnknown) }
     }
 }

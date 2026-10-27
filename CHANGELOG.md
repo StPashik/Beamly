@@ -1,3 +1,16 @@
+# Unreleased
+
+**4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some Apple TV, television, or network configurations.** Automated media and AVPlayer checks do not replace hardware testing.
+
+- Preserve supported 4K HEVC/H.264 video in MKV by remuxing to HLS fragmented MP4, without video encoding or resizing.
+- Preserve HDR10/HLG signaling and metadata; reject unsupported HEVC/HDR and Dolby Vision remuxing explicitly instead of silently reducing quality.
+- Serve selected text subtitles as separate WebVTT, retaining cues across seeks. Bitmap subtitle burn-in remains available through explicit compatibility conversion.
+- Copy stereo AAC-LC and AC-3/E-AC-3 surround where compatible; provide stereo AAC fallback independently of video.
+- Map keyframe-aligned HLS timestamps back to the original movie for resume, seek, and track changes.
+- Add explicit quality status, HDR-to-SDR compatibility conversion, five-language settings/help, and 4K media integration checks.
+
+---
+
 # Beamly 1.0.2
 
 Beamly 1.0.2 makes the player more focused on AirPlay and simplifies device selection.

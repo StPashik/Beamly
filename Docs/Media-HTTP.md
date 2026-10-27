@@ -17,4 +17,6 @@ Every URL has `/launch-token/publication-id/filename`, with independent random U
 
 Connections close after one response. File reads use at most 256 KiB at a time and wait for each network send before reading the next chunk. Clients that make no progress for 15 seconds are closed. Generated directory publications expose only root-level `.m3u8`, `.ts`, `.m4s`, `.mp4`, `.m4v`, `.mov`, `.vtt` and `.aac` regular files. The transcoder's `.inputs` directory and diagnostics are never served.
 
+The quality-preserving HLS path reuses this contract for multivariant/audio/subtitle playlists, fMP4 initialization segments, `.m4s` fragments, and timestamp-mapped WebVTT. It adds no new endpoints or upload behavior. See [video quality and AirPlay](Media-Streaming.md).
+
 `MediaHTTPServerTests` exercises the actual listener via loopback URLSession requests: full files larger than one chunk, HEAD, explicit/open/suffix ranges, range failures, capability revocation, HLS MIME, confinement (including percent-encoded traversal), symlinks and empty files. These checks establish the local HTTP contract; they do not establish successful playback on physical Apple TV hardware.

@@ -17,11 +17,11 @@ struct SettingsView: View {
         Form {
             Section("Playback") {
                 Toggle("Play added videos automatically", isOn: $autoPlay)
-                Toggle("Play MP4 and MOV directly", isOn: $directPlayback)
-                Text("Compatible videos do not need transcoding. External subtitles automatically enable FFmpeg processing.")
+                Toggle("Preserve video quality", isOn: $directPlayback)
+                Text("Compatible MP4/MOV files play directly. HEVC/H.264 in MKV keeps its original resolution and HDR10/HLG. Text subtitles use a separate track; ASS styling is simplified.")
                     .font(.caption).foregroundStyle(.secondary)
                 Toggle("Use VideoToolbox hardware encoding", isOn: $hardwareEncoding)
-                Text("Other formats stream as H.264/AAC at up to 1080p. Software encoding is used if hardware encoding fails.")
+                Text("Turning off Preserve video quality enables 1080p H.264 compatibility conversion, HDR to SDR, and bitmap subtitles. Unsupported formats also use this conversion.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Language") {
