@@ -94,6 +94,7 @@ final class PlaybackTests: XCTestCase {
         try await wait { !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
         XCTAssertEqual(model.current?.url, second)
         XCTAssertEqual(model.current?.position ?? -1, 2, accuracy: 0.6)
+        XCTAssertEqual(model.player.currentTime().seconds, 2, accuracy: 0.6)
         XCTAssertTrue(FileManager.default.fileExists(atPath: first.path))
         model.select(saved.items[1].id, autoPlay: false)
         model.clear()

@@ -342,18 +342,20 @@ final class AppModel: ObservableObject {
                             self.errorMessage = item.error?.localizedDescription ?? NSLocalizedString("Could not read the video.", comment: "")
                             self.cancelPlayback()
                         } else if item.status == .readyToPlay {
-                            self.isPreparing = false
                             if !self.isTranscoding {
                                 if let group = self.directAudioGroup, let id = self.audioID { item.select(self.directAudioChoices[id], in: group) }
                                 if let group = self.directSubtitleGroup { item.select(self.subtitleID.flatMap { self.directSubtitleChoices[$0] }, in: group) }
-                                self.player.seek(to: CMTime(seconds: start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-                                    Task { @MainActor in if self?.loadID == generation, autoPlay { self?.player.play() } }
-                                }
-                            } else {
-                                self.player.seek(to: .zero)
-                                if autoPlay { self.player.play() }
                             }
-                            self.updateNowPlaying()
+                            // Ignore time-zero callbacks until the saved position has been restored.
+                            let target = self.isTranscoding ? CMTime.zero : CMTime(seconds: start, preferredTimescale: 600)
+                            self.player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                                Task { @MainActor in
+                                    guard let self, self.loadID == generation else { return }
+                                    self.isPreparing = false
+                                    if autoPlay { self.player.play() }
+                                    self.updateNowPlaying()
+                                }
+                            }
                         }
                     }
                 }
