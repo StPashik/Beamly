@@ -30,6 +30,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var subtitleID: Int?
     @Published private(set) var externalSubtitle: URL?
     @Published var errorMessage: String?
+    @Published var isAirPlayPickerRequested = false
     @Published var volume = 1.0 { didSet { player.volume = Float(volume) } }
 
     // Keep one player when changing files so AVKit retains the selected AirPlay route.
@@ -80,6 +81,7 @@ final class AppModel: ObservableObject {
                     guard let self else { return }
                     let wasExternal = self.isExternal
                     self.isExternal = player.isExternalPlaybackActive
+                    if self.isExternal { self.isAirPlayPickerRequested = false }
                     if self.isExternal, self.playRequested, !self.isPreparing { self.playIfConnected() }
                     else if wasExternal, !self.isExternal, !self.isPreparing { self.pausePlayback() }
                 }
@@ -188,21 +190,21 @@ final class AppModel: ObservableObject {
             if let id = playlist.currentID {
                 let connected = player.isExternalPlaybackActive
                 select(id, autoPlay: connected)
-                if !connected { playIfConnected(showPrompt: true) }
+                if !connected { playIfConnected(showPicker: true) }
             } else { openFiles() }
         } else if isPlaying { pausePlayback() }
         else {
             if player.isExternalPlaybackActive, duration > 0 && position >= duration - 0.5 { seek(0) }
-            playIfConnected(showPrompt: true)
+            playIfConnected(showPicker: true)
         }
     }
 
-    private func playIfConnected(showPrompt: Bool = false) {
+    private func playIfConnected(showPicker: Bool = false) {
         // Nearby routes are discovery results, not permission to play on this Mac.
         guard player.isExternalPlaybackActive else {
-            if showPrompt {
-                playRequested = false
-                errorMessage = NSLocalizedString("Choose an AirPlay device before playing.", comment: "")
+            if showPicker {
+                playRequested = true
+                isAirPlayPickerRequested = true
             }
             return
         }
@@ -211,6 +213,7 @@ final class AppModel: ObservableObject {
     }
 
     private func pausePlayback() {
+        isAirPlayPickerRequested = false
         playRequested = false
         player.pause()
         remember()
@@ -475,6 +478,7 @@ final class AppModel: ObservableObject {
     }
 
     private func cancelPlayback() {
+        isAirPlayPickerRequested = false
         playRequested = false
         loadID = UUID()
         preparation?.cancel()

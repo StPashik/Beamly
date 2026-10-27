@@ -63,7 +63,7 @@ struct ContentView: View {
             HStack(spacing: 7) {
                 if model.isExternal { Circle().fill(mint).frame(width: 5, height: 5).accessibilityHidden(true) }
                 Text("AirPlay").font(.system(size: 11, weight: .medium))
-                AirPlayPicker(player: model.player).frame(width: 24, height: 25)
+                AirPlayPicker(player: model.player, request: $model.isAirPlayPickerRequested).frame(width: 24, height: 25)
                     .accessibilityLabel("Choose an AirPlay device")
             }
             .padding(.leading, 12).padding(.trailing, 5).padding(.vertical, 2)
@@ -274,15 +274,54 @@ struct ContentView: View {
 
 struct AirPlayPicker: NSViewRepresentable {
     let player: AVPlayer
+    @Binding var request: Bool
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> AVRoutePickerView {
         let view = AVRoutePickerView()
         view.player = player
+        view.delegate = context.coordinator
         view.isRoutePickerButtonBordered = false
         view.setRoutePickerButtonColor(.secondaryLabelColor, for: .normal)
         view.setRoutePickerButtonColor(beamlyAccent, for: .active)
         return view
     }
-    func updateNSView(_ view: AVRoutePickerView, context: Context) { view.player = player }
+    func updateNSView(_ view: AVRoutePickerView, context: Context) {
+        if view.player !== player { view.player = player }
+        context.coordinator.presentRoutes(in: view, request: $request)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, @preconcurrency AVRoutePickerViewDelegate {
+        private var presentationScheduled = false
+        private var isPresenting = false
+
+        func presentRoutes(in view: AVRoutePickerView, request: Binding<Bool>) {
+            guard request.wrappedValue, !presentationScheduled else { return }
+            presentationScheduled = true
+            DispatchQueue.main.async {
+                self.presentationScheduled = false
+                guard request.wrappedValue else { return }
+                request.wrappedValue = false
+                guard !self.isPresenting, let window = view.window else { return }
+                window.deminiaturize(nil)
+                window.makeKeyAndOrderFront(nil)
+                NSApp.activate()
+                Self.press(in: view)
+            }
+        }
+
+        func routePickerViewWillBeginPresentingRoutes(_ routePickerView: AVRoutePickerView) { isPresenting = true }
+        func routePickerViewDidEndPresentingRoutes(_ routePickerView: AVRoutePickerView) { isPresenting = false }
+
+        @discardableResult
+        static func press(in view: NSView) -> Bool {
+            // shortcut: AVKit has no macOS presentation method; replace this bridge when it provides one.
+            if view.accessibilityPerformPress() { return true }
+            return view.subviews.contains { press(in: $0) }
+        }
+    }
 }
 
 struct PlaybackPreview: View {

@@ -1,5 +1,6 @@
 # Unreleased
 
+- Open the native AirPlay picker directly from Play instead of showing an alert, then start when the receiver connects.
 - Keep the player window 674 points wide, with vertical resizing and zoom.
 - Show a static midpoint thumbnail instead of a live local preview, including an FFmpeg fallback for other formats.
 - Require a connected AirPlay device for all playback starts and pause when the route disconnects.
