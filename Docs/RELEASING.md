@@ -5,6 +5,8 @@ Requirements: Xcode 26 or later, FFmpeg, Node.js/npm, Git, an authenticated [Git
 Use GitFlow: start release/<version> from an up-to-date develop, and perform the steps below on that release branch. Feature work targets develop; fixes to a published release start as hotfix/<description> from main. Never commit release preparation directly to main.
 
 1. Update CFBundleShortVersionString and increment CFBundleVersion in Resources/Info.plist. Update the version in package.json, the pinned download/npm versions in README, and the changelog. Sparkle compares the numeric build version.
+
+   For releases containing the new 4K/HDR path, include this notice prominently in the GitHub release notes until physical receiver testing is recorded: **"4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations."** Automated FFmpeg, HTTP, and AVPlayer checks are not physical AirPlay validation. Retain specific unverified profiles and subtitle limitations from Docs/Media-Streaming.md.
 2. Run Scripts/test.sh with FFmpeg installed.
 3. Run Scripts/release.sh. This produces dist/Beamly-VERSION-universal.zip, dist/SHA256SUMS, and a cask with that archive's SHA-256 checksum. It verifies both architectures and the embedded framework's code-signature integrity.
 4. Run npm test and npm pack --dry-run. Check the ZIP contains only Beamly.app and that no private files are staged in Git.

@@ -1871,74 +1871,6 @@
         }
       }
     },
-    "Play MP4 and MOV directly": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Play MP4 and MOV directly"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Прямое воспроизведение MP4 и MOV"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "MP4 und MOV direkt wiedergeben"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Lire les MP4 et MOV directement"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Reproducir MP4 y MOV directamente"
-          }
-        }
-      }
-    },
-    "Compatible videos do not need transcoding. External subtitles automatically enable FFmpeg processing.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Compatible videos do not need transcoding. External subtitles automatically enable FFmpeg processing."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Для совместимого видео перекодирование не требуется. Внешние субтитры включают обработку FFmpeg автоматически."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Kompatible Videos müssen nicht umgewandelt werden. Externe Untertitel aktivieren automatisch die FFmpeg-Verarbeitung."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Les vidéos compatibles ne nécessitent aucun transcodage. Les sous-titres externes activent automatiquement le traitement FFmpeg."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Los vídeos compatibles no necesitan transcodificación. Los subtítulos externos activan automáticamente el procesamiento con FFmpeg."
-          }
-        }
-      }
-    },
     "Use VideoToolbox hardware encoding": {
       "localizations": {
         "en": {
@@ -1969,40 +1901,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Usar codificación por hardware VideoToolbox"
-          }
-        }
-      }
-    },
-    "Other formats stream as H.264/AAC at up to 1080p. Software encoding is used if hardware encoding fails.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Other formats stream as H.264/AAC at up to 1080p. Software encoding is used if hardware encoding fails."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Остальные форматы передаются как H.264/AAC до 1080p. При ошибке аппаратного кодирования используется программное."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Andere Formate werden als H.264/AAC mit bis zu 1080p übertragen. Schlägt die Hardwarekodierung fehl, wird Softwarekodierung verwendet."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Les autres formats sont diffusés en H.264/AAC jusqu’à 1080p. L’encodage logiciel prend le relais si l’encodage matériel échoue."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Los demás formatos se transmiten en H.264/AAC hasta 1080p. Si falla la codificación por hardware, se usa la codificación por software."
           }
         }
       }
@@ -3261,6 +3159,414 @@
           "stringUnit": {
             "state": "translated",
             "value": "Fotograma de la mitad del vídeo"
+          }
+        }
+      }
+    },
+    "Preserve video quality": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preserve video quality"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сохранять качество видео"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Videoqualität beibehalten"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conserver la qualité vidéo"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conservar la calidad del vídeo"
+          }
+        }
+      }
+    },
+    "Compatible MP4/MOV files play directly. HEVC/H.264 in MKV keeps its original resolution and HDR10/HLG. Text subtitles use a separate track; ASS styling is simplified.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compatible MP4/MOV files play directly. HEVC/H.264 in MKV keeps its original resolution and HDR10/HLG. Text subtitles use a separate track; ASS styling is simplified."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Совместимые MP4/MOV воспроизводятся напрямую. HEVC/H.264 в MKV сохраняет исходное разрешение и HDR10/HLG. Текстовые субтитры передаются отдельно; оформление ASS упрощается."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kompatible MP4/MOV-Dateien werden direkt abgespielt. HEVC/H.264 in MKV behält Auflösung und HDR10/HLG bei. Textuntertitel nutzen eine eigene Spur; ASS-Stile werden vereinfacht."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les fichiers MP4/MOV compatibles sont lus directement. HEVC/H.264 dans MKV conserve la résolution et HDR10/HLG. Les sous-titres texte utilisent une piste séparée ; les styles ASS sont simplifiés."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los archivos MP4/MOV compatibles se reproducen directamente. HEVC/H.264 en MKV conserva la resolución y HDR10/HLG. Los subtítulos de texto usan una pista aparte; los estilos ASS se simplifican."
+          }
+        }
+      }
+    },
+    "Turning off Preserve video quality enables 1080p H.264 compatibility conversion, HDR to SDR, and bitmap subtitles. Unsupported formats also use this conversion.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turning off Preserve video quality enables 1080p H.264 compatibility conversion, HDR to SDR, and bitmap subtitles. Unsupported formats also use this conversion."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Если отключить сохранение качества, видео преобразуется в H.264 до 1080p, HDR — в SDR; можно использовать графические субтитры. Несовместимые форматы также преобразуются."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ohne Beibehaltung der Videoqualität werden H.264 bis 1080p, HDR zu SDR und Bitmap-Untertitel verwendet. Nicht unterstützte Formate werden ebenfalls konvertiert."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Désactiver la conservation de la qualité active la conversion H.264 jusqu’à 1080p, HDR vers SDR et les sous-titres bitmap. Les formats incompatibles sont également convertis."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Al desactivar la conservación de calidad se convierte a H.264 hasta 1080p, de HDR a SDR y se permiten subtítulos gráficos. Los formatos incompatibles también se convierten."
+          }
+        }
+      }
+    },
+    "Original video quality": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Original video quality"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Исходное качество видео"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Originalvideoqualität"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Qualité vidéo d’origine"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Calidad de vídeo original"
+          }
+        }
+      }
+    },
+    "1080p compatibility": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1080p compatibility"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Режим совместимости до 1080p"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kompatibilität bis 1080p"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compatibilité jusqu’à 1080p"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compatibilidad hasta 1080p"
+          }
+        }
+      }
+    },
+    "A safe video seek point could not be found.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A safe video seek point could not be found."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось найти подходящий ключевой кадр для перемотки."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kein sicherer Startpunkt zum Spulen gefunden."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun point de reprise vidéo sûr n’a été trouvé."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se ha encontrado un punto seguro para buscar en el vídeo."
+          }
+        }
+      }
+    },
+    "Dolby Vision remuxing is not supported. Use a compatible MP4 directly or an HDR10/SDR version.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dolby Vision remuxing is not supported. Use a compatible MP4 directly or an HDR10/SDR version."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Переупаковка Dolby Vision не поддерживается. Используй совместимый MP4 напрямую или версию HDR10/SDR."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dolby Vision kann nicht umgepackt werden. Verwende direkt eine kompatible MP4-Datei oder eine HDR10/SDR-Version."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le remuxage Dolby Vision n’est pas pris en charge. Utilisez directement un MP4 compatible ou une version HDR10/SDR."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se admite el remultiplexado de Dolby Vision. Usa directamente un MP4 compatible o una versión HDR10/SDR."
+          }
+        }
+      }
+    },
+    "This video profile cannot be preserved for Apple TV. Use a supported HEVC Main/Main 10 file, or turn off Preserve video quality for SDR conversion.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This video profile cannot be preserved for Apple TV. Use a supported HEVC Main/Main 10 file, or turn off Preserve video quality for SDR conversion."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этот профиль видео нельзя сохранить для Apple TV. Используй совместимый HEVC Main/Main 10 или отключи сохранение качества для преобразования в SDR."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieses Videoprofil kann für Apple TV nicht beibehalten werden. Verwende HEVC Main/Main 10 oder deaktiviere die Beibehaltung der Videoqualität für eine SDR-Konvertierung."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce profil vidéo ne peut pas être conservé pour Apple TV. Utilisez HEVC Main/Main 10 ou désactivez la conservation de la qualité pour convertir en SDR."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este perfil de vídeo no puede conservarse para Apple TV. Usa HEVC Main/Main 10 o desactiva la conservación de calidad para convertir a SDR."
+          }
+        }
+      }
+    },
+    "Bitmap subtitles require video conversion. Choose text subtitles or turn off Preserve video quality.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bitmap subtitles require video conversion. Choose text subtitles or turn off Preserve video quality."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Графические субтитры требуют перекодирования видео. Выбери текстовые субтитры или отключи сохранение качества."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bitmap-Untertitel erfordern eine Videokonvertierung. Wähle Textuntertitel oder deaktiviere die Beibehaltung der Videoqualität."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les sous-titres bitmap nécessitent une conversion vidéo. Choisissez des sous-titres texte ou désactivez la conservation de la qualité."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los subtítulos gráficos requieren convertir el vídeo. Elige subtítulos de texto o desactiva la conservación de calidad."
+          }
+        }
+      }
+    },
+    "The subtitle file is too large.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The subtitle file is too large."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Файл субтитров слишком большой."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Untertiteldatei ist zu groß."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le fichier de sous-titres est trop volumineux."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El archivo de subtítulos es demasiado grande."
+          }
+        }
+      }
+    },
+    "The subtitle timestamps are invalid.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The subtitle timestamps are invalid."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Некорректные временные метки субтитров."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Zeitstempel der Untertitel sind ungültig."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les horodatages des sous-titres sont incorrects."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Las marcas de tiempo de los subtítulos no son válidas."
+          }
+        }
+      }
+    },
+    "The HLS video codec could not be identified.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The HLS video codec could not be identified."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось определить видеокодек потока HLS."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der HLS-Videocodec konnte nicht ermittelt werden."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le codec vidéo HLS n’a pas pu être identifié."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se ha podido identificar el códec de vídeo HLS."
           }
         }
       }
