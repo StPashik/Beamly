@@ -7,8 +7,16 @@ import SwiftUI
 final class PlaybackTests: XCTestCase {
     @MainActor
     func test4KHEVCResumeSeekAudioAndTextSubtitlesKeepOriginalVideo() async throws {
-        let tools = FFmpegTools()
+        try await verify4KPlayback(hdr: false)
+        if AVPlayer.eligibleForHDRPlayback { try await verify4KPlayback(hdr: true) }
+    }
+
+    @MainActor
+    private func verify4KPlayback(hdr: Bool) async throws {
+        let tools = FFmpegTools(customDirectory: ProcessInfo.processInfo.environment["BEAMLY_TEST_TOOLS_DIRECTORY"].map { URL(fileURLWithPath: $0) })
         guard let ffmpeg = tools.ffmpegURL else { throw XCTSkip("FFmpeg is required") }
+        let colors = hdr ? "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc" : "colorprim=bt709:transfer=bt709:colormatrix=bt709"
+        print("Native 4K HEVC fixture: HDR = \(hdr), HDR eligible = \(AVPlayer.eligibleForHDRPlayback)")
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-4k-player-\(UUID())")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let input = folder.appendingPathComponent("4K HDR.mkv")
@@ -19,7 +27,7 @@ final class PlaybackTests: XCTestCase {
         process.arguments = ["-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "color=c=blue:size=3840x2160:rate=24:duration=8,drawbox=x=0:y=0:w=iw:h=ih:color=red:t=fill:enable='lt(t,2)'",
             "-f", "lavfi", "-i", "sine=frequency=440:duration=8", "-f", "lavfi", "-i", "sine=frequency=880:duration=8", "-i", caption.path,
             "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s", "-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p10le",
-            "-x265-params", "pools=2:frame-threads=2:keyint=48:min-keyint=48:scenecut=0:open-gop=0:log-level=error:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc",
+            "-x265-params", "pools=2:frame-threads=2:keyint=48:min-keyint=48:scenecut=0:open-gop=0:log-level=error:\(colors)",
             "-c:a:0", "aac", "-ac:a:0", "2", "-c:a:1", "ac3", "-ac:a:1", "6", "-c:s", "srt", input.path]
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
@@ -28,6 +36,7 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(process.terminationStatus, 0)
         let suite = "app.beamly.4k-test.\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        if let directory = tools.customDirectory { defaults.set(directory.path, forKey: "toolsDirectory") }
         defaults.set(false, forKey: "autoPlay")
         var playlist = Playlist()
         playlist.append([input])
@@ -38,13 +47,13 @@ final class PlaybackTests: XCTestCase {
         let model = AppModel(stateURL: state, defaults: defaults, player: player)
         defer { model.shutdown(); defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
         model.select(playlist.items[0].id, autoPlay: false)
-        try await wait(diagnostic: model.errorMessage ?? "no player error") { !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        try await wait(diagnostic: "\(model.errorMessage ?? "no player error"), details=\(String(describing: (player.lastConfiguredItem?.error as NSError?)?.userInfo))") { !model.isPreparing && player.currentItem?.status == .readyToPlay }
         XCTAssertNil(model.errorMessage)
         XCTAssertTrue(model.isVideoCopied)
         XCTAssertTrue(model.isUsingHLS)
         XCTAssertEqual(model.position, 3.5, accuracy: 0.15)
         XCTAssertEqual(model.info?.width, 3840)
-        XCTAssertTrue(model.info?.isHDR == true)
+        XCTAssertEqual(model.info?.isHDR, hdr)
         let item = try XCTUnwrap(player.currentItem)
         let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange])
         item.add(output)
@@ -241,6 +250,12 @@ private final class AirPlayTestPlayer: AVPlayer, @unchecked Sendable {
     private let lock = NSLock()
     private var external = false
     private(set) var playCalls = 0
+    private(set) var lastConfiguredItem: AVPlayerItem?
+
+    override func replaceCurrentItem(with item: AVPlayerItem?) {
+        if let item { lastConfiguredItem = item }
+        super.replaceCurrentItem(with: item)
+    }
 
     override var isExternalPlaybackActive: Bool {
         lock.lock()

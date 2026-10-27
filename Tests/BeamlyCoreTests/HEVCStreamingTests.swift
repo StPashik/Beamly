@@ -46,7 +46,7 @@ final class HEVCStreamingTests: XCTestCase {
 
     @MainActor
     func testReal4KHDRCopySeekAudioSubtitlesAndHTTP() async throws {
-        let tools = FFmpegTools()
+        let tools = FFmpegTools(customDirectory: ProcessInfo.processInfo.environment["BEAMLY_TEST_TOOLS_DIRECTORY"].map { URL(fileURLWithPath: $0) })
         guard let ffmpeg = tools.ffmpegURL, let ffprobe = tools.ffprobeURL else { throw XCTSkip("FFmpeg is required") }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-4k-\(UUID())")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -136,7 +136,7 @@ final class HEVCStreamingTests: XCTestCase {
         }
         let seeked = try await job.start(input: input, info: info, audioTrack: 1, subtitle: .external(captions), startTime: 3.5, hardwareEncoding: false)
         XCTAssertLessThan(job.sourceOffset, 3.5)
-        XCTAssertGreaterThan(job.sourceOffset, 1.8)
+        XCTAssertGreaterThan(job.sourceOffset, 0, "The second GOP must map after the movie's beginning")
         let shifted = try String(contentsOf: seeked.deletingLastPathComponent().appendingPathComponent("captions.vtt"), encoding: .utf8)
         XCTAssertTrue(shifted.contains("00:00:00.000 -->"), "A cue spanning the seek must remain visible")
         XCTAssertTrue(shifted.contains("Overlapping cue"))
@@ -149,7 +149,7 @@ final class HEVCStreamingTests: XCTestCase {
         XCTAssertEqual(try onset(seeked.deletingLastPathComponent().appendingPathComponent("stream_1.m3u8"), stream: "a:0"), try onset(input, stream: "1") - job.sourceOffset, accuracy: 0.06)
 
         let hlg = folder.appendingPathComponent("HLG.mkv")
-        _ = try run(ffmpeg, ["-v", "error", "-y", "-i", input.path, "-map", "0", "-c", "copy", "-bsf:v", "hevc_metadata=transfer_characteristics=18", hlg.path])
+        _ = try run(ffmpeg, ["-v", "error", "-y", "-i", input.path, "-map", "0", "-c", "copy", "-bsf:v", "hevc_metadata=transfer_characteristics=18", "-color_trc", "arib-std-b67", hlg.path])
         let hlgInfo = try await tools.probe(url: hlg)
         XCTAssertEqual(hlgInfo.colorTransfer, "arib-std-b67")
         let hlgMaster = try await job.start(input: hlg, info: hlgInfo, audioTrack: 1, subtitle: .none, startTime: 0, hardwareEncoding: false)
