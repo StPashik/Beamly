@@ -46,14 +46,14 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(model.info?.width, 3840)
         XCTAssertTrue(model.info?.isHDR == true)
         let item = try XCTUnwrap(player.currentItem)
-        let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+        let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange])
         item.add(output)
         model.volume = 0
         player.setExternalPlaybackActive(true)
         try await wait { model.isExternal }
         model.togglePlay()
         var frame: CVPixelBuffer?
-        try await wait {
+        try await wait(diagnostic: "position=\(model.position), rate=\(player.rate), status=\(item.status.rawValue), error=\(String(describing: item.error)), log=\(String(describing: item.errorLog()?.events.last?.errorComment))") {
             frame = output.copyPixelBuffer(forItemTime: player.currentTime(), itemTimeForDisplay: nil)
             return frame != nil && model.position > 3.7
         }
@@ -61,9 +61,10 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(CVPixelBufferGetHeight(try XCTUnwrap(frame)), 2160)
         let buffer = try XCTUnwrap(frame)
         CVPixelBufferLockBaseAddress(buffer, .readOnly)
-        let pixel = try XCTUnwrap(CVPixelBufferGetBaseAddress(buffer)).assumingMemoryBound(to: UInt8.self)
+        XCTAssertEqual(CVPixelBufferGetPixelFormatType(buffer), kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+        let chroma = try XCTUnwrap(CVPixelBufferGetBaseAddressOfPlane(buffer, 1)).assumingMemoryBound(to: UInt16.self)
         // The saved position is blue; a timestamp-only fix showing the first GOP would still be red.
-        XCTAssertGreaterThan(Int(pixel[0]), Int(pixel[2]) + 20)
+        XCTAssertGreaterThan(Int(chroma[0] >> 6), Int(chroma[1] >> 6) + 80)
         CVPixelBufferUnlockBaseAddress(buffer, .readOnly)
         model.togglePlay()
         try await wait { !model.isPlaying }

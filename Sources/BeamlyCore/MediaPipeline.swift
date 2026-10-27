@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import AVFoundation
 
 public struct MediaTrack: Codable, Identifiable, Sendable, Equatable {
     /// The file's global FFmpeg stream index, not an index within audio or subtitles.
@@ -71,6 +72,37 @@ public enum SubtitleChoice: Equatable, Sendable {
 enum SubtitleRendering {
     case text(String)
     case bitmap(Int)
+}
+
+enum HLSCodec {
+    static func identifier(at url: URL) async throws -> String {
+        let asset = AVURLAsset(url: url)
+        if let track = try await asset.loadTracks(withMediaType: .video).first,
+           let description = try await track.load(.formatDescriptions).first,
+           let atoms = CMFormatDescriptionGetExtension(description, extensionKey: kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms) as? [String: Any] {
+            if let data = atoms["hvcC"] as? Data { return try hevc(data) }
+            if let data = atoms["avcC"] as? Data, data.count >= 4, data[0] == 1 {
+                return String(format: "avc1.%02X%02X%02X", data[1], data[2], data[3])
+            }
+        }
+        throw MediaPipelineError.invalidMedia(NSLocalizedString("The HLS video codec could not be identified.", comment: ""))
+    }
+
+    static func hevc(_ data: Data) throws -> String {
+        guard data.count >= 23, data[0] == 1 else {
+            throw MediaPipelineError.invalidMedia(NSLocalizedString("The HLS video codec could not be identified.", comment: ""))
+        }
+        let spaces = ["", "A", "B", "C"]
+        let profile = "\(spaces[Int(data[1] >> 6)])\(data[1] & 31)"
+        var flags = data[2..<6].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+        var reversed: UInt32 = 0
+        for _ in 0..<32 { reversed = (reversed << 1) | (flags & 1); flags >>= 1 }
+        var constraints = Array(data[6..<12])
+        while constraints.count > 1, constraints.last == 0 { constraints.removeLast() }
+        // ISO BMFF codec strings reverse compatibility bits and separate constraint bytes with dots.
+        return "hvc1.\(profile).\(String(reversed, radix: 16, uppercase: true)).\(data[1] & 32 == 0 ? "L" : "H")\(data[12])." +
+            constraints.map { String(format: "%02X", $0) }.joined(separator: ".")
+    }
 }
 
 enum WebVTTCaptions {
@@ -397,6 +429,7 @@ public final class HLSJob {
     private var completion: Task<ProcessOutput, Error>?
     private var monitor: Task<Void, Never>?
     private var generation = UUID()
+    private var copiedVideoCodec: String?
 
     public init(tools: FFmpegTools = FFmpegTools()) { self.tools = tools }
 
@@ -472,8 +505,8 @@ public final class HLSJob {
                 let result = await execution.result
                 guard !Task.isCancelled, let self, self.generation == currentGeneration else { return }
                 if case .failure(let error) = result, self.diagnostic == nil { self.diagnostic = error.localizedDescription }
-                if self.isVideoCopied, FileManager.default.fileExists(atPath: cache.appendingPathComponent("master.m3u8").path) {
-                    do { try Self.writeMaster(directory: cache, info: info, audio: audio, hasSubtitles: subtitle != .none) }
+                if let codec = self.copiedVideoCodec, FileManager.default.fileExists(atPath: cache.appendingPathComponent("master.m3u8").path) {
+                    do { try Self.writeMaster(directory: cache, codec: codec, info: info, audio: audio, hasSubtitles: subtitle != .none) }
                     catch { self.diagnostic = error.localizedDescription }
                 }
             }
@@ -485,8 +518,7 @@ public final class HLSJob {
                 guard segments >= 2 || (segments >= 1 && contents.contains("#EXT-X-ENDLIST")) else { return false }
                 if isVideoCopied {
                     let count = audio == nil ? 1 : Self.hasSurround(audio) ? 3 : 2
-                    return FileManager.default.fileExists(atPath: cache.appendingPathComponent("variants.m3u8").path) &&
-                        (0..<count).allSatisfy { index in
+                    return (0..<count).allSatisfy { index in
                             (try? String(contentsOf: cache.appendingPathComponent("stream_\(index).m3u8"), encoding: .utf8).contains("#EXTINF:")) == true
                         }
                 }
@@ -515,9 +547,11 @@ public final class HLSJob {
                 guard generation == currentGeneration else { throw CancellationError() }
                 sourceOffset -= firstPTS
                 try await prepareCaptions(subtitle, input: input, info: info, cache: cache)
+                let codec = try await HLSCodec.identifier(at: cache.appendingPathComponent("init_0.mp4"))
                 try Task.checkCancellation()
                 guard generation == currentGeneration else { throw CancellationError() }
-                try Self.writeMaster(directory: cache, info: info, audio: audio, hasSubtitles: subtitle != .none)
+                copiedVideoCodec = codec
+                try Self.writeMaster(directory: cache, codec: codec, info: info, audio: audio, hasSubtitles: subtitle != .none)
                 return cache.appendingPathComponent("master.m3u8")
             }
             return playlist
@@ -546,8 +580,6 @@ public final class HLSJob {
                     "-bsf:v", "noise=amount=0:drop=lt(pts*tb\\,\(keyTime - 0.000001))"]
         // hvc1 keeps HEVC parameter sets in the initialization segment, as Apple requires.
         args += ["-tag:v", info.videoCodec == "hevc" ? "hvc1" : "avc1"]
-        // FFmpeg needs a bitrate hint to emit the codec entry; writeMaster measures the actual segments.
-        args += ["-b:v", "1000000"]
         var variants = "v:0"
         if let audio {
             args += ["-map", "0:\(audio.id)"]
@@ -564,7 +596,7 @@ public final class HLSJob {
         args += ["-sn", "-dn", "-output_ts_offset", String(-keyTime), "-avoid_negative_ts", "make_zero", "-f", "hls", "-hls_segment_type", "fmp4",
                  "-hls_time", "6", "-hls_list_size", "0", "-hls_playlist_type", "event", "-hls_flags", "temp_file",
                  "-hls_fmp4_init_filename", "init_%v.mp4", "-hls_segment_filename", "segment_%v_%06d.m4s",
-                 "-var_stream_map", variants, "-master_pl_name", "variants.m3u8", "stream_%v.m3u8"]
+                 "-var_stream_map", variants, "stream_%v.m3u8"]
         return args
     }
 
@@ -605,12 +637,7 @@ public final class HLSJob {
             .write(to: cache.appendingPathComponent("captions.m3u8"), atomically: true, encoding: .utf8)
     }
 
-    private static func writeMaster(directory: URL, info: MediaInfo, audio: MediaTrack?, hasSubtitles: Bool) throws {
-        let raw = try String(contentsOf: directory.appendingPathComponent("variants.m3u8"), encoding: .utf8)
-        guard let range = raw.range(of: #"CODECS="[^"]+""#, options: .regularExpression) else {
-            throw MediaPipelineError.invalidMedia(NSLocalizedString("The HLS video codec could not be identified.", comment: ""))
-        }
-        let codec = String(raw[range].dropFirst(8).dropLast())
+    private static func writeMaster(directory: URL, codec: String, info: MediaInfo, audio: MediaTrack?, hasSubtitles: Bool) throws {
         var master = "#EXTM3U\n#EXT-X-VERSION:7\n"
         if hasSubtitles {
             master += "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"Subtitles\",LANGUAGE=\"und\",DEFAULT=YES,AUTOSELECT=YES,URI=\"captions.m3u8\"\n"
@@ -664,6 +691,7 @@ public final class HLSJob {
         runner = nil
         completion = nil
         directory = nil
+        copiedVideoCodec = nil
         if let cache {
             Task.detached {
                 // FFmpeg may still be closing files after cancellation; wait before deleting them.

@@ -2,6 +2,15 @@ import XCTest
 @testable import BeamlyCore
 
 final class HEVCStreamingTests: XCTestCase {
+    func testHEVCCodecStringUsesInitializationRecordBits() throws {
+        var record = Data([1, 2, 0x20, 0, 0, 0, 0xB0, 0, 0, 0, 0, 0, 153] + Array(repeating: 0, count: 10))
+        XCTAssertEqual(try HLSCodec.hevc(record), "hvc1.2.4.L153.B0")
+        record[1] = 0x62
+        record[7] = 1
+        XCTAssertEqual(try HLSCodec.hevc(record), "hvc1.A2.4.H153.B0.01")
+        XCTAssertThrowsError(try HLSCodec.hevc(Data()))
+    }
+
     func testHDRProfilesAndDolbyVisionAreNotSilentlyDowngraded() throws {
         let json = #"{"streams":[{"index":0,"codec_type":"video","codec_name":"hevc","profile":"Main 10","pix_fmt":"yuv420p10le","level":153,"width":3840,"height":2160,"avg_frame_rate":"24000/1001","color_transfer":"smpte2084","color_primaries":"bt2020","color_space":"bt2020nc"}],"format":{"duration":"120","start_time":"0.021"}}"#
         var info = try FFmpegTools.decodeProbe(Data(json.utf8))
@@ -63,7 +72,7 @@ final class HEVCStreamingTests: XCTestCase {
         let playlist = try String(contentsOf: master, encoding: .utf8)
         XCTAssertTrue(playlist.contains("VIDEO-RANGE=PQ"))
         XCTAssertTrue(playlist.contains("RESOLUTION=3840x2160"))
-        XCTAssertTrue(playlist.contains("hvc1.2."))
+        XCTAssertTrue(playlist.contains("hvc1.2."), playlist)
         XCTAssertTrue(playlist.contains("ac-3"))
         XCTAssertTrue(playlist.contains("CHANNELS=\"6\""))
         XCTAssertTrue(playlist.contains("mp4a.40.2"))
@@ -106,8 +115,10 @@ final class HEVCStreamingTests: XCTestCase {
         XCTAssertEqual(try frequency(directory, 1), 880, accuracy: 15)
         XCTAssertEqual(try frequency(directory, 2), 880, accuracy: 15)
         func onset(_ url: URL, stream: String) throws -> Double {
-            let first = try run(ffprobe, ["-v", "error", "-select_streams", stream, "-read_intervals", "%+#1", "-show_entries", "packet=pts_time", "-of", "csv=p=0", url.path])
-            let pts = try XCTUnwrap(Double(first.trimmingCharacters(in: .whitespacesAndNewlines)))
+            let first = try run(ffprobe, ["-v", "error", "-select_streams", stream, "-read_intervals", "%+#1", "-show_entries", "packet=pts_time", "-of", "json", url.path])
+            let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(first.utf8)) as? [String: Any])
+            let timestamp = (root["packets"] as? [[String: Any]])?.first?["pts_time"] as? String
+            let pts = try XCTUnwrap(timestamp.flatMap(Double.init))
             let data = try runData(ffmpeg, ["-v", "error", "-i", url.path, "-map", "0:\(stream)", "-ac", "1", "-ar", "8000", "-f", "f32le", "-"])
             let samples = data.withUnsafeBytes { bytes in stride(from: 0, to: data.count - 3, by: 4).map { bytes.loadUnaligned(fromByteOffset: $0, as: Float.self) } }
             let sample = try XCTUnwrap(samples.firstIndex { abs($0) > 0.003 })

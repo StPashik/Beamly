@@ -10,6 +10,8 @@ With **Preserve video quality** enabled (the default), compatible MP4/M4V/MOV fi
 
 The remux path accepts HEVC Main/Main 10, 4:2:0, up to Level 5.1, 4096 × 2160, and 60 fps for SDR / 30 fps for HDR. HDR10 (PQ) and HLG retain their original bit depth, color characteristics, and in-bitstream metadata. The multivariant playlist declares `hvc1`, resolution, frame rate, and `VIDEO-RANGE`. HDR10+ dynamic metadata and Dolby Vision are not certified by this implementation. Dolby Vision remuxing is rejected explicitly rather than silently losing or mislabeling its metadata; compatible Dolby Vision MP4 files can still use direct playback.
 
+The qualified codec string comes from the actual initialization segment's `hvcC`/`avcC` record through CoreMedia, rather than FFmpeg's generated master-playlist text. Segment sizes determine advertised bitrates.
+
 Turning off **Preserve video quality** explicitly selects H.264 up to 1080p and stereo AAC. HDR10/HLG is tone-mapped to BT.709 SDR before subtitle burn-in and scaling. Unsupported SDR codecs also use this compatibility conversion. Unsupported HEVC/HDR profiles and bitmap subtitles do not silently trigger a quality downgrade while preservation is enabled.
 
 ## Audio
@@ -51,3 +53,4 @@ These checks do not certify physical AirPlay output, HDR display activation, eve
 - [FFmpeg HLS muxer](https://ffmpeg.org/ffmpeg-formats.html#hls-2): fragmented MP4, variant playlists, and event playlists.
 - [FFmpeg filters](https://ffmpeg.org/ffmpeg-filters.html#tonemap): explicit HDR-to-SDR compatibility conversion.
 - [FFmpeg packet filtering](https://www.ffmpeg.org/ffmpeg-bitstream-filters.html#noise): timestamp-based preroll removal with payload modification disabled.
+- [ETSI TS 103 285](https://www.etsi.org/deliver/etsi_ts/103200_103299/103285/01.01.01_60/ts_103285v010101p.pdf): HEVC codec-string fields and compatibility/constraint bit representation.
