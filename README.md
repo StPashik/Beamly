@@ -11,7 +11,7 @@ A native macOS player for sending local videos to Apple TV and other AirPlay rec
 ## Features
 
 - Native AirPlay device selection and a static thumbnail from the middle of the video.
-- Direct playback of compatible MP4, M4V, and MOV files; FFmpeg conversion for MKV, AVI, and other formats.
+- Direct playback of compatible MP4, M4V, and MOV files; quality-preserving 4K HEVC/H.264 remuxing from MKV, including supported HDR10/HLG streams.
 - Audio-track selection, embedded subtitles, and external SRT, ASS, SSA, and VTT files.
 - A persistent queue with resume positions, drag reordering, shuffle, repeat, and keyboard controls.
 - Light and dark appearance, custom window controls, and Liquid Glass panels on macOS 26 or later. Earlier supported versions use standard translucent materials.
@@ -19,7 +19,9 @@ A native macOS player for sending local videos to Apple TV and other AirPlay rec
 - Manual update checks and installation through Sparkle, with signed update feeds and archives.
 - No accounts, subscriptions, analytics, or bundled video content.
 
-Chromecast is not supported.
+Chromecast is not supported. See [video quality and AirPlay](Docs/Media-Streaming.md) for supported profiles, subtitles, audio, and verification limits.
+
+**4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**
 
 ## Requirements
 
@@ -41,7 +43,7 @@ When using Beamly 1.0.0, select the `ffmpeg-full` bin folder in Settings if it i
 
 ### Download
 
-1. Download `Beamly-1.0.2-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
+1. Download `Beamly-1.0.3-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
 2. Extract it and move **Beamly.app** to **Applications**, or to your personal `~/Applications` folder.
 3. See [First launch](#first-launch) before opening a downloaded build.
 
@@ -67,7 +69,7 @@ The cask installs the universal app and verifies the archive's pinned SHA-256 ch
 With Node.js 18 or later and npm installed (omit `--allow-git=root` on npm 11 or earlier):
 
 ```sh
-npm install --global --allow-git=root github:StPashik/Beamly#v1.0.2
+npm install --global --allow-git=root github:StPashik/Beamly#v1.0.3
 beamly install
 beamly
 ```
@@ -149,7 +151,7 @@ See [release instructions](Docs/RELEASING.md) and the [media HTTP contract](Docs
 
 - Videos stay on your Mac and are streamed to your receiver. There is no cloud upload or telemetry.
 - The local media server uses temporary, random capability URLs over HTTP. Anyone who obtains a complete URL can access that stream until playback is revoked. Use a trusted local network; do not expose the media port to the internet.
-- Conversion uses H.264 video up to 1080p and stereo AAC audio. Direct playback preserves the original file. External subtitles are burned into converted video.
+- Compatible video is preserved, including 4K HEVC and HDR10/HLG, with separate audio and text subtitles. Explicit compatibility conversion uses H.264 up to 1080p, stereo AAC, HDR-to-SDR tone mapping, and subtitle burn-in. Dolby Vision remuxing and bitmap subtitles require the paths described in [video quality and AirPlay](Docs/Media-Streaming.md).
 - Converted segments remain on disk until playback stops. Long movies need free disk space; encoding stops if less than 256 MiB remains. A crash can leave temporary files for macOS to clean up.
 - The queue is stored at `~/Library/Application Support/Peamer/playlist.json`. The legacy directory and bundle identifier `app.peamer.mac` are retained so existing users keep their data. Removing the app or a queue entry does not remove original videos.
 - Physical receiver compatibility, older macOS versions, Intel hardware, bitmap subtitles on real media, and network changes during playback need broader testing. Intel is cross-compiled; local runtime validation was on Apple Silicon.

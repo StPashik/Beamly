@@ -114,12 +114,18 @@ struct ContentView: View {
                     if let info = model.info {
                         if info.width > 0 { Text("\(info.width) × \(info.height)") }
                         if let codec = info.videoCodec { Text(codec.uppercased()) }
+                        if info.hasDolbyVision { Text("Dolby Vision") }
+                        else if info.isHDR { Text(info.videoRange == "PQ" ? "HDR10" : "HLG") }
                     }
                     if model.duration > 0 { Text(mediaTime(model.duration)) }
                 }
                 .font(.system(size: 10)).foregroundStyle(.secondary)
                 Text(LocalizedStringKey(model.isPreparing ? "Preparing video…" : model.player.currentItem == nil ? "Ready to play" : model.isPlaying ? "Playing" : "Paused"))
                     .font(.system(size: 10)).foregroundStyle(model.isPreparing ? .secondary : mint)
+                if model.player.currentItem != nil, !model.isPreparing {
+                    Text(LocalizedStringKey(model.isUsingHLS && !model.isVideoCopied ? "1080p compatibility" : "Original video quality"))
+                        .font(.system(size: 9)).foregroundStyle(.secondary)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

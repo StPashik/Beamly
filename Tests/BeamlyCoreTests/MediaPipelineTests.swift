@@ -74,7 +74,7 @@ final class MediaPipelineTests: XCTestCase {
         let info = try await tools.probe(url: input)
         XCTAssertGreaterThan(info.duration, 7)
         let playlist = try await job.start(input: input, info: info, audioTrack: info.audioTracks.first?.id,
-                                          subtitle: .external(subtitle), startTime: 2, hardwareEncoding: false)
+                                          subtitle: .external(subtitle), startTime: 2, hardwareEncoding: false, preserveQuality: false)
         let text = try String(contentsOf: playlist, encoding: .utf8)
         XCTAssertTrue(text.contains("#EXT-X-INDEPENDENT-SEGMENTS"))
         XCTAssertGreaterThanOrEqual(text.components(separatedBy: "#EXTINF:").count - 1, 2)

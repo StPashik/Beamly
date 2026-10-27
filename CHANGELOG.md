@@ -1,3 +1,26 @@
+# Beamly 1.0.3
+
+Beamly 1.0.3 adds quality-preserving 4K HEVC/MKV streaming and supported HDR10/HLG signaling.
+
+**4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some Apple TV, television, or network configurations.** Automated media and AVPlayer checks do not replace hardware testing.
+
+- Preserve supported 4K HEVC/H.264 video in MKV by remuxing to HLS fragmented MP4, without video encoding or resizing.
+- Preserve HDR10/HLG signaling and metadata; reject unsupported HEVC/HDR and Dolby Vision remuxing explicitly instead of silently reducing quality.
+- Serve selected text subtitles as separate WebVTT, retaining cues across seeks. Bitmap subtitle burn-in remains available through explicit compatibility conversion.
+- Copy stereo AAC-LC and AC-3/E-AC-3 surround where compatible; provide stereo AAC fallback independently of video.
+- Map keyframe-aligned HLS timestamps back to the original movie for resume, seek, and track changes.
+- Add explicit quality status, HDR-to-SDR compatibility conversion, five-language settings/help, and 4K media integration checks.
+
+Dolby Vision remuxing is not supported. Bitmap subtitles require explicit compatibility conversion; ASS styling is simplified. See [video quality and AirPlay](Docs/Media-Streaming.md).
+
+**Updating from 1.0.1 or 1.0.2:** use **Beamly → Check for Updates…** or **Settings → Updates**. The app preserves your queue and settings.
+
+Download **Beamly-1.0.3-universal.zip**, extract it, and move Beamly.app to Applications. Requires macOS 14 or later on Apple Silicon or Intel; FFmpeg is installed separately.
+
+**This community build is ad-hoc signed and is not notarized by Apple.** Update feeds and archives carry separate Sparkle signatures.
+
+---
+
 # Beamly 1.0.2
 
 Beamly 1.0.2 makes the player more focused on AirPlay and simplifies device selection.

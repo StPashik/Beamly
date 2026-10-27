@@ -5,10 +5,12 @@ Requirements: Xcode 26 or later, FFmpeg, Node.js/npm, Git, an authenticated [Git
 Use GitFlow: start release/<version> from an up-to-date develop, and perform the steps below on that release branch. Feature work targets develop; fixes to a published release start as hotfix/<description> from main. Never commit release preparation directly to main.
 
 1. Update CFBundleShortVersionString and increment CFBundleVersion in Resources/Info.plist. Update the version in package.json, the pinned download/npm versions in README, and the changelog. Sparkle compares the numeric build version.
+
+   For releases containing the new 4K/HDR path, include this notice prominently in the GitHub release notes until physical receiver testing is recorded: **"4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations."** Automated FFmpeg, HTTP, and AVPlayer checks are not physical AirPlay validation. Retain specific unverified profiles and subtitle limitations from Docs/Media-Streaming.md.
 2. Run Scripts/test.sh with FFmpeg installed.
 3. Run Scripts/release.sh. This produces dist/Beamly-VERSION-universal.zip, dist/SHA256SUMS, and a cask with that archive's SHA-256 checksum. It verifies both architectures and the embedded framework's code-signature integrity.
 4. Run npm test and npm pack --dry-run. Check the ZIP contains only Beamly.app and that no private files are staged in Git.
-5. Run Scripts/sign-release.sh on the maintainer's Mac. It uses Sparkle's generate_appcast with the Keychain account app.peamer.mac to sign the archive and feed, then verifies the feed signature. It writes dist/appcast.xml; no private key leaves Keychain. If signing fails, do not publish an unsigned feed.
+5. Review Docs/UpdateNotes.html, then run Scripts/sign-release.sh on the maintainer's Mac. The HTML fragment is embedded in Sparkle's update window, including the physical-testing warning. The script uses Sparkle's generate_appcast with the Keychain account app.peamer.mac to sign the archive and feed, then verifies the feed signature. It writes dist/appcast.xml; no private key leaves Keychain. If signing fails, do not publish an unsigned feed.
 6. Commit the source changes, including the generated cask, and push the release branch. Open a pull request into main, wait for CI, and merge with a merge commit. Tag that exact merge commit. Publish the exact archive whose checksum was committed.
 7. Create a **draft** GitHub release with the ZIP, SHA256SUMS, and appcast.xml attached. Verify all three assets, then publish it as the latest release. Draft publication keeps the feed and archive available together. For example, for a future 1.1.0 release:
 

@@ -22,7 +22,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var isPreparing = false
     @Published private(set) var isExternal = false
     @Published private(set) var routesDetected = false
-    @Published private(set) var isTranscoding = false
+    @Published private(set) var isUsingHLS = false
+    @Published private(set) var isVideoCopied = false
     @Published private(set) var previewImage: NSImage?
     @Published private(set) var audioOptions: [TrackOption] = []
     @Published private(set) var subtitleOptions: [TrackOption] = []
@@ -52,7 +53,7 @@ final class AppModel: ObservableObject {
     private var lastSavedSecond = -1
     private var activity: NSObjectProtocol?
     private var directAudioGroup: AVMediaSelectionGroup?
-    private var directSubtitleGroup: AVMediaSelectionGroup?
+    private var subtitleGroup: AVMediaSelectionGroup?
     private var directAudioChoices: [Int: AVMediaSelectionOption] = [:]
     private var directSubtitleChoices: [Int: AVMediaSelectionOption] = [:]
 
@@ -237,7 +238,7 @@ final class AppModel: ObservableObject {
         guard seconds.isFinite, duration > 0 else { return }
         let target = min(max(0, seconds), max(0, duration - 0.05))
         position = target
-        if isTranscoding {
+        if isUsingHLS {
             let local = target - sourceOffset
             let seekable = player.currentItem?.seekableTimeRanges.contains { CMTimeRangeContainsTime($0.timeRangeValue, time: CMTime(seconds: local, preferredTimescale: 600)) } == true
             if local < 0 || !seekable { prepare(at: target, autoPlay: isPlaying); return }
@@ -249,7 +250,7 @@ final class AppModel: ObservableObject {
 
     func setAudio(_ id: Int?) {
         audioID = id
-        if let group = directAudioGroup, !isTranscoding {
+        if let group = directAudioGroup, !isUsingHLS {
             if let id { player.currentItem?.select(directAudioChoices[id], in: group) }
             else { player.currentItem?.selectMediaOptionAutomatically(in: group) }
         } else { prepare(at: position, autoPlay: isPlaying) }
@@ -258,7 +259,7 @@ final class AppModel: ObservableObject {
     func setSubtitle(_ id: Int?) {
         subtitleID = id
         externalSubtitle = nil
-        if let group = directSubtitleGroup, !isTranscoding {
+        if let group = subtitleGroup, !isUsingHLS {
             player.currentItem?.select(id.flatMap { directSubtitleChoices[$0] }, in: group)
         } else { prepare(at: position, autoPlay: isPlaying) }
     }
@@ -377,32 +378,41 @@ final class AppModel: ObservableObject {
                 try Task.checkCancellation()
                 let playbackURL: URL
                 if canPlayDirect {
-                    isTranscoding = false
+                    isUsingHLS = false
+                    isVideoCopied = false
                     sourceOffset = 0
                     playbackURL = try server.publish(file: movie.url)
                 } else {
-                    isTranscoding = true
+                    isUsingHLS = true
                     sourceOffset = start
                     audioOptions = metadata.audioTracks.map { TrackOption(id: $0.id, title: self.trackTitle($0)) }
                     subtitleOptions = metadata.subtitleTracks.map { TrackOption(id: $0.id, title: self.trackTitle($0)) }
                     let newJob = HLSJob(tools: tools)
                     job = newJob
                     let choice: SubtitleChoice = externalSubtitle.map { .external($0) } ?? subtitleID.map { .embedded($0) } ?? .none
-                    let playlistURL = try await newJob.start(input: movie.url, info: metadata, audioTrack: audioID, subtitle: choice, startTime: start, hardwareEncoding: defaults.bool(forKey: "hardwareEncoding"))
+                    let playlistURL = try await newJob.start(input: movie.url, info: metadata, audioTrack: audioID, subtitle: choice, startTime: start, hardwareEncoding: defaults.bool(forKey: "hardwareEncoding"), preserveQuality: defaults.bool(forKey: "directPlayback"))
                     try Task.checkCancellation()
+                    guard loadID == generation else { return }
+                    sourceOffset = newJob.sourceOffset
+                    isVideoCopied = newJob.isVideoCopied
                     playbackURL = try server.publish(directory: playlistURL.deletingLastPathComponent(), playlist: playlistURL.lastPathComponent)
                 }
                 try Task.checkCancellation()
                 guard loadID == generation else { return }
                 let item = AVPlayerItem(url: playbackURL)
-                if !isTranscoding {
+                let loadedSubtitles = isUsingHLS && (externalSubtitle != nil || subtitleID != nil)
+                    ? try await item.asset.loadMediaSelectionGroup(for: .legible) : nil
+                try Task.checkCancellation()
+                guard loadID == generation else { return }
+                subtitleGroup = loadedSubtitles
+                if !isUsingHLS {
                     // Select tracks from the streamed asset, whose groups belong to this player item.
                     let audioGroup = try? await item.asset.loadMediaSelectionGroup(for: .audible)
                     let subtitleGroup = try? await item.asset.loadMediaSelectionGroup(for: .legible)
                     try Task.checkCancellation()
                     guard loadID == generation else { return }
                     directAudioGroup = audioGroup
-                    directSubtitleGroup = subtitleGroup
+                    self.subtitleGroup = subtitleGroup
                     audioOptions = (audioGroup?.options ?? []).enumerated().map { index, option in
                         let id = metadata.audioTracks.indices.contains(index) ? metadata.audioTracks[index].id : index
                         self.directAudioChoices[id] = option
@@ -422,12 +432,13 @@ final class AppModel: ObservableObject {
                             self.errorMessage = item.error?.localizedDescription ?? NSLocalizedString("Could not read the video.", comment: "")
                             self.cancelPlayback()
                         } else if item.status == .readyToPlay {
-                            if !self.isTranscoding {
+                            if self.isUsingHLS, let group = self.subtitleGroup { item.select(group.options.first, in: group) }
+                            if !self.isUsingHLS {
                                 if let group = self.directAudioGroup, let id = self.audioID { item.select(self.directAudioChoices[id], in: group) }
-                                if let group = self.directSubtitleGroup { item.select(self.subtitleID.flatMap { self.directSubtitleChoices[$0] }, in: group) }
+                                if let group = self.subtitleGroup { item.select(self.subtitleID.flatMap { self.directSubtitleChoices[$0] }, in: group) }
                             }
                             // Ignore time-zero callbacks until the saved position has been restored.
-                            let target = self.isTranscoding ? CMTime.zero : CMTime(seconds: start, preferredTimescale: 600)
+                            let target = CMTime(seconds: max(0, start - self.sourceOffset), preferredTimescale: 600)
                             self.player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
                                 Task { @MainActor in
                                     guard let self, self.loadID == generation else { return }
@@ -494,11 +505,12 @@ final class AppModel: ObservableObject {
         job = nil
         server.revokeAll()
         directAudioGroup = nil
-        directSubtitleGroup = nil
+        subtitleGroup = nil
         directAudioChoices = [:]
         directSubtitleChoices = [:]
         isPreparing = false
         isPlaying = false
+        isVideoCopied = false
         updateActivity()
     }
 
