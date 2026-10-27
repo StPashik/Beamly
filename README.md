@@ -10,7 +10,7 @@ A native macOS player for sending local videos to Apple TV and other AirPlay rec
 
 ## Features
 
-- Native AirPlay device selection and local video preview.
+- Native AirPlay device selection and a static thumbnail from the middle of the video.
 - Direct playback of compatible MP4, M4V, and MOV files; FFmpeg conversion for MKV, AVI, and other formats.
 - Audio-track selection, embedded subtitles, and external SRT, ASS, SSA, and VTT files.
 - A persistent queue with resume positions, drag reordering, shuffle, repeat, and keyboard controls.
@@ -88,7 +88,7 @@ Allow local-network access and incoming connections if macOS asks. An AirPlay re
 
 1. Connect the Mac and receiver to the same network.
 2. Click **AirPlay** in the top-right corner and select the receiver.
-3. Drop a video or folder into the window, or press **⌘O**.
+3. Drop a video or folder into the window, or press **⌘O**. Playback starts only after an AirPlay device is connected; disconnecting pauses the player.
 4. Use the speaker and subtitles menus beside the timeline to choose tracks.
 
 | Shortcut | Action |
@@ -102,7 +102,7 @@ Allow local-network access and incoming connections if macOS asks. An AirPlay re
 | ⌘. | Stop |
 | ⌘, | Settings |
 
-Option-click the green window button to zoom the window; a regular click enters full screen.
+The window stays 674 points wide. Resize its height or use the green button to zoom vertically. The preview shows a still frame from the middle of the source video; it does not play or follow the timeline.
 
 ## Language and updates
 

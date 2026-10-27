@@ -98,6 +98,20 @@ public struct FFmpegTools: Sendable {
         return try Self.decodeProbe(output.stdout)
     }
 
+    public func thumbnail(url: URL, at seconds: Double) async throws -> Data {
+        try validateLocalFile(url)
+        guard seconds.isFinite, seconds >= 0 else {
+            throw MediaPipelineError.invalidMedia(NSLocalizedString("Invalid playback position.", comment: ""))
+        }
+        guard let executable = ffmpegURL else { throw MediaPipelineError.missingTool("ffmpeg") }
+        let output = try await ProcessRunner().run(executable: executable, arguments: [
+            "-v", "error", "-nostdin", "-ss", String(seconds), "-i", url.path,
+            "-map", "0:V:0", "-frames:v", "1", "-vf", "scale=288:162:force_original_aspect_ratio=decrease",
+            "-f", "image2pipe", "-c:v", "png", "pipe:1"
+        ], outputLimit: 1024 * 1024)
+        return output.stdout
+    }
+
     static func decodeProbe(_ data: Data) throws -> MediaInfo {
         struct Probe: Decodable {
             struct Stream: Decodable {

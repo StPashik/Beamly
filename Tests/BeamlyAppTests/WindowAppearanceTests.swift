@@ -10,6 +10,7 @@ final class WindowAppearanceTests: XCTestCase {
         _ = NSApplication.shared
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 674, height: 390), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        window.collectionBehavior = [.fullScreenPrimary]
         defer { window.close() }
         window.contentView = WindowChrome.ChromeView()
 
@@ -22,19 +23,23 @@ final class WindowAppearanceTests: XCTestCase {
         XCTAssertTrue(window.standardWindowButton(.closeButton)?.isHidden == true)
         XCTAssertTrue(window.standardWindowButton(.miniaturizeButton)?.isHidden == true)
         XCTAssertTrue(window.standardWindowButton(.zoomButton)?.isHidden == true)
+        XCTAssertEqual(window.contentMinSize.width, 674)
+        XCTAssertEqual(window.contentMaxSize.width, 674)
+        XCTAssertGreaterThan(window.contentMaxSize.height, window.contentMinSize.height)
+        XCTAssertTrue(window.collectionBehavior.contains(.fullScreenNone))
+        XCTAssertFalse(window.collectionBehavior.contains(.fullScreenPrimary))
+        window.performZoom(nil)
+        XCTAssertEqual(window.contentView?.bounds.width ?? 0, 674, accuracy: 0.5)
     }
 
     @MainActor
-    func testAirPlayPreviewDoesNotEmbedTheSystemRemotePlaybackPlaceholder() {
+    func testPreviewNeverEmbedsALivePlayer() {
         _ = NSApplication.shared
-        let player = AVPlayer(playerItem: AVPlayerItem(asset: AVMutableComposition()))
-        let external = NSHostingView(rootView: PlaybackPreview(player: player, isExternal: true, isPreparing: false).frame(width: 144, height: 81))
-        external.layoutSubtreeIfNeeded()
-        XCTAssertFalse(containsPlayerView(external))
-
-        let local = NSHostingView(rootView: PlaybackPreview(player: player, isExternal: false, isPreparing: false).frame(width: 144, height: 81))
-        local.layoutSubtreeIfNeeded()
-        XCTAssertTrue(containsPlayerView(local))
+        for image in [nil, NSImage(systemSymbolName: "film", accessibilityDescription: nil)] {
+            let preview = NSHostingView(rootView: PlaybackPreview(image: image, isPreparing: false).frame(width: 144, height: 81))
+            preview.layoutSubtreeIfNeeded()
+            XCTAssertFalse(containsPlayerView(preview))
+        }
     }
 
     @MainActor

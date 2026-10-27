@@ -35,7 +35,8 @@ final class PlaybackTests: XCTestCase {
         saved.items[1].position = 2
         let state = folder.appendingPathComponent("playlist.json")
         try JSONEncoder().encode(saved).write(to: state)
-        let model = AppModel(stateURL: state, defaults: defaults)
+        let player = AirPlayTestPlayer()
+        let model = AppModel(stateURL: state, defaults: defaults, player: player)
         defer {
             model.shutdown()
             defaults.removePersistentDomain(forName: suite)
@@ -47,6 +48,27 @@ final class PlaybackTests: XCTestCase {
         XCTAssertFalse(model.isTranscoding)
         XCTAssertEqual(model.audioOptions.count, 2)
         model.volume = 0
+        // Neither a manual request nor automatic preparation may play locally.
+        model.togglePlay()
+        XCTAssertEqual(player.playCalls, 0)
+        XCTAssertEqual(player.rate, 0)
+        XCTAssertNotNil(model.errorMessage)
+        model.errorMessage = nil
+        model.select(saved.items[0].id)
+        try await wait { !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
+        XCTAssertEqual(player.playCalls, 0)
+        player.setExternalPlaybackActive(true)
+        try await wait { model.isPlaying }
+        player.setExternalPlaybackActive(false)
+        try await wait { !model.isPlaying && !model.isExternal }
+        XCTAssertEqual(player.rate, 0)
+        let callsAfterDisconnect = player.playCalls
+        model.togglePlay()
+        XCTAssertEqual(player.playCalls, callsAfterDisconnect)
+        model.errorMessage = nil
+        player.setExternalPlaybackActive(true)
+        try await wait { model.isExternal }
+        XCTAssertFalse(model.isPlaying)
         let startingPosition = model.position
         model.togglePlay()
         try await wait { model.isPlaying && model.position > startingPosition + 0.2 }
@@ -117,5 +139,31 @@ final class PlaybackTests: XCTestCase {
         while !condition() && Date() < deadline { try await Task.sleep(nanoseconds: 100_000_000) }
         XCTAssertTrue(condition(), "Playback did not reach expected state", file: file, line: line)
         if !condition() { throw CocoaError(.fileReadUnknown) }
+    }
+}
+
+// Simulates the system's route signal; the AVPlayer decoder and clock remain real.
+private final class AirPlayTestPlayer: AVPlayer, @unchecked Sendable {
+    private let lock = NSLock()
+    private var external = false
+    private(set) var playCalls = 0
+
+    override var isExternalPlaybackActive: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return external
+    }
+
+    func setExternalPlaybackActive(_ value: Bool) {
+        willChangeValue(forKey: #keyPath(AVPlayer.isExternalPlaybackActive))
+        lock.lock()
+        external = value
+        lock.unlock()
+        didChangeValue(forKey: #keyPath(AVPlayer.isExternalPlaybackActive))
+    }
+
+    override func play() {
+        playCalls += 1
+        super.play()
     }
 }
