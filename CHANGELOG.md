@@ -1,3 +1,23 @@
+# Beamly 1.0.1
+
+Beamly 1.0.1 adds signed in-app updates and five interface languages.
+
+- Choose **English, Russian, German, French, or Spanish** in **Beamly → Settings → Language**, then restart. English is the default.
+- Use **Beamly → Check for Updates…** or **Settings → Updates** to check, download, and install a new version. Sparkle verifies the signed feed and archive. Automatic checks, background installs, and system profiling are disabled.
+- Homebrew's subtitle-capable **ffmpeg-full** is detected automatically, including its keg-only installation.
+- Playback waits for the saved-position seek to finish before recording progress, preventing a race that could overwrite the resume position with zero.
+- GitHub Actions now runs the Swift tests, universal build, localization packaging checks, and npm installer tests on main and develop.
+
+Download **Beamly-1.0.1-universal.zip**, extract it, and move Beamly.app to Applications. Verify the download using SHA256SUMS. Homebrew and npm installation instructions are in the [README](https://github.com/StPashik/Beamly#install).
+
+**Upgrading from 1.0.0:** install 1.0.1 manually, with Homebrew, or with the npm installer once. Version 1.0.0 does not contain the updater. Your existing queue and settings are preserved.
+
+Requires macOS 14 or later. The app is universal for Apple Silicon and Intel; FFmpeg is installed separately.
+
+**This community build is ad-hoc signed and is not notarized by Apple.** Sparkle's update signatures authenticate updates but do not replace Apple notarization. See [first-launch instructions](https://github.com/StPashik/Beamly#first-launch). Physical receivers, Intel runtime behavior, and older supported macOS versions need broader testing.
+
+---
+
 # Beamly 1.0.0
 
 First public open-source release, under the MIT license.
