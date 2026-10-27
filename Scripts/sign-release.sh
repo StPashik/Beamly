@@ -10,9 +10,11 @@ sparkle_tools="$PWD/.build/artifacts/sparkle/Sparkle/bin"
 staging="$(mktemp -d "$PWD/dist/appcast.XXXXXX")"
 trap 'rm -rf "$staging"' EXIT
 cp "dist/$archive" "$staging/$archive"
+cp Docs/UpdateNotes.html "$staging/${archive%.zip}.html"
 "$sparkle_tools/generate_appcast" --account app.peamer.mac \
     --download-url-prefix "https://github.com/StPashik/Beamly/releases/download/v$version/" \
     --link https://github.com/StPashik/Beamly --maximum-deltas 0 \
+    --full-release-notes-url "https://github.com/StPashik/Beamly/releases/tag/v$version" \
     -o "$staging/appcast.xml" "$staging"
 "$sparkle_tools/sign_update" --account app.peamer.mac --verify "$staging/appcast.xml"
 cp "$staging/appcast.xml" dist/appcast.xml
