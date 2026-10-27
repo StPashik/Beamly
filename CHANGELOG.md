@@ -1,9 +1,21 @@
-# Unreleased
+# Beamly 1.0.2
 
-- Open the native AirPlay picker directly from Play instead of showing an alert, then start when the receiver connects.
-- Keep the player window 674 points wide, with vertical resizing and zoom.
-- Show a static midpoint thumbnail instead of a live local preview, including an FFmpeg fallback for other formats.
-- Require a connected AirPlay device for all playback starts and pause when the route disconnects.
+Beamly 1.0.2 makes the player more focused on AirPlay and simplifies device selection.
+
+- **Fixed-width window:** the player stays 674 points wide. Resize its height or use the green button to zoom vertically.
+- **Static video preview:** a frame from the middle of the source video replaces live local playback. MP4/MOV use AVFoundation; other formats have an FFmpeg fallback. Seeking does not change the preview.
+- **AirPlay required:** all playback starts wait for a connected AirPlay receiver. Disconnecting pauses the player instead of continuing on the Mac.
+- **Fewer clicks:** pressing Play without a connection opens the native AirPlay device picker directly, without an alert. Playback starts after the receiver connects.
+
+**Updating from 1.0.1:** use **Beamly → Check for Updates…** or **Settings → Updates**. Your queue and settings are preserved. Users of 1.0.0 need one manual upgrade because that version has no updater.
+
+Download **Beamly-1.0.2-universal.zip**, extract it, and move Beamly.app to Applications. SHA256SUMS verifies the download. Homebrew and npm installation instructions are in the [README](https://github.com/StPashik/Beamly#install).
+
+Requires macOS 14 or later on Apple Silicon or Intel. FFmpeg is installed separately.
+
+**This community build is ad-hoc signed and is not notarized by Apple.** Update feeds and archives carry separate Sparkle signatures. See [first-launch instructions](https://github.com/StPashik/Beamly#first-launch). Physical receivers, Intel runtime behavior, and older supported macOS versions need broader testing.
+
+---
 
 # Beamly 1.0.1
 
