@@ -3,9 +3,11 @@ import BeamlyCore
 import SwiftUI
 
 struct SettingsView: View {
+    @ObservedObject var updater: AppUpdater
     @AppStorage("autoPlay") private var autoPlay = true
     @AppStorage("directPlayback") private var directPlayback = true
     @AppStorage("hardwareEncoding") private var hardwareEncoding = true
+    @AppStorage("appLanguage") private var appLanguage = "en"
     @AppStorage("appearance") private var appearance = "system"
     @AppStorage("toolsDirectory") private var toolsDirectory = ""
 
@@ -13,43 +15,61 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Воспроизведение") {
-                Toggle("Запускать добавленное видео автоматически", isOn: $autoPlay)
-                Toggle("Прямое воспроизведение MP4 и MOV", isOn: $directPlayback)
-                Text("Для совместимого видео перекодирование не требуется. Внешние субтитры включают обработку FFmpeg автоматически.")
+            Section("Playback") {
+                Toggle("Play added videos automatically", isOn: $autoPlay)
+                Toggle("Play MP4 and MOV directly", isOn: $directPlayback)
+                Text("Compatible videos do not need transcoding. External subtitles automatically enable FFmpeg processing.")
                     .font(.caption).foregroundStyle(.secondary)
-                Toggle("Аппаратное кодирование VideoToolbox", isOn: $hardwareEncoding)
-                Text("Остальные форматы передаются как H.264/AAC до 1080p. При ошибке аппаратного кодирования используется программное.")
+                Toggle("Use VideoToolbox hardware encoding", isOn: $hardwareEncoding)
+                Text("Other formats stream as H.264/AAC at up to 1080p. Software encoding is used if hardware encoding fails.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Оформление") {
-                Picker("Тема", selection: $appearance) {
-                    Text("Системная").tag("system")
-                    Text("Светлая").tag("light")
-                    Text("Тёмная").tag("dark")
+            Section("Language") {
+                Picker("Language", selection: $appLanguage) {
+                    ForEach(AppLanguage.allCases) { language in
+                        Text(verbatim: language.displayName).tag(language.rawValue)
+                    }
+                }
+                Text("Restart Beamly to apply the language.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Appearance") {
+                Picker("Theme", selection: $appearance) {
+                    Text("System").tag("system")
+                    Text("Light").tag("light")
+                    Text("Dark").tag("dark")
                 }.pickerStyle(.segmented)
             }
             Section("FFmpeg") {
-                LabeledContent("ffmpeg") { Text(tools.ffmpegURL?.path ?? "Не найден").textSelection(.enabled) }
-                LabeledContent("ffprobe") { Text(tools.ffprobeURL?.path ?? "Не найден").textSelection(.enabled) }
+                LabeledContent("ffmpeg") { Text(tools.ffmpegURL?.path ?? NSLocalizedString("Not found", comment: "")).textSelection(.enabled) }
+                LabeledContent("ffprobe") { Text(tools.ffprobeURL?.path ?? NSLocalizedString("Not found", comment: "")).textSelection(.enabled) }
                 HStack {
-                    Button("Выбрать папку…", action: chooseTools)
-                    if !toolsDirectory.isEmpty { Button("Автоматически") { toolsDirectory = "" } }
+                    Button("Choose Folder…", action: chooseTools)
+                    if !toolsDirectory.isEmpty { Button("Automatic") { toolsDirectory = "" } }
                 }
-                Text("Beamly находит FFmpeg в Homebrew или выбранной папке. Без него доступны совместимые MP4/MOV через AVFoundation.")
+                Text("Beamly finds FFmpeg in Homebrew or a selected folder. Without it, compatible MP4/MOV files play via AVFoundation.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Подключение") {
-                Text("Mac и телевизор должны быть в одной сети. Разрешите Beamly доступ к локальной сети и входящие подключения, затем выберите телевизор кнопкой AirPlay.")
+            Section("Connection") {
+                Text("Your Mac and TV must be on the same network. Allow Beamly to access the local network and accept incoming connections, then choose your TV with the AirPlay button.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Updates") {
+                LabeledContent("Version") {
+                    Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
+                }
+                Button("Check for Updates…", action: updater.checkForUpdates)
+                    .disabled(!updater.canCheckForUpdates)
+                Text("New versions are downloaded from GitHub and installed after your confirmation.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped).frame(width: 520, height: 490)
+        .formStyle(.grouped).frame(width: 520, height: 650)
     }
 
     private func chooseTools() {
         let panel = NSOpenPanel()
-        panel.title = "Папка с ffmpeg и ffprobe"
+        panel.title = NSLocalizedString("Folder containing ffmpeg and ffprobe", comment: "")
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         if panel.runModal() == .OK, let url = panel.url { toolsDirectory = url.path }

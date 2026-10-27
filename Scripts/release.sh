@@ -29,7 +29,8 @@ cask "beamly" do
   app "Beamly.app"
 
   caveats <<~EOS
-    For MKV conversion and external subtitles, install FFmpeg separately: brew install ffmpeg
+    For MKV conversion and external subtitles: brew install ffmpeg-full
+    Choose its bin folder in Beamly Settings if needed.
     This community build is ad-hoc signed and is not notarized by Apple.
     If macOS blocks the first launch, review System Settings > Privacy & Security.
     See https://github.com/StPashik/Beamly#first-launch for details.

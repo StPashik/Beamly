@@ -1,0 +1,40 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "NSLocalNetworkUsageDescription": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beamly sends the videos you choose to your Apple TV or TV via AirPlay."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beamly передаёт выбранное видео на ваш Apple TV или телевизор через AirPlay."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beamly überträgt die ausgewählten Videos per AirPlay an Ihr Apple TV oder Ihren Fernseher."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beamly envoie les vidéos choisies à votre Apple TV ou votre téléviseur via AirPlay."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beamly envía los vídeos que elijas a tu Apple TV o televisor mediante AirPlay."
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

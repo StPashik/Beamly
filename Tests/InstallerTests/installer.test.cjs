@@ -55,5 +55,20 @@ test('installs the actual signed release into an isolated Applications folder', 
   const installed = await installArchive(archive, entry[0], folder);
   assert.equal(installed, join(folder, 'Beamly.app'));
   assert.ok((await readFile(join(installed, 'Contents', 'MacOS', 'Beamly'))).length > 0);
+  const framework = join(installed, 'Contents/Frameworks/Sparkle.framework/Sparkle');
+  execFileSync('/usr/bin/lipo', [framework, '-verify_arch', 'arm64', 'x86_64']);
+  const plist = join(installed, 'Contents/Info.plist');
+  const key = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print :SUPublicEDKey', plist], { encoding: 'utf8' }).trim();
+  const sourceKey = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print :SUPublicEDKey', resolve('Resources/Info.plist')], { encoding: 'utf8' }).trim();
+  assert.equal(key, sourceKey);
+  assert.deepEqual(await readFile(join(installed, 'Contents/Resources/Sparkle.LICENSE')), await readFile(resolve('Resources/Sparkle.LICENSE')));
+  for (const language of ['en', 'ru', 'de', 'fr', 'es']) {
+    const resources = join(installed, 'Contents/Resources', language + '.lproj');
+    const ui = execFileSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', join(resources, 'Localizable.strings')], { encoding: 'utf8' });
+    assert.ok(JSON.parse(ui)['Check for Updates…']);
+    assert.ok(JSON.parse(ui)['Restart Beamly to apply the language.']);
+    const info = execFileSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', join(resources, 'InfoPlist.strings')], { encoding: 'utf8' });
+    assert.ok(JSON.parse(info).NSLocalNetworkUsageDescription);
+  }
   assert.deepEqual(await readdir(folder), ['Beamly.app']);
 });
