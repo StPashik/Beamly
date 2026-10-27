@@ -24,7 +24,7 @@ struct BeamlyApp: App {
                 .onAppear { delegate.attach(model) }
         }
         .defaultSize(width: 674, height: 390)
-        .windowResizability(.contentMinSize)
+        .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .appInfo) {

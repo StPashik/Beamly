@@ -1,3 +1,9 @@
+# Unreleased
+
+- Keep the player window 674 points wide, with vertical resizing and zoom.
+- Show a static midpoint thumbnail instead of a live local preview, including an FFmpeg fallback for other formats.
+- Require a connected AirPlay device for all playback starts and pause when the route disconnects.
+
 # Beamly 1.0.1
 
 Beamly 1.0.1 adds signed in-app updates and five interface languages.

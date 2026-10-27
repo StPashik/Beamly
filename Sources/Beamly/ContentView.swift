@@ -30,7 +30,7 @@ struct ContentView: View {
                 emptyState
             }
         }
-        .frame(minWidth: 640, idealWidth: 674, minHeight: 360, idealHeight: 390)
+        .frame(minWidth: 674, idealWidth: 674, maxWidth: 674, minHeight: 360, idealHeight: 390)
         .background {
             WindowMaterial()
             RadialGradient(colors: [mint.opacity(colorScheme == .dark ? 0.10 : 0.07), .clear], center: .topLeading, startRadius: 0, endRadius: 420)
@@ -104,7 +104,7 @@ struct ContentView: View {
 
     private func movieInfo(_ movie: PlaylistItem) -> some View {
         HStack(spacing: 17) {
-            PlaybackPreview(player: model.player, isExternal: model.isExternal, isPreparing: model.isPreparing)
+            PlaybackPreview(image: model.previewImage, isPreparing: model.isPreparing)
                 .frame(width: 144, height: 81)
             VStack(alignment: .leading, spacing: 8) {
                 Text(movie.title).font(.system(size: 14, weight: .semibold)).lineLimit(2).textSelection(.enabled)
@@ -285,42 +285,23 @@ struct AirPlayPicker: NSViewRepresentable {
     func updateNSView(_ view: AVRoutePickerView, context: Context) { view.player = player }
 }
 
-struct VideoPreview: NSViewRepresentable {
-    let player: AVPlayer
-    func makeNSView(context: Context) -> AVPlayerView {
-        let view = AVPlayerView()
-        view.controlsStyle = .none
-        view.videoGravity = .resizeAspect
-        view.player = player
-        return view
-    }
-    func updateNSView(_ view: AVPlayerView, context: Context) { view.player = player }
-}
-
 struct PlaybackPreview: View {
-    let player: AVPlayer
-    let isExternal: Bool
+    let image: NSImage?
     let isPreparing: Bool
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 12).fill(mint.opacity(0.045))
-            if isExternal {
-                VStack(spacing: 8) {
-                    Image(systemName: "airplay.video").font(.system(size: 22, weight: .light))
-                    Text("AirPlay").font(.system(size: 11, weight: .medium))
-                }
-                .foregroundStyle(mint)
-            } else if player.currentItem != nil {
-                VideoPreview(player: player)
+            if let image {
+                Image(nsImage: image).resizable().scaledToFit()
             } else {
-                Image(systemName: "play.rectangle").font(.system(size: 24, weight: .ultraLight)).foregroundStyle(.secondary)
+                Image(systemName: "photo").font(.system(size: 24, weight: .ultraLight)).foregroundStyle(.secondary)
             }
             if isPreparing { ProgressView().controlSize(.small) }
         }
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(mint.opacity(0.12), lineWidth: 0.5))
-        .accessibilityLabel(Text(LocalizedStringKey(isExternal ? "AirPlay" : "Video preview")))
+        .accessibilityLabel("Frame from the middle of the video")
     }
 }
 
