@@ -10,7 +10,7 @@ A native macOS player for sending local videos to Apple TV and other AirPlay rec
 
 ## Features
 
-- Native AirPlay device selection and local video preview.
+- Native AirPlay device selection and a static thumbnail from the middle of the video.
 - Direct playback of compatible MP4, M4V, and MOV files; FFmpeg conversion for MKV, AVI, and other formats.
 - Audio-track selection, embedded subtitles, and external SRT, ASS, SSA, and VTT files.
 - A persistent queue with resume positions, drag reordering, shuffle, repeat, and keyboard controls.
@@ -41,7 +41,7 @@ When using Beamly 1.0.0, select the `ffmpeg-full` bin folder in Settings if it i
 
 ### Download
 
-1. Download `Beamly-1.0.1-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
+1. Download `Beamly-1.0.2-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
 2. Extract it and move **Beamly.app** to **Applications**, or to your personal `~/Applications` folder.
 3. See [First launch](#first-launch) before opening a downloaded build.
 
@@ -67,7 +67,7 @@ The cask installs the universal app and verifies the archive's pinned SHA-256 ch
 With Node.js 18 or later and npm installed (omit `--allow-git=root` on npm 11 or earlier):
 
 ```sh
-npm install --global --allow-git=root github:StPashik/Beamly#v1.0.1
+npm install --global --allow-git=root github:StPashik/Beamly#v1.0.2
 beamly install
 beamly
 ```
@@ -88,7 +88,7 @@ Allow local-network access and incoming connections if macOS asks. An AirPlay re
 
 1. Connect the Mac and receiver to the same network.
 2. Click **AirPlay** in the top-right corner and select the receiver.
-3. Drop a video or folder into the window, or press **⌘O**.
+3. Drop a video or folder into the window, or press **⌘O**. Playback starts only after an AirPlay device is connected; disconnecting pauses the player. Pressing Play without a connection opens the AirPlay device picker directly, and playback begins after you connect a receiver.
 4. Use the speaker and subtitles menus beside the timeline to choose tracks.
 
 | Shortcut | Action |
@@ -102,7 +102,7 @@ Allow local-network access and incoming connections if macOS asks. An AirPlay re
 | ⌘. | Stop |
 | ⌘, | Settings |
 
-Option-click the green window button to zoom the window; a regular click enters full screen.
+The window stays 674 points wide. Resize its height or use the green button to zoom vertically. The preview shows a still frame from the middle of the source video; it does not play or follow the timeline.
 
 ## Language and updates
 
@@ -110,7 +110,7 @@ Open **Beamly → Settings → Language** to choose English, Russian, German, Fr
 
 Choose **Beamly → Check for Updates…** or use the same button in **Settings → Updates**. Sparkle checks the latest GitHub release, verifies the signed feed and archive, and offers to download, install, and relaunch. Checks and installations only start when you request them.
 
-The updater is included starting with **1.0.1**. Users of 1.0.0 must install 1.0.1 through the ZIP, Homebrew, or npm first. Homebrew users can also run:
+The updater is included starting with **1.0.1**. Users of 1.0.0 must install 1.0.1 or later through the ZIP, Homebrew, or npm first. Homebrew users can also run:
 
 ~~~sh
 brew update

@@ -23,20 +23,24 @@ final class AppModel: ObservableObject {
     @Published private(set) var isExternal = false
     @Published private(set) var routesDetected = false
     @Published private(set) var isTranscoding = false
+    @Published private(set) var previewImage: NSImage?
     @Published private(set) var audioOptions: [TrackOption] = []
     @Published private(set) var subtitleOptions: [TrackOption] = []
     @Published private(set) var audioID: Int?
     @Published private(set) var subtitleID: Int?
     @Published private(set) var externalSubtitle: URL?
     @Published var errorMessage: String?
+    @Published var isAirPlayPickerRequested = false
     @Published var volume = 1.0 { didSet { player.volume = Float(volume) } }
 
     // Keep one player when changing files so AVKit retains the selected AirPlay route.
-    let player = AVPlayer()
+    let player: AVPlayer
     private let server = MediaHTTPServer()
     private let routeDetector = AVRouteDetector()
     private var job: HLSJob?
     private var preparation: Task<Void, Never>?
+    private var previewTask: Task<Void, Never>?
+    private var playRequested = false
     private var loadID = UUID()
     private var timeObserver: Any?
     private var observations: [NSKeyValueObservation] = []
@@ -59,7 +63,8 @@ final class AppModel: ObservableObject {
         return FFmpegTools(customDirectory: path.isEmpty ? nil : URL(fileURLWithPath: path))
     }
 
-    init(stateURL: URL? = nil, defaults: UserDefaults = .standard) {
+    init(stateURL: URL? = nil, defaults: UserDefaults = .standard, player: AVPlayer = AVPlayer()) {
+        self.player = player
         // Keep the original data location so renaming the app preserves the queue.
         self.stateURL = stateURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Peamer/playlist.json")
         self.defaults = defaults
@@ -71,9 +76,18 @@ final class AppModel: ObservableObject {
         routeDetector.isRouteDetectionEnabled = true
         observations = [
             player.observe(\.isExternalPlaybackActive, options: [.initial, .new]) { [weak self] player, _ in
-                Task { @MainActor in self?.isExternal = player.isExternalPlaybackActive }
+                if !player.isExternalPlaybackActive, player.timeControlStatus != .paused { player.pause() }
+                Task { @MainActor in
+                    guard let self else { return }
+                    let wasExternal = self.isExternal
+                    self.isExternal = player.isExternalPlaybackActive
+                    if self.isExternal { self.isAirPlayPickerRequested = false }
+                    if self.isExternal, self.playRequested, !self.isPreparing { self.playIfConnected() }
+                    else if wasExternal, !self.isExternal, !self.isPreparing { self.pausePlayback() }
+                }
             },
             player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
+                if !player.isExternalPlaybackActive, player.timeControlStatus != .paused { player.pause() }
                 Task { @MainActor in
                     guard let self else { return }
                     self.isPlaying = player.timeControlStatus != .paused
@@ -105,6 +119,7 @@ final class AppModel: ObservableObject {
             }
         }
         configureRemoteCommands()
+        loadPreview()
     }
 
     var current: PlaylistItem? { playlist.current }
@@ -164,6 +179,7 @@ final class AppModel: ObservableObject {
         subtitleOptions = []
         position = playlist.current?.position ?? 0
         duration = playlist.current?.duration ?? 0
+        loadPreview()
         save()
         prepare(at: duration > 0 && position > duration - 3 ? 0 : position, autoPlay: autoPlay)
     }
@@ -171,10 +187,36 @@ final class AppModel: ObservableObject {
     func togglePlay() {
         if isPreparing { stop(); return }
         if player.currentItem == nil {
-            if let id = playlist.currentID { select(id) } else { openFiles() }
-        } else if isPlaying { player.pause(); remember() }
-        else if duration > 0 && position >= duration - 0.5 { seek(0); player.play() }
-        else { player.play() }
+            if let id = playlist.currentID {
+                let connected = player.isExternalPlaybackActive
+                select(id, autoPlay: connected)
+                if !connected { playIfConnected(showPicker: true) }
+            } else { openFiles() }
+        } else if isPlaying { pausePlayback() }
+        else {
+            if player.isExternalPlaybackActive, duration > 0 && position >= duration - 0.5 { seek(0) }
+            playIfConnected(showPicker: true)
+        }
+    }
+
+    private func playIfConnected(showPicker: Bool = false) {
+        // Nearby routes are discovery results, not permission to play on this Mac.
+        guard player.isExternalPlaybackActive else {
+            if showPicker {
+                playRequested = true
+                isAirPlayPickerRequested = true
+            }
+            return
+        }
+        playRequested = true
+        player.play()
+    }
+
+    private func pausePlayback() {
+        isAirPlayPickerRequested = false
+        playRequested = false
+        player.pause()
+        remember()
     }
 
     func stop() {
@@ -245,7 +287,7 @@ final class AppModel: ObservableObject {
             position = playlist.current?.position ?? 0
             duration = playlist.current?.duration ?? 0
             if let next = playlist.currentID { select(next, autoPlay: false) }
-            else { info = nil; position = 0; duration = 0 }
+            else { info = nil; position = 0; duration = 0; loadPreview() }
         }
     }
 
@@ -253,6 +295,7 @@ final class AppModel: ObservableObject {
         cancelPlayback()
         playlist.items.removeAll()
         playlist.currentID = nil
+        loadPreview()
         info = nil
         duration = 0
         position = 0
@@ -264,6 +307,42 @@ final class AppModel: ObservableObject {
     func toggleShuffle() { playlist.shuffle.toggle(); save() }
     func setRepeat(_ mode: RepeatMode) { playlist.repeatMode = mode; save() }
 
+    private func loadPreview() {
+        previewTask?.cancel()
+        previewImage = nil
+        guard let movie = current else { return }
+        let tools = tools
+        previewTask = Task { [weak self] in
+            let asset = AVURLAsset(url: movie.url)
+            let duration: Double
+            if let seconds = try? await asset.load(.duration).seconds, seconds.isFinite, seconds > 0 { duration = seconds }
+            else {
+                guard !Task.isCancelled else { return }
+                duration = (try? await tools.probe(url: movie.url))?.duration ?? 0
+            }
+            guard !Task.isCancelled else { return }
+            let middle = duration.isFinite && duration > 0 ? duration / 2 : 0
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 288, height: 162)
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = .zero
+            var image: NSImage?
+            do {
+                let frame = try await withTaskCancellationHandler {
+                    try Task.checkCancellation()
+                    return try await generator.image(at: CMTime(seconds: middle, preferredTimescale: 600)).image
+                } onCancel: { generator.cancelAllCGImageGeneration() }
+                image = NSImage(cgImage: frame, size: .zero)
+            } catch {
+                guard !Task.isCancelled else { return }
+                if let data = try? await tools.thumbnail(url: movie.url, at: middle) { image = NSImage(data: data) }
+            }
+            guard !Task.isCancelled, self?.current?.id == movie.id else { return }
+            self?.previewImage = image
+        }
+    }
+
     private func prepare(at start: Double, autoPlay: Bool) {
         guard let movie = current else { return }
         cancelPlayback()
@@ -271,6 +350,7 @@ final class AppModel: ObservableObject {
         let generation = loadID
         let start = max(0, start)
         isPreparing = true
+        playRequested = autoPlay
         position = start
         preparation = Task { [weak self] in
             guard let self else { return }
@@ -352,7 +432,7 @@ final class AppModel: ObservableObject {
                                 Task { @MainActor in
                                     guard let self, self.loadID == generation else { return }
                                     self.isPreparing = false
-                                    if autoPlay { self.player.play() }
+                                    if self.playRequested { self.playIfConnected() }
                                     self.updateNowPlaying()
                                 }
                             }
@@ -398,6 +478,8 @@ final class AppModel: ObservableObject {
     }
 
     private func cancelPlayback() {
+        isAirPlayPickerRequested = false
+        playRequested = false
         loadID = UUID()
         preparation?.cancel()
         preparation = nil
@@ -464,7 +546,7 @@ final class AppModel: ObservableObject {
     private func configureRemoteCommands() {
         let commands = MPRemoteCommandCenter.shared()
         commands.playCommand.addTarget { [weak self] _ in Task { @MainActor in if self?.isPlaying == false { self?.togglePlay() } }; return .success }
-        commands.pauseCommand.addTarget { [weak self] _ in Task { @MainActor in self?.player.pause(); self?.remember() }; return .success }
+        commands.pauseCommand.addTarget { [weak self] _ in Task { @MainActor in self?.pausePlayback() }; return .success }
         commands.togglePlayPauseCommand.addTarget { [weak self] _ in Task { @MainActor in self?.togglePlay() }; return .success }
         commands.nextTrackCommand.addTarget { [weak self] _ in Task { @MainActor in self?.next() }; return .success }
         commands.previousTrackCommand.addTarget { [weak self] _ in Task { @MainActor in self?.previous() }; return .success }
@@ -475,6 +557,7 @@ final class AppModel: ObservableObject {
     }
 
     func shutdown() {
+        previewTask?.cancel()
         remember()
         cancelPlayback()
         server.stop()

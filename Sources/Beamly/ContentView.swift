@@ -30,7 +30,7 @@ struct ContentView: View {
                 emptyState
             }
         }
-        .frame(minWidth: 640, idealWidth: 674, minHeight: 360, idealHeight: 390)
+        .frame(minWidth: 674, idealWidth: 674, maxWidth: 674, minHeight: 360, idealHeight: 390)
         .background {
             WindowMaterial()
             RadialGradient(colors: [mint.opacity(colorScheme == .dark ? 0.10 : 0.07), .clear], center: .topLeading, startRadius: 0, endRadius: 420)
@@ -63,7 +63,7 @@ struct ContentView: View {
             HStack(spacing: 7) {
                 if model.isExternal { Circle().fill(mint).frame(width: 5, height: 5).accessibilityHidden(true) }
                 Text("AirPlay").font(.system(size: 11, weight: .medium))
-                AirPlayPicker(player: model.player).frame(width: 24, height: 25)
+                AirPlayPicker(player: model.player, request: $model.isAirPlayPickerRequested).frame(width: 24, height: 25)
                     .accessibilityLabel("Choose an AirPlay device")
             }
             .padding(.leading, 12).padding(.trailing, 5).padding(.vertical, 2)
@@ -104,7 +104,7 @@ struct ContentView: View {
 
     private func movieInfo(_ movie: PlaylistItem) -> some View {
         HStack(spacing: 17) {
-            PlaybackPreview(player: model.player, isExternal: model.isExternal, isPreparing: model.isPreparing)
+            PlaybackPreview(image: model.previewImage, isPreparing: model.isPreparing)
                 .frame(width: 144, height: 81)
             VStack(alignment: .leading, spacing: 8) {
                 Text(movie.title).font(.system(size: 14, weight: .semibold)).lineLimit(2).textSelection(.enabled)
@@ -274,53 +274,73 @@ struct ContentView: View {
 
 struct AirPlayPicker: NSViewRepresentable {
     let player: AVPlayer
+    @Binding var request: Bool
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> AVRoutePickerView {
         let view = AVRoutePickerView()
         view.player = player
+        view.delegate = context.coordinator
         view.isRoutePickerButtonBordered = false
         view.setRoutePickerButtonColor(.secondaryLabelColor, for: .normal)
         view.setRoutePickerButtonColor(beamlyAccent, for: .active)
         return view
     }
-    func updateNSView(_ view: AVRoutePickerView, context: Context) { view.player = player }
-}
-
-struct VideoPreview: NSViewRepresentable {
-    let player: AVPlayer
-    func makeNSView(context: Context) -> AVPlayerView {
-        let view = AVPlayerView()
-        view.controlsStyle = .none
-        view.videoGravity = .resizeAspect
-        view.player = player
-        return view
+    func updateNSView(_ view: AVRoutePickerView, context: Context) {
+        if view.player !== player { view.player = player }
+        context.coordinator.presentRoutes(in: view, request: $request)
     }
-    func updateNSView(_ view: AVPlayerView, context: Context) { view.player = player }
+
+    @MainActor
+    final class Coordinator: NSObject, @preconcurrency AVRoutePickerViewDelegate {
+        private var presentationScheduled = false
+        private var isPresenting = false
+
+        func presentRoutes(in view: AVRoutePickerView, request: Binding<Bool>) {
+            guard request.wrappedValue, !presentationScheduled else { return }
+            presentationScheduled = true
+            DispatchQueue.main.async {
+                self.presentationScheduled = false
+                guard request.wrappedValue else { return }
+                request.wrappedValue = false
+                guard !self.isPresenting, let window = view.window else { return }
+                window.deminiaturize(nil)
+                window.makeKeyAndOrderFront(nil)
+                NSApp.activate()
+                Self.press(in: view)
+            }
+        }
+
+        func routePickerViewWillBeginPresentingRoutes(_ routePickerView: AVRoutePickerView) { isPresenting = true }
+        func routePickerViewDidEndPresentingRoutes(_ routePickerView: AVRoutePickerView) { isPresenting = false }
+
+        @discardableResult
+        static func press(in view: NSView) -> Bool {
+            // shortcut: AVKit has no macOS presentation method; replace this bridge when it provides one.
+            if view.accessibilityPerformPress() { return true }
+            return view.subviews.contains { press(in: $0) }
+        }
+    }
 }
 
 struct PlaybackPreview: View {
-    let player: AVPlayer
-    let isExternal: Bool
+    let image: NSImage?
     let isPreparing: Bool
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 12).fill(mint.opacity(0.045))
-            if isExternal {
-                VStack(spacing: 8) {
-                    Image(systemName: "airplay.video").font(.system(size: 22, weight: .light))
-                    Text("AirPlay").font(.system(size: 11, weight: .medium))
-                }
-                .foregroundStyle(mint)
-            } else if player.currentItem != nil {
-                VideoPreview(player: player)
+            if let image {
+                Image(nsImage: image).resizable().scaledToFit()
             } else {
-                Image(systemName: "play.rectangle").font(.system(size: 24, weight: .ultraLight)).foregroundStyle(.secondary)
+                Image(systemName: "photo").font(.system(size: 24, weight: .ultraLight)).foregroundStyle(.secondary)
             }
             if isPreparing { ProgressView().controlSize(.small) }
         }
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(mint.opacity(0.12), lineWidth: 0.5))
-        .accessibilityLabel(Text(LocalizedStringKey(isExternal ? "AirPlay" : "Video preview")))
+        .accessibilityLabel("Frame from the middle of the video")
     }
 }
 

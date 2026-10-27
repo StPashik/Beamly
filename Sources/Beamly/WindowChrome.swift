@@ -54,6 +54,13 @@ struct WindowChrome: NSViewRepresentable {
             window.isOpaque = false
             window.backgroundColor = .clear
             window.isMovableByWindowBackground = true
+            window.contentMinSize = NSSize(width: 674, height: 360)
+            window.contentMaxSize = NSSize(width: 674, height: window.contentMaxSize.height)
+            window.collectionBehavior.subtract([.fullScreenPrimary, .fullScreenAuxiliary])
+            window.collectionBehavior.insert(.fullScreenNone)
+            if let size = window.contentView?.bounds.size, size.width != 674 {
+                window.setContentSize(NSSize(width: 674, height: max(360, size.height)))
+            }
             for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
                 window.standardWindowButton(button)?.isHidden = true
             }
@@ -89,8 +96,7 @@ struct WindowControls: View {
             control("xmark", color: Color(red: 1, green: 0.37, blue: 0.37), label: "Close window") { window?.performClose(nil) }
             control("minus", color: Color(red: 1, green: 0.75, blue: 0.23), label: "Minimize window") { window?.miniaturize(nil) }
             control("arrow.up.left.and.arrow.down.right", color: Color(red: 0.24, green: 0.80, blue: 0.43), label: "Zoom window") {
-                if NSEvent.modifierFlags.contains(.option) { window?.performZoom(nil) }
-                else { window?.toggleFullScreen(nil) }
+                window?.performZoom(nil)
             }
         }
         .onHover { hovering = $0 }

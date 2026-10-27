@@ -3230,6 +3230,40 @@
           }
         }
       }
+    },
+    "Frame from the middle of the video": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Frame from the middle of the video"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кадр из середины видео"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Standbild aus der Videomitte"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Image du milieu de la vidéo"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fotograma de la mitad del vídeo"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
