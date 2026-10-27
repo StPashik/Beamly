@@ -41,7 +41,7 @@ When using Beamly 1.0.0, select the `ffmpeg-full` bin folder in Settings if it i
 
 ### Download
 
-1. Download `Beamly-1.0.1-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
+1. Download `Beamly-1.0.2-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
 2. Extract it and move **Beamly.app** to **Applications**, or to your personal `~/Applications` folder.
 3. See [First launch](#first-launch) before opening a downloaded build.
 
@@ -67,7 +67,7 @@ The cask installs the universal app and verifies the archive's pinned SHA-256 ch
 With Node.js 18 or later and npm installed (omit `--allow-git=root` on npm 11 or earlier):
 
 ```sh
-npm install --global --allow-git=root github:StPashik/Beamly#v1.0.1
+npm install --global --allow-git=root github:StPashik/Beamly#v1.0.2
 beamly install
 beamly
 ```
@@ -110,7 +110,7 @@ Open **Beamly → Settings → Language** to choose English, Russian, German, Fr
 
 Choose **Beamly → Check for Updates…** or use the same button in **Settings → Updates**. Sparkle checks the latest GitHub release, verifies the signed feed and archive, and offers to download, install, and relaunch. Checks and installations only start when you request them.
 
-The updater is included starting with **1.0.1**. Users of 1.0.0 must install 1.0.1 through the ZIP, Homebrew, or npm first. Homebrew users can also run:
+The updater is included starting with **1.0.1**. Users of 1.0.0 must install 1.0.1 or later through the ZIP, Homebrew, or npm first. Homebrew users can also run:
 
 ~~~sh
 brew update
