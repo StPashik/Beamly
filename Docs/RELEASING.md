@@ -42,7 +42,7 @@ The manual updater reads https://github.com/StPashik/Beamly/releases/latest/down
 
 ## Signing and notarization
 
-The community release uses an ad-hoc code signature. Sparkle's separate Ed25519 signatures authenticate updates; they do not provide an Apple-verified developer identity or notarization.
+The community archive built by Scripts/build.sh uses an ad-hoc code signature. The Xcode project retains hardened runtime and uses automatic Apple Development signing; select a development team before running it. Ad-hoc signing has no Team ID and cannot satisfy hardened runtime's library-validation requirement for the embedded Sparkle framework. Sparkle's separate Ed25519 signatures authenticate updates; they do not provide an Apple-verified developer identity or notarization.
 
 For a notarized release, sign the assembled universal application and embedded Sparkle helpers with your Developer ID Application identity and hardened runtime, submit it to Apple's notarization service, and staple the successful ticket. Recreate the ZIP, checksum, and signed feed after stapling. Verify with codesign, xcrun stapler validate, and Gatekeeper. See Apple's [distribution documentation](https://developer.apple.com/documentation/xcode/distributing-your-app-for-beta-testing-and-releases).
 

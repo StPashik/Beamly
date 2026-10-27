@@ -130,7 +130,7 @@ open build/Beamly.app
 
 The script builds and verifies both `arm64` and `x86_64` slices, assembles the app, includes the license and icon, and applies a local ad-hoc signature. No paid Apple Developer account is required. Swift Package Manager downloads the pinned [Sparkle](https://sparkle-project.org) update framework; its license is included in the app.
 
-For development, open **Beamly.xcodeproj**, select the **Beamly** scheme and **My Mac**, and run. The Xcode project and Swift package share the same core library.
+For development, open **Beamly.xcodeproj**, select your development team in **Signing & Capabilities**, then select the **Beamly** scheme and **My Mac**, and run. Xcode uses Apple Development signing with hardened runtime; its embedded Sparkle framework must be signed with the same team. Use the script above for a local ad-hoc build without a development signing identity. The Xcode project and Swift package share the same core library.
 
 ```sh
 Scripts/test.sh                # Swift tests: HTTP, FFmpeg, queue, AVPlayer, window behavior, and localization
