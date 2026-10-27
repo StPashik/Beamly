@@ -88,7 +88,7 @@ Allow local-network access and incoming connections if macOS asks. An AirPlay re
 
 1. Connect the Mac and receiver to the same network.
 2. Click **AirPlay** in the top-right corner and select the receiver.
-3. Drop a video or folder into the window, or press **⌘O**. Playback starts only after an AirPlay device is connected; disconnecting pauses the player.
+3. Drop a video or folder into the window, or press **⌘O**. Playback starts only after an AirPlay device is connected; disconnecting pauses the player. Pressing Play without a connection opens the AirPlay device picker directly, and playback begins after you connect a receiver.
 4. Use the speaker and subtitles menus beside the timeline to choose tracks.
 
 | Shortcut | Action |

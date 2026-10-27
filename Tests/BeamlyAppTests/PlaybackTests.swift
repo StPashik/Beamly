@@ -52,8 +52,8 @@ final class PlaybackTests: XCTestCase {
         model.togglePlay()
         XCTAssertEqual(player.playCalls, 0)
         XCTAssertEqual(player.rate, 0)
-        XCTAssertNotNil(model.errorMessage)
-        model.errorMessage = nil
+        XCTAssertNil(model.errorMessage)
+        XCTAssertTrue(model.isAirPlayPickerRequested)
         model.select(saved.items[0].id)
         try await wait { !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
         XCTAssertEqual(player.playCalls, 0)
@@ -65,10 +65,13 @@ final class PlaybackTests: XCTestCase {
         let callsAfterDisconnect = player.playCalls
         model.togglePlay()
         XCTAssertEqual(player.playCalls, callsAfterDisconnect)
-        model.errorMessage = nil
+        XCTAssertNil(model.errorMessage)
+        XCTAssertTrue(model.isAirPlayPickerRequested)
         player.setExternalPlaybackActive(true)
-        try await wait { model.isExternal }
-        XCTAssertFalse(model.isPlaying)
+        try await wait { model.isExternal && model.isPlaying }
+        model.togglePlay()
+        XCTAssertEqual(player.rate, 0)
+        try await wait { !model.isPlaying }
         let startingPosition = model.position
         model.togglePlay()
         try await wait { model.isPlaying && model.position > startingPosition + 0.2 }
