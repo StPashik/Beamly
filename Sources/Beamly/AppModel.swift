@@ -110,17 +110,17 @@ final class AppModel: ObservableObject {
     var current: PlaylistItem? { playlist.current }
     var networkAddress: String { server.host }
     var status: String {
-        if isPreparing { return "Подготовка видео…" }
-        if isExternal { return isPlaying ? "Воспроизводится через AirPlay" : "AirPlay подключён" }
-        return routesDetected ? "Устройства AirPlay доступны" : "Выберите Apple TV или AirPlay TV"
+        if isPreparing { return NSLocalizedString("Preparing video…", comment: "") }
+        if isExternal { return isPlaying ? NSLocalizedString("Playing via AirPlay", comment: "") : NSLocalizedString("AirPlay connected", comment: "") }
+        return routesDetected ? NSLocalizedString("AirPlay devices available", comment: "") : NSLocalizedString("Choose an Apple TV or AirPlay TV", comment: "")
     }
 
     func openFiles() {
         let panel = NSOpenPanel()
-        panel.title = "Добавить видео"
+        panel.title = NSLocalizedString("Add videos", comment: "")
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
-        panel.prompt = "Добавить"
+        panel.prompt = NSLocalizedString("Add", comment: "")
         if panel.runModal() == .OK { add(panel.urls) }
     }
 
@@ -147,7 +147,7 @@ final class AppModel: ObservableObject {
             if wasEmpty, let id = playlist.currentID { select(id, autoPlay: defaults.bool(forKey: "autoPlay")) }
             if videos.isEmpty, let subtitle = urls.first(where: { ["srt", "ass", "ssa", "vtt"].contains($0.pathExtension.lowercased()) }) {
                 attachSubtitle(subtitle)
-            } else if videos.isEmpty { errorMessage = "В выбранных файлах нет поддерживаемого видео." }
+            } else if videos.isEmpty { errorMessage = NSLocalizedString("The selected files contain no supported videos.", comment: "") }
         }
     }
 
@@ -223,13 +223,13 @@ final class AppModel: ObservableObject {
 
     func chooseSubtitle() {
         let panel = NSOpenPanel()
-        panel.title = "Выбрать субтитры"
+        panel.title = NSLocalizedString("Choose subtitles", comment: "")
         panel.allowedContentTypes = ["srt", "ass", "ssa", "vtt"].compactMap { UTType(filenameExtension: $0) }
         if panel.runModal() == .OK, let url = panel.url { attachSubtitle(url) }
     }
 
     private func attachSubtitle(_ url: URL) {
-        guard current != nil else { errorMessage = "Сначала добавьте видео."; return }
+        guard current != nil else { errorMessage = NSLocalizedString("Add a video first.", comment: ""); return }
         externalSubtitle = url
         subtitleID = nil
         prepare(at: position, autoPlay: isPlaying)
@@ -275,7 +275,7 @@ final class AppModel: ObservableObject {
         preparation = Task { [weak self] in
             guard let self else { return }
             do {
-                guard FileManager.default.isReadableFile(atPath: movie.url.path) else { throw PlaybackError("Файл не найден или недоступен: \(movie.url.lastPathComponent)") }
+                guard FileManager.default.isReadableFile(atPath: movie.url.path) else { throw PlaybackError(String(format: NSLocalizedString("File not found or inaccessible: %@", comment: ""), movie.url.lastPathComponent)) }
                 let asset = AVURLAsset(url: movie.url)
                 let metadata: MediaInfo
                 do { metadata = try await tools.probe(url: movie.url) }
@@ -339,21 +339,23 @@ final class AppModel: ObservableObject {
                     Task { @MainActor in
                         guard let self, self.loadID == generation else { return }
                         if item.status == .failed {
-                            self.errorMessage = item.error?.localizedDescription ?? "Не удалось прочитать видео."
+                            self.errorMessage = item.error?.localizedDescription ?? NSLocalizedString("Could not read the video.", comment: "")
                             self.cancelPlayback()
                         } else if item.status == .readyToPlay {
-                            self.isPreparing = false
                             if !self.isTranscoding {
                                 if let group = self.directAudioGroup, let id = self.audioID { item.select(self.directAudioChoices[id], in: group) }
                                 if let group = self.directSubtitleGroup { item.select(self.subtitleID.flatMap { self.directSubtitleChoices[$0] }, in: group) }
-                                self.player.seek(to: CMTime(seconds: start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-                                    Task { @MainActor in if self?.loadID == generation, autoPlay { self?.player.play() } }
-                                }
-                            } else {
-                                self.player.seek(to: .zero)
-                                if autoPlay { self.player.play() }
                             }
-                            self.updateNowPlaying()
+                            // Ignore time-zero callbacks until the saved position has been restored.
+                            let target = self.isTranscoding ? CMTime.zero : CMTime(seconds: start, preferredTimescale: 600)
+                            self.player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                                Task { @MainActor in
+                                    guard let self, self.loadID == generation else { return }
+                                    self.isPreparing = false
+                                    if autoPlay { self.player.play() }
+                                    self.updateNowPlaying()
+                                }
+                            }
                         }
                     }
                 }
@@ -364,7 +366,7 @@ final class AppModel: ObservableObject {
                     let reason = (note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)?.localizedDescription
                     Task { @MainActor in
                         guard let self, self.loadID == generation else { return }
-                        self.errorMessage = reason ?? "Поток видео прерван."
+                        self.errorMessage = reason ?? NSLocalizedString("The video stream was interrupted.", comment: "")
                         self.cancelPlayback()
                     }
                 }
@@ -429,8 +431,8 @@ final class AppModel: ObservableObject {
         catch {
             let backup = stateURL.deletingPathExtension().appendingPathExtension("unreadable-\(UUID().uuidString).json")
             do { try FileManager.default.moveItem(at: stateURL, to: backup) }
-            catch { errorMessage = "Не удалось сохранить повреждённую очередь: \(error.localizedDescription)"; return }
-            errorMessage = "Сохранённая очередь повреждена. Её копия оставлена в \(backup.path)."
+            catch { errorMessage = String(format: NSLocalizedString("Could not back up the damaged queue: %@", comment: ""), error.localizedDescription); return }
+            errorMessage = String(format: NSLocalizedString("The saved queue is damaged. A backup was kept at %@.", comment: ""), backup.path)
         }
     }
 
@@ -439,11 +441,11 @@ final class AppModel: ObservableObject {
             try FileManager.default.createDirectory(at: stateURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             // An interrupted write must leave the previous playlist intact.
             try JSONEncoder().encode(playlist).write(to: stateURL, options: .atomic)
-        } catch { errorMessage = "Не удалось сохранить очередь: \(error.localizedDescription)" }
+        } catch { errorMessage = String(format: NSLocalizedString("Could not save the queue: %@", comment: ""), error.localizedDescription) }
     }
 
     private func updateActivity() {
-        if isPlaying && activity == nil { activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled], reason: "Воспроизведение видео через AirPlay") }
+        if isPlaying && activity == nil { activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled], reason: "Playing video via AirPlay") }
         if !isPlaying, let activity { ProcessInfo.processInfo.endActivity(activity); self.activity = nil }
     }
 

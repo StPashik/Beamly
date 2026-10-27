@@ -86,9 +86,9 @@ struct WindowControls: View {
 
     private var buttons: some View {
         HStack(spacing: 4) {
-            control("xmark", color: Color(red: 1, green: 0.37, blue: 0.37), label: "Закрыть окно") { window?.performClose(nil) }
-            control("minus", color: Color(red: 1, green: 0.75, blue: 0.23), label: "Свернуть окно") { window?.miniaturize(nil) }
-            control("arrow.up.left.and.arrow.down.right", color: Color(red: 0.24, green: 0.80, blue: 0.43), label: "Развернуть окно") {
+            control("xmark", color: Color(red: 1, green: 0.37, blue: 0.37), label: "Close window") { window?.performClose(nil) }
+            control("minus", color: Color(red: 1, green: 0.75, blue: 0.23), label: "Minimize window") { window?.miniaturize(nil) }
+            control("arrow.up.left.and.arrow.down.right", color: Color(red: 0.24, green: 0.80, blue: 0.43), label: "Zoom window") {
                 if NSEvent.modifierFlags.contains(.option) { window?.performZoom(nil) }
                 else { window?.toggleFullScreen(nil) }
             }
@@ -96,7 +96,7 @@ struct WindowControls: View {
         .onHover { hovering = $0 }
     }
 
-    private func control(_ symbol: String, color: Color, label: String, action: @escaping () -> Void) -> some View {
+    private func control(_ symbol: String, color: Color, label: LocalizedStringKey, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Circle().fill(color.gradient)
                 .overlay(Circle().strokeBorder(.black.opacity(0.08), lineWidth: 0.5))

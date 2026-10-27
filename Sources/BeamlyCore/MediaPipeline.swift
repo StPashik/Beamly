@@ -56,10 +56,10 @@ public enum MediaPipelineError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .missingTool(let name):
-            return "\(name) не найден. Установите FFmpeg или выберите папку с ffmpeg и ffprobe в настройках."
+            return String(format: NSLocalizedString("%@ was not found. Install FFmpeg or choose the folder containing ffmpeg and ffprobe in Settings.", comment: ""), name)
         case .invalidMedia(let message): return message
         case .processFailed(let name, let message): return "\(name): \(message)"
-        case .timedOut: return "Видео не удалось подготовить за 90 секунд. Попробуйте программное кодирование."
+        case .timedOut: return NSLocalizedString("The video could not be prepared within 90 seconds. Try software encoding.", comment: "")
         }
     }
 }
@@ -117,7 +117,7 @@ public struct FFmpegTools: Sendable {
         }
         let probe = try JSONDecoder().decode(Probe.self, from: data)
         guard let video = probe.streams.first(where: { $0.codec_type == "video" && $0.disposition?["attached_pic"] != 1 }) else {
-            throw MediaPipelineError.invalidMedia("В файле не найдена видеодорожка.")
+            throw MediaPipelineError.invalidMedia(NSLocalizedString("No video track was found in the file.", comment: ""))
         }
         func tracks(_ kind: String) -> [MediaTrack] {
             probe.streams.filter { $0.codec_type == kind }.map {
@@ -136,7 +136,7 @@ private func validateLocalFile(_ url: URL) throws {
     guard url.isFileURL,
           (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
           FileManager.default.isReadableFile(atPath: url.path) else {
-        throw MediaPipelineError.invalidMedia("Файл недоступен: \(url.lastPathComponent)")
+        throw MediaPipelineError.invalidMedia(String(format: NSLocalizedString("File is inaccessible: %@", comment: ""), url.lastPathComponent))
     }
 }
 
@@ -261,7 +261,7 @@ private final class ProcessRunner: @unchecked Sendable {
         if wasCancelled { throw CancellationError() }
         guard process.terminationStatus == 0 else {
             let message = String(decoding: errors.value, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            throw MediaPipelineError.processFailed(executable.lastPathComponent, message.isEmpty ? "Процесс завершился с кодом \(process.terminationStatus)." : message)
+            throw MediaPipelineError.processFailed(executable.lastPathComponent, message.isEmpty ? String(format: NSLocalizedString("The process exited with code %d.", comment: ""), process.terminationStatus) : message)
         }
         return ProcessOutput(stdout: output.value, stderr: errors.value)
     }
@@ -298,10 +298,10 @@ public final class HLSJob {
         try validateLocalFile(input)
         guard let ffmpeg = tools.ffmpegURL else { throw MediaPipelineError.missingTool("ffmpeg") }
         if let audioTrack, !info.audioTracks.contains(where: { $0.id == audioTrack }) {
-            throw MediaPipelineError.invalidMedia("Выбранная аудиодорожка отсутствует в файле.")
+            throw MediaPipelineError.invalidMedia(NSLocalizedString("The selected audio track is missing from the file.", comment: ""))
         }
         guard startTime.isFinite && startTime >= 0 else {
-            throw MediaPipelineError.invalidMedia("Некорректная позиция воспроизведения.")
+            throw MediaPipelineError.invalidMedia(NSLocalizedString("Invalid playback position.", comment: ""))
         }
         let cache = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-HLS-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
@@ -329,7 +329,7 @@ public final class HLSJob {
                     let available = max(capacity?.volumeAvailableCapacityForImportantUsage ?? 0, Int64(capacity?.volumeAvailableCapacity ?? 0))
                     if capacity != nil && available < 256 * 1024 * 1024 {
                         guard let self, self.generation == currentGeneration else { return }
-                        self.diagnostic = "Недостаточно места для видеобуфера. Освободите место на диске и повторите."
+                        self.diagnostic = NSLocalizedString("Not enough space for the video buffer. Free up disk space and try again.", comment: "")
                         process.cancel()
                         return
                     }
@@ -356,7 +356,7 @@ public final class HLSJob {
                     }
                     // A very short clip can end between the playlist read and process termination.
                     if let contents = try? String(contentsOf: playlist, encoding: .utf8), contents.contains("#EXTINF:") { return playlist }
-                    throw MediaPipelineError.invalidMedia("FFmpeg не создал видеосегменты.")
+                    throw MediaPipelineError.invalidMedia(NSLocalizedString("FFmpeg did not create any video segments.", comment: ""))
                 }
                 try await Task.sleep(nanoseconds: 100_000_000)
             }
@@ -400,7 +400,7 @@ public final class HLSJob {
         case .none: return nil
         case .embedded(let index):
             guard let ordinal = info.subtitleTracks.firstIndex(where: { $0.id == index }) else {
-                throw MediaPipelineError.invalidMedia("Выбранная дорожка субтитров отсутствует в файле.")
+                throw MediaPipelineError.invalidMedia(NSLocalizedString("The selected subtitle track is missing from the file.", comment: ""))
             }
             let codec = info.subtitleTracks[ordinal].codec
             if ["hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub"].contains(codec) {
@@ -413,7 +413,7 @@ public final class HLSJob {
             try validateLocalFile(url)
             let ext = url.pathExtension.lowercased()
             guard ["srt", "ass", "ssa", "vtt", "webvtt", "sub", "txt", "mpl", "mpl2"].contains(ext) else {
-                throw MediaPipelineError.invalidMedia("Поддерживаются текстовые субтитры SRT, ASS, SSA и VTT.")
+                throw MediaPipelineError.invalidMedia(NSLocalizedString("SRT, ASS, SSA and VTT text subtitles are supported.", comment: ""))
             }
             let name = "subtitle.\(ext)"
             try FileManager.default.createSymbolicLink(at: inputs.appendingPathComponent(name), withDestinationURL: url)

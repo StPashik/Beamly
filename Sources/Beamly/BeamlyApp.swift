@@ -4,13 +4,22 @@ import SwiftUI
 
 @main
 struct BeamlyApp: App {
-    @StateObject private var model = AppModel()
+    @StateObject private var model: AppModel
+    @StateObject private var updater: AppUpdater
+    private let language: AppLanguage
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @AppStorage("appearance") private var appearance = "system"
+
+    init() {
+        language = AppLanguage.configureAtLaunch()
+        _model = StateObject(wrappedValue: AppModel())
+        _updater = StateObject(wrappedValue: AppUpdater())
+    }
 
     var body: some Scene {
         Window("Beamly", id: "main") {
             ContentView(model: model)
+                .environment(\.locale, Locale(identifier: language.rawValue))
                 .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
                 .onAppear { delegate.attach(model) }
         }
@@ -18,28 +27,32 @@ struct BeamlyApp: App {
         .windowResizability(.contentMinSize)
         .windowStyle(.hiddenTitleBar)
         .commands {
-            CommandGroup(replacing: .newItem) {
-                Button("Добавить видео…", action: model.openFiles).keyboardShortcut("o")
-                Button("Добавить субтитры…", action: model.chooseSubtitle).keyboardShortcut("o", modifiers: [.command, .shift]).disabled(model.current == nil)
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…", action: updater.checkForUpdates)
+                    .disabled(!updater.canCheckForUpdates)
             }
-            CommandMenu("Воспроизведение") {
-                Button(model.isPlaying ? "Пауза" : "Воспроизвести", action: model.togglePlay).keyboardShortcut(.space, modifiers: [])
-                Button("Остановить", action: model.stop).keyboardShortcut(".")
+            CommandGroup(replacing: .newItem) {
+                Button("Add Videos…", action: model.openFiles).keyboardShortcut("o")
+                Button("Add Subtitles…", action: model.chooseSubtitle).keyboardShortcut("o", modifiers: [.command, .shift]).disabled(model.current == nil)
+            }
+            CommandMenu("Playback") {
+                Button(LocalizedStringKey(model.isPlaying ? "Pause" : "Play"), action: model.togglePlay).keyboardShortcut(.space, modifiers: [])
+                Button("Stop", action: model.stop).keyboardShortcut(".")
                 Divider()
-                Button("Следующее видео", action: model.next).keyboardShortcut(.rightArrow, modifiers: .command)
-                Button("Предыдущее видео", action: model.previous).keyboardShortcut(.leftArrow, modifiers: .command)
-                Button("Вперёд на 10 секунд") { model.seek(model.position + 10) }.keyboardShortcut(.rightArrow, modifiers: [])
-                Button("Назад на 10 секунд") { model.seek(model.position - 10) }.keyboardShortcut(.leftArrow, modifiers: [])
+                Button("Next video", action: model.next).keyboardShortcut(.rightArrow, modifiers: .command)
+                Button("Previous video", action: model.previous).keyboardShortcut(.leftArrow, modifiers: .command)
+                Button("Skip Forward 10 Seconds") { model.seek(model.position + 10) }.keyboardShortcut(.rightArrow, modifiers: [])
+                Button("Skip Back 10 Seconds") { model.seek(model.position - 10) }.keyboardShortcut(.leftArrow, modifiers: [])
                 Divider()
-                Toggle("Перемешивать", isOn: Binding(get: { model.playlist.shuffle }, set: { _ in model.toggleShuffle() }))
-                Picker("Повтор", selection: Binding(get: { model.playlist.repeatMode }, set: model.setRepeat)) {
-                    Text("Выключен").tag(BeamlyCore.RepeatMode.off)
-                    Text("Одно видео").tag(BeamlyCore.RepeatMode.one)
-                    Text("Вся очередь").tag(BeamlyCore.RepeatMode.all)
+                Toggle("Shuffle", isOn: Binding(get: { model.playlist.shuffle }, set: { _ in model.toggleShuffle() }))
+                Picker("Repeat", selection: Binding(get: { model.playlist.repeatMode }, set: model.setRepeat)) {
+                    Text("Off").tag(BeamlyCore.RepeatMode.off)
+                    Text("One video").tag(BeamlyCore.RepeatMode.one)
+                    Text("Entire queue").tag(BeamlyCore.RepeatMode.all)
                 }
             }
         }
-        Settings { SettingsView().preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil) }
+        Settings { SettingsView(updater: updater).environment(\.locale, Locale(identifier: language.rawValue)).preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil) }
     }
 }
 

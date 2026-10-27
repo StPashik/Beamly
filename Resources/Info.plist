@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleLocalizations</key><array><string>en</string><string>ru</string><string>de</string><string>fr</string><string>es</string></array>
     <key>CFBundleName</key><string>Beamly</string>
     <key>CFBundleDisplayName</key><string>Beamly</string>
     <!-- Keep the original identifier to preserve existing preferences. -->
@@ -14,17 +16,25 @@
     <key>LSApplicationCategoryType</key><string>public.app-category.video</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSHighResolutionCapable</key><true/>
-    <key>NSLocalNetworkUsageDescription</key><string>Beamly передаёт выбранное видео на ваш Apple TV или телевизор через AirPlay.</string>
+    <key>SUFeedURL</key><string>https://github.com/StPashik/Beamly/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key><string>UcJ9MjrnF6NFPvE7mRfduLWSi+a4SQGcNWdJDOntyoc=</string>
+    <key>SUEnableAutomaticChecks</key><false/>
+    <key>SUAutomaticallyUpdate</key><false/>
+    <key>SUAllowsAutomaticUpdates</key><false/>
+    <key>SUEnableSystemProfiling</key><false/>
+    <key>SUVerifyUpdateBeforeExtraction</key><true/>
+    <key>SURequireSignedFeed</key><true/>
+    <key>NSLocalNetworkUsageDescription</key><string>Beamly sends the videos you choose to your Apple TV or TV via AirPlay.</string>
     <key>NSBonjourServices</key><array><string>_airplay._tcp</string><string>_raop._tcp</string></array>
     <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/><key>NSAllowsArbitraryLoadsForMedia</key><true/></dict>
     <key>CFBundleDocumentTypes</key><array><dict>
-        <key>CFBundleTypeName</key><string>Видео</string>
+        <key>CFBundleTypeName</key><string>Video</string>
         <key>CFBundleTypeRole</key><string>Viewer</string>
         <key>LSHandlerRank</key><string>Alternate</string>
         <key>LSItemContentTypes</key><array><string>public.movie</string><string>public.folder</string></array>
         <key>CFBundleTypeExtensions</key><array><string>mp4</string><string>m4v</string><string>mov</string><string>mkv</string><string>avi</string><string>webm</string><string>mpeg</string><string>mpg</string><string>m2ts</string><string>mts</string><string>ts</string><string>flv</string><string>vob</string><string>wmv</string></array>
     </dict><dict>
-        <key>CFBundleTypeName</key><string>Субтитры</string>
+        <key>CFBundleTypeName</key><string>Subtitles</string>
         <key>CFBundleTypeRole</key><string>Viewer</string>
         <key>LSHandlerRank</key><string>Alternate</string>
         <key>CFBundleTypeExtensions</key><array><string>srt</string><string>ass</string><string>ssa</string><string>vtt</string></array>

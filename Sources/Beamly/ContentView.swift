@@ -64,7 +64,7 @@ struct ContentView: View {
                 if model.isExternal { Circle().fill(mint).frame(width: 5, height: 5).accessibilityHidden(true) }
                 Text("AirPlay").font(.system(size: 11, weight: .medium))
                 AirPlayPicker(player: model.player).frame(width: 24, height: 25)
-                    .accessibilityLabel("Выбрать устройство AirPlay")
+                    .accessibilityLabel("Choose an AirPlay device")
             }
             .padding(.leading, 12).padding(.trailing, 5).padding(.vertical, 2)
             .modifier(GlassSurface(cornerRadius: 20))
@@ -83,15 +83,12 @@ struct ContentView: View {
                     .frame(width: 60, height: 60)
                     .modifier(GlassSurface(cornerRadius: 19))
             }
-            .buttonStyle(.plain).accessibilityLabel("Добавить видео")
-            Text("Перетащите видео сюда")
+            .buttonStyle(.plain).accessibilityLabel("Add videos")
+            Text("Drop videos here")
                 .font(.system(size: 18, weight: .medium, design: .rounded)).padding(.top, 20)
-            HStack(spacing: 0) {
-                Text("или ").foregroundStyle(.secondary)
-                Button("выберите файлы", action: model.openFiles).buttonStyle(.plain).foregroundStyle(mint)
-                Text(" для воспроизведения на ТВ").foregroundStyle(.secondary)
-            }
-            .font(.system(size: 12)).padding(.top, 7)
+            Button("Choose videos to play on your TV", action: model.openFiles)
+                .buttonStyle(.plain).foregroundStyle(mint)
+                .font(.system(size: 12)).padding(.top, 7)
             HStack(spacing: 7) {
                 ForEach(["MP4", "MKV", "M4V", "MOV", "AVI", "M2TS"], id: \.self) { format in
                     Text(format).font(.system(size: 9, weight: .medium, design: .monospaced))
@@ -100,7 +97,7 @@ struct ContentView: View {
                 }
             }.padding(.top, 25)
             Spacer(minLength: 25)
-            Text("С Mac — на большой экран").font(.system(size: 10)).foregroundStyle(.tertiary).padding(.bottom, 23)
+            Text("From your Mac to the big screen").font(.system(size: 10)).foregroundStyle(.tertiary).padding(.bottom, 23)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -121,7 +118,7 @@ struct ContentView: View {
                     if model.duration > 0 { Text(mediaTime(model.duration)) }
                 }
                 .font(.system(size: 10)).foregroundStyle(.secondary)
-                Text(model.isPreparing ? "Подготовка видео…" : model.player.currentItem == nil ? "Готово к воспроизведению" : model.isPlaying ? "Воспроизводится" : "На паузе")
+                Text(LocalizedStringKey(model.isPreparing ? "Preparing video…" : model.player.currentItem == nil ? "Ready to play" : model.isPlaying ? "Playing" : "Paused"))
                     .font(.system(size: 10)).foregroundStyle(model.isPreparing ? .secondary : mint)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -131,14 +128,14 @@ struct ContentView: View {
 
     private var transport: some View {
         HStack(spacing: 10) {
-            iconButton("backward.end.fill", title: "Предыдущее видео", action: model.previous)
+            iconButton("backward.end.fill", title: "Previous video", action: model.previous)
                 .font(.system(size: 10))
             Button(action: model.togglePlay) {
                 Image(systemName: model.isPreparing ? "xmark" : model.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 14, weight: .semibold)).frame(width: 34, height: 34)
                     .background(mint.gradient, in: Circle()).foregroundStyle(colorScheme == .dark ? Color(red: 0.03, green: 0.20, blue: 0.15) : .white)
-            }.buttonStyle(.plain).accessibilityLabel(model.isPreparing ? "Отменить подготовку" : model.isPlaying ? "Пауза" : "Воспроизвести")
-            iconButton("forward.end.fill", title: "Следующее видео", action: model.next)
+            }.buttonStyle(.plain).accessibilityLabel(Text(LocalizedStringKey(model.isPreparing ? "Cancel preparation" : model.isPlaying ? "Pause" : "Play")))
+            iconButton("forward.end.fill", title: "Next video", action: model.next)
                 .font(.system(size: 10))
             Text(mediaTime(scrubbing ? scrubPosition : model.position)).monospacedDigit().font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 43, alignment: .trailing)
             Slider(value: Binding(get: { scrubbing ? scrubPosition : min(model.position, max(1, model.duration)) }, set: { scrubPosition = $0 }), in: 0...max(1, model.duration), onEditingChanged: { editing in
@@ -146,7 +143,7 @@ struct ContentView: View {
                 else { scrubbing = false; model.seek(scrubPosition) }
             })
             .controlSize(.mini).disabled(model.isPreparing || model.duration <= 0)
-            .accessibilityLabel("Позиция воспроизведения")
+            .accessibilityLabel("Playback position")
             Text("−" + mediaTime(max(0, model.duration - (scrubbing ? scrubPosition : model.position))))
                 .monospacedDigit().font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 48, alignment: .leading)
             audioMenu
@@ -159,49 +156,49 @@ struct ContentView: View {
 
     private var audioMenu: some View {
         Menu {
-            Button { model.setAudio(nil) } label: { Label("По умолчанию", systemImage: model.audioID == nil ? "checkmark" : "") }
+            Button { model.setAudio(nil) } label: { Label("Default", systemImage: model.audioID == nil ? "checkmark" : "") }
             ForEach(model.audioOptions) { track in
                 Button { model.setAudio(track.id) } label: { Label(track.title, systemImage: model.audioID == track.id ? "checkmark" : "") }
             }
             Divider()
-            Picker("Громкость", selection: $model.volume) {
+            Picker("Volume", selection: $model.volume) {
                 ForEach([0, 25, 50, 75, 100], id: \.self) { value in Text("\(value)%").tag(Double(value) / 100) }
             }
         } label: { Image(systemName: model.volume == 0 ? "speaker.slash" : "speaker.wave.2").frame(width: 20) }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().disabled(model.isPreparing)
-        .help("Аудиодорожка и громкость").accessibilityLabel("Аудиодорожка и громкость")
+        .help("Audio and volume").accessibilityLabel("Audio and volume")
     }
 
     private var subtitleMenu: some View {
         Menu {
-            Button { model.setSubtitle(nil) } label: { Label("Выключены", systemImage: model.subtitleID == nil && model.externalSubtitle == nil ? "checkmark" : "") }
+            Button { model.setSubtitle(nil) } label: { Label("Off", systemImage: model.subtitleID == nil && model.externalSubtitle == nil ? "checkmark" : "") }
             ForEach(model.subtitleOptions) { track in
                 Button { model.setSubtitle(track.id) } label: { Label(track.title, systemImage: model.subtitleID == track.id ? "checkmark" : "") }
             }
             if let external = model.externalSubtitle { Label(external.lastPathComponent, systemImage: "checkmark") }
             Divider()
-            Button("Добавить файл субтитров…", action: model.chooseSubtitle)
+            Button("Add subtitle file…", action: model.chooseSubtitle)
         } label: { Image(systemName: "captions.bubble").foregroundStyle(model.subtitleID != nil || model.externalSubtitle != nil ? mint : .primary).frame(width: 20) }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().disabled(model.isPreparing)
-        .help("Субтитры").accessibilityLabel("Субтитры")
+        .help("Subtitles").accessibilityLabel("Subtitles")
     }
 
     private var queue: some View {
         VStack(spacing: 0) {
             HStack(spacing: 9) {
-                Text("ОЧЕРЕДЬ").font(.system(size: 9, weight: .semibold)).tracking(1).foregroundStyle(.tertiary)
+                Text("QUEUE").font(.system(size: 9, weight: .semibold)).tracking(1).foregroundStyle(.tertiary)
                 Text("\(model.playlist.items.count)").font(.system(size: 9, design: .monospaced)).foregroundStyle(.tertiary)
                 Spacer()
-                iconButton("shuffle", title: "Перемешивать", action: model.toggleShuffle).foregroundStyle(model.playlist.shuffle ? mint : .secondary)
+                iconButton("shuffle", title: "Shuffle", action: model.toggleShuffle).foregroundStyle(model.playlist.shuffle ? mint : .secondary)
                 Menu {
-                    Button("Выключен") { model.setRepeat(.off) }
-                    Button("Одно видео") { model.setRepeat(.one) }
-                    Button("Вся очередь") { model.setRepeat(.all) }
+                    Button("Off") { model.setRepeat(.off) }
+                    Button("One video") { model.setRepeat(.one) }
+                    Button("Entire queue") { model.setRepeat(.all) }
                 } label: { Image(systemName: model.playlist.repeatMode == .one ? "repeat.1" : "repeat").foregroundStyle(model.playlist.repeatMode == .off ? .secondary : mint) }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Повтор").accessibilityLabel("Повтор")
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Repeat").accessibilityLabel("Repeat")
                 .tint(model.playlist.repeatMode == .off ? Color.secondary : mint)
-                Button("Добавить…", action: model.openFiles).buttonStyle(.plain).help("Добавить видео ⌘O")
-                Button("Очистить", action: model.clear).buttonStyle(.plain).foregroundStyle(.secondary).padding(.leading, 4)
+                Button("Add…", action: model.openFiles).buttonStyle(.plain).help("Add videos ⌘O")
+                Button("Clear", action: model.clear).buttonStyle(.plain).foregroundStyle(.secondary).padding(.leading, 4)
             }
             .font(.system(size: 10)).padding(.horizontal, 13).frame(height: 31)
             List(selection: Binding(get: { model.playlist.currentID }, set: { id in
@@ -217,19 +214,19 @@ struct ContentView: View {
                         Spacer(minLength: 8)
                         Text(item.duration.map(mediaTime) ?? item.url.pathExtension.uppercased()).font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
                         Menu {
-                            Button("Воспроизвести") { model.select(item.id) }
-                            Button("Показать в Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
+                            Button("Play") { model.select(item.id) }
+                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
                             Divider()
-                            Button("Удалить из очереди", role: .destructive) { model.remove(item.id) }
+                            Button("Remove from queue", role: .destructive) { model.remove(item.id) }
                         } label: { Image(systemName: "ellipsis").frame(width: 17, height: 20) }
-                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("Действия с \(item.title)")
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel(String(format: NSLocalizedString("Actions for %@", comment: ""), item.title))
                     }
                     .frame(height: 27).contentShape(Rectangle())
                     .tag(item.id)
                     .contextMenu {
-                        Button("Воспроизвести") { model.select(item.id) }
-                        Button("Показать в Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
-                        Button("Удалить из очереди", role: .destructive) { model.remove(item.id) }
+                        Button("Play") { model.select(item.id) }
+                        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
+                        Button("Remove from queue", role: .destructive) { model.remove(item.id) }
                     }
                     .listRowInsets(EdgeInsets(top: 0, leading: 11, bottom: 0, trailing: 11))
                     .listRowBackground(RoundedRectangle(cornerRadius: 7).fill(item.id == model.current?.id ? mint.opacity(0.10) : .clear).padding(.horizontal, 5))
@@ -251,7 +248,7 @@ struct ContentView: View {
         .clipShape(RoundedRectangle(cornerRadius: 13))
     }
 
-    private func iconButton(_ symbol: String, title: String, action: @escaping () -> Void) -> some View {
+    private func iconButton(_ symbol: String, title: LocalizedStringKey, action: @escaping () -> Void) -> some View {
         Button(action: action) { Image(systemName: symbol).frame(width: 18, height: 23) }
             .buttonStyle(.plain).help(title).accessibilityLabel(title)
     }
@@ -323,14 +320,14 @@ struct PlaybackPreview: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(mint.opacity(0.12), lineWidth: 0.5))
-        .accessibilityLabel(isExternal ? "AirPlay" : "Предпросмотр видео")
+        .accessibilityLabel(Text(LocalizedStringKey(isExternal ? "AirPlay" : "Video preview")))
     }
 }
 
 #if DEBUG
 #Preview { ContentView(model: AppModel(stateURL: FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-empty-preview.json"))) }
 
-#Preview("Очередь") {
+#Preview("Queue") {
     let stateURL = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-queue-preview.json")
     var playlist = Playlist()
     playlist.append([URL(fileURLWithPath: "/tmp/Big Buck Bunny.mp4"), URL(fileURLWithPath: "/tmp/Sintel.mkv"), URL(fileURLWithPath: "/tmp/Tears of Steel.mov")])

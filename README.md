@@ -15,9 +15,11 @@ A native macOS player for sending local videos to Apple TV and other AirPlay rec
 - Audio-track selection, embedded subtitles, and external SRT, ASS, SSA, and VTT files.
 - A persistent queue with resume positions, drag reordering, shuffle, repeat, and keyboard controls.
 - Light and dark appearance, custom window controls, and Liquid Glass panels on macOS 26 or later. Earlier supported versions use standard translucent materials.
+- English, Russian, German, French, and Spanish interfaces, selectable in Settings. English is the default.
+- Manual update checks and installation through Sparkle, with signed update feeds and archives.
 - No accounts, subscriptions, analytics, or bundled video content.
 
-The current application interface is in Russian. The documentation and command-line installer are in English. Chromecast is not supported.
+Chromecast is not supported.
 
 ## Requirements
 
@@ -31,9 +33,9 @@ Install FFmpeg with subtitle rendering support using [Homebrew](https://brew.sh)
 brew install ffmpeg-full
 ```
 
-Current source builds use the folder selected in Settings first, then bundled tools, Homebrew's `ffmpeg-full` installation, and the standard `/opt/homebrew/bin` and `/usr/local/bin` directories. The full Homebrew build includes the `subtitles` filter required for burning text subtitles; the regular formula may omit it. FFmpeg is a separate dependency and is not included in the release archive.
+Beamly uses the folder selected in Settings first, then bundled tools, Homebrew's `ffmpeg-full` installation, and the standard `/opt/homebrew/bin` and `/usr/local/bin` directories. The full Homebrew build includes the `subtitles` filter required for burning text subtitles; the regular formula may omit it. FFmpeg is a separate dependency and is not included in the release archive.
 
-In the released Beamly 1.0.0, select the `ffmpeg-full` bin folder in Settings if it is not detected: `/opt/homebrew/opt/ffmpeg-full/bin` on Apple Silicon or `/usr/local/opt/ffmpeg-full/bin` on Intel.
+When using Beamly 1.0.0, select the `ffmpeg-full` bin folder in Settings if it is not detected: `/opt/homebrew/opt/ffmpeg-full/bin` on Apple Silicon or `/usr/local/opt/ffmpeg-full/bin` on Intel.
 
 ## Install
 
@@ -102,6 +104,19 @@ Allow local-network access and incoming connections if macOS asks. An AirPlay re
 
 Option-click the green window button to zoom the window; a regular click enters full screen.
 
+## Language and updates
+
+Open **Beamly → Settings → Language** to choose English, Russian, German, French, or Spanish. Restart Beamly to apply the selection to the interface and native dialogs. English is used on first launch, regardless of the system language. Your queue and preferences are preserved.
+
+Choose **Beamly → Check for Updates…** or use the same button in **Settings → Updates**. Sparkle checks the latest GitHub release, verifies the signed feed and archive, and offers to download, install, and relaunch. Checks and installations only start when you request them.
+
+The updater is included starting with **1.0.1**. Users of 1.0.0 must install 1.0.1 through the ZIP, Homebrew, or npm first. Homebrew users can also run:
+
+~~~sh
+brew update
+brew upgrade --cask stpashik/beamly/beamly
+~~~
+
 ## Build from source
 
 Building requires **Xcode 26 or later with the macOS 26 SDK**, including its Swift toolchain. Running the compiled app requires only macOS 14 or later.
@@ -113,12 +128,12 @@ Scripts/build.sh
 open build/Beamly.app
 ```
 
-The script builds and verifies both `arm64` and `x86_64` slices, assembles the app, includes the license and icon, and applies a local ad-hoc signature. No paid Apple Developer account or external Swift packages are required.
+The script builds and verifies both `arm64` and `x86_64` slices, assembles the app, includes the license and icon, and applies a local ad-hoc signature. No paid Apple Developer account is required. Swift Package Manager downloads the pinned [Sparkle](https://sparkle-project.org) update framework; its license is included in the app.
 
-For development, open **Beamly.xcodeproj**, select the **Beamly** scheme and **My Mac**, and run. The Xcode project and Swift package share the same core library.
+For development, open **Beamly.xcodeproj**, select your development team in **Signing & Capabilities**, then select the **Beamly** scheme and **My Mac**, and run. Xcode uses Apple Development signing with hardened runtime; its embedded Sparkle framework must be signed with the same team. Use the script above for a local ad-hoc build without a development signing identity. The Xcode project and Swift package share the same core library.
 
 ```sh
-Scripts/test.sh                # Swift tests: HTTP, FFmpeg, queue, AVPlayer, and window behavior
+Scripts/test.sh                # Swift tests: HTTP, FFmpeg, queue, AVPlayer, window behavior, and localization
 Scripts/release.sh             # Universal ZIP, SHA256SUMS, and updated Homebrew cask
 npm test                      # Installer integrity, existing-app protection, and real ZIP installation
 npm pack --dry-run            # Inspect the files included in the npm package
@@ -138,10 +153,11 @@ See [release instructions](Docs/RELEASING.md) and the [media HTTP contract](Docs
 - Converted segments remain on disk until playback stops. Long movies need free disk space; encoding stops if less than 256 MiB remains. A crash can leave temporary files for macOS to clean up.
 - The queue is stored at `~/Library/Application Support/Peamer/playlist.json`. The legacy directory and bundle identifier `app.peamer.mac` are retained so existing users keep their data. Removing the app or a queue entry does not remove original videos.
 - Physical receiver compatibility, older macOS versions, Intel hardware, bitmap subtitles on real media, and network changes during playback need broader testing. Intel is cross-compiled; local runtime validation was on Apple Silicon.
-- AirPlay discovery, selection, and authorization are handled by AVKit. Legacy standalone AirPlay pairing, Chromecast, automatic updates, and DRM-protected streaming services are outside the current scope.
+- Manual update checks contact GitHub for release metadata and assets. Automatic background checks, downloads, and system profiling are disabled.
+- AirPlay discovery, selection, and authorization are handled by AVKit. Legacy standalone AirPlay pairing, Chromecast, and DRM-protected streaming services are outside the current scope.
 
 ## Contributing and license
 
 Bug reports and focused pull requests are welcome. Include your macOS version, Mac architecture, receiver model, and a small reproducible example. Do not include private videos or complete media URLs in public reports. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Beamly's source code, documentation, and original icon are available under the [MIT license](LICENSE). FFmpeg is distributed separately under its own license. Beamly is an independent project; it is not affiliated with Apple or Beamer and includes no proprietary Beamer code or assets.
+Beamly's source code, documentation, and original icon are available under the [MIT license](LICENSE). The bundled Sparkle framework retains its [upstream license notices](Resources/Sparkle.LICENSE). FFmpeg is distributed separately under its own license. Beamly is an independent project; it is not affiliated with Apple or Beamer and includes no proprietary Beamer code or assets.

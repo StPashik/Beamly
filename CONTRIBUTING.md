@@ -12,6 +12,7 @@ Create `feature/<description>` from `develop` and target your pull request at `d
 - Keep UI and playback coordination in `Sources/Beamly`; reusable queue, media, and HTTP code lives in `Sources/BeamlyCore`.
 - Run `Scripts/test.sh` after changing application behavior. Run `Scripts/release.sh` and `npm test` after changing packaging or installation.
 - GitHub Actions runs these checks for pull requests targeting `develop` or `main`, and for pushes to both branches. The workflow is defined in `.github/workflows/ci.yml`.
+- Keep all five translations in Resources/Localizable.xcstrings and Resources/InfoPlist.xcstrings complete. English is the source language; keep format arguments consistent across translations.
 - Add a small regression test for a bug. Explain non-obvious platform behavior in English comments.
 - Keep original media files untouched, retain cancellation and path validation, and preserve existing users' queue and settings.
 - Use generated or freely distributable media in tests. Do not commit personal settings, API keys, signing certificates, binaries, or local investigation output.
