@@ -1,8 +1,16 @@
-# Unreleased
+# Beamly 1.0.5
+
+Beamly finds matching subtitle files beside your videos and remembers each movie's timing correction.
+
+**4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**
 
 - Find adjacent SRT, ASS, SSA, and VTT files matching the video's basename, including language suffixes such as `Movie.ru.srt`. Select an exact-basename match or the only match automatically; list other matches in the subtitle menu.
 - Adjust subtitle timing in 0.5-second steps and reset it from a dedicated popover. Keep each movie's correction with its saved queue entry, including across relaunches.
 - Apply timing to separate WebVTT captions and compatibility subtitle rendering without shifting the video or audio. Preserve corrections across seeks and track changes.
+
+**Update:** choose **Beamly → Check for Updates…** or **Settings → Updates**. Your queue and preferences are preserved; existing queue files remain compatible. FFmpeg and FFprobe are included.
+
+**This community build is ad-hoc signed and is not notarized by Apple.** Requires macOS 14 or later on Apple Silicon or Intel.
 
 ---
 
