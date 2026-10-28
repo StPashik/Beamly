@@ -1,9 +1,19 @@
-# Unreleased
+# Beamly 1.0.4
+
+Beamly now includes FFmpeg and FFprobe for MKV streaming, external subtitles, and compatibility conversion without a separate installation.
+
+**4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**
 
 - Include standalone universal FFmpeg/FFprobe so MKV playback, external subtitles, and compatibility conversion work without a separate Homebrew installation.
 - Preserve the existing 4K HEVC remux, HDR-to-SDR, libass subtitle, and software/hardware H.264 paths. Retain custom tool-folder overrides.
 - Build pinned upstream sources, include component notices, and package complete corresponding GPLv2 media source beside application archives. Beamly's own code remains MIT licensed.
 - Verify signed arm64/x86_64 helpers without Homebrew in PATH; run media integration tests against the bundled tools.
+
+**Update:** choose **Beamly → Check for Updates…** or **Settings → Updates**. The universal app includes FFmpeg/FFprobe and their notices; the matching release also contains complete corresponding media source. Requires macOS 14 or later.
+
+**This community build is ad-hoc signed and is not notarized by Apple.** Your queue and preferences are preserved.
+
+---
 
 # Beamly 1.0.3
 

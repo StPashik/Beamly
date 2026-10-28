@@ -1,6 +1,6 @@
 # Bundled media tools
 
-Development builds after 1.0.3 include standalone, universal FFmpeg and FFprobe executables in `Beamly.app/Contents/Helpers`. They run on macOS 14 or later on Apple Silicon and Intel. No Homebrew installation, codec download, Python, or Node runtime is required by the installed application. Releases through 1.0.3 still need a separate FFmpeg installation.
+Beamly 1.0.4 includes standalone, universal FFmpeg and FFprobe executables in `Beamly.app/Contents/Helpers`. They run on macOS 14 or later on Apple Silicon and Intel. No Homebrew installation, codec download, Python, or Node runtime is required by the installed application. Releases through 1.0.3 still need a separate FFmpeg installation.
 
 The existing playback paths are unchanged: compatible files play directly, supported HEVC/H.264 is remuxed without video encoding, and explicit compatibility conversion uses H.264/AAC. The bundled build includes libass with system CoreText fonts for subtitle burn-in, zimg for HDR-to-SDR conversion, dav1d for AV1 input decoding, and VideoToolbox hardware encoding. It includes the software H.264 encoder used when hardware encoding is disabled or fails. HEVC encoding is not needed for remuxing; libx265 is used only by the development test-fixture generator.
 

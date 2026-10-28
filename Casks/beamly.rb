@@ -1,6 +1,6 @@
 cask "beamly" do
-  version "1.0.3"
-  sha256 "f956fcc91b5520974111fdbda5c4946e130bd94bd88343dece44f870355d9924"
+  version "1.0.4"
+  sha256 "590f4d91c21b1935aab8874a86c1a1f13439281824b64718de42cef3ea386a3f"
 
   url "https://github.com/StPashik/Beamly/releases/download/v#{version}/Beamly-#{version}-universal.zip"
   name "Beamly"
@@ -12,8 +12,7 @@ cask "beamly" do
   app "Beamly.app"
 
   caveats <<~EOS
-    For MKV streaming and external subtitles: brew install ffmpeg-full
-    Choose its bin folder in Beamly Settings if needed.
+    FFmpeg and ffprobe are included; no Homebrew media packages are required.
     This community build is ad-hoc signed and is not notarized by Apple.
     If macOS blocks the first launch, review System Settings > Privacy & Security.
     See https://github.com/StPashik/Beamly#first-launch for details.
