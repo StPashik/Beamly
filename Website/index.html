@@ -10,6 +10,8 @@
   <meta property="og:type" content="website">
   <meta property="og:locale" content="ru_RU">
   <title>Beamly — Ваши фильмы. Большой экран.</title>
+  <link rel="alternate" hreflang="ru" href="index.html?lang=ru">
+  <link rel="alternate" hreflang="en" href="en.html?lang=en">
   <link rel="icon" type="image/png" href="assets/beamly-icon.png">
   <link rel="stylesheet" href="styles.css">
   <link rel="preload" as="image" href="assets/cinema.jpg">
@@ -40,7 +42,13 @@
       <a class="nav-link" href="#how-it-works">Как это работает</a>
       <a class="nav-link" href="https://github.com/StPashik/Beamly">GitHub <span aria-hidden="true">↗</span></a>
     </nav>
-    <a class="button button-small button-outline" href="#download">Скачать для Mac <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg></a>
+    <div class="header-actions">
+      <div class="language-switch" role="group" aria-label="Язык страницы">
+        <a class="language-link" data-language="ru" href="index.html?lang=ru" lang="ru" hreflang="ru" aria-label="Русский" aria-current="page">RU</a>
+        <a class="language-link" data-language="en" href="en.html?lang=en" lang="en" hreflang="en" aria-label="English">EN</a>
+      </div>
+      <a class="button button-small button-outline" href="#download" aria-label="Скачать для Mac"><span class="header-download-label">Скачать для Mac</span><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg></a>
+    </div>
   </header>
 
   <main id="main">

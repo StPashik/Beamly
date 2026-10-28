@@ -20,6 +20,11 @@ a:focus-visible,button:focus-visible,summary:focus-visible,[tabindex="0"]:focus-
 .brand img{object-fit:contain}
 .brand-dot{color:var(--mint)}
 .header nav{display:flex;gap:30px}
+.header-actions{display:flex;align-items:center;gap:14px}
+.language-switch{display:flex;gap:2px;padding:3px;border:1px solid #ffffff20;border-radius:8px}
+.language-link{display:grid;place-items:center;min-width:32px;min-height:30px;border-radius:5px;font-size:10px;font-weight:600;letter-spacing:.4px;color:var(--muted)}
+.language-link:hover{color:var(--text);background:#ffffff08}
+.language-link[aria-current="page"]{background:#a5f3d01a;color:var(--mint)}
 .nav-link{color:#b5c0bb;font-size:13px;transition:color .2s}
 .nav-link:hover{color:var(--mint)}
 .nav-link span{margin-left:3px;color:#6c8279}
@@ -225,6 +230,8 @@ h2{font-size:39px}
 .faq-section h2{font-size:30px}
 }
 
+@media(max-width:900px){.header nav{display:none}}
+
 @media(max-width:760px){.wrap{width:calc(100% - 40px)}
 .header{height:82px}
 .header nav{display:none}
@@ -300,6 +307,8 @@ h2{font-size:36px;letter-spacing:-1.6px}
 }
 
 @media(max-width:440px){.wrap{width:calc(100% - 36px)}
+.header-actions{gap:8px}
+.header-download-label{display:none}
 .header .button{font-size:10px;padding-inline:11px;min-height:35px;gap:8px}
 .hero h1{font-size:clamp(36px,11.8vw,46px);letter-spacing:-2.7px}
 .hero-description{font-size:12px;line-height:1.8;max-width:310px}

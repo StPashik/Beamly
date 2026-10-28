@@ -1,10 +1,41 @@
+const pageLanguage = document.documentElement.lang;
+const currentURL = new URL(window.location.href);
+const requestedLanguage = currentURL.searchParams.get('lang');
+let savedLanguage;
+try {
+  savedLanguage = window.localStorage.getItem('beamly-language');
+} catch {
+  // Storage can be unavailable in private browsing or local file previews.
+}
+const preferredLanguage = ['ru', 'en'].includes(requestedLanguage)
+  ? requestedLanguage
+  : pageLanguage === 'ru' && savedLanguage === 'en' ? 'en' : pageLanguage;
+if (preferredLanguage !== pageLanguage) {
+  const destination = new URL(preferredLanguage === 'en' ? 'en.html' : 'index.html', currentURL);
+  destination.search = currentURL.search;
+  destination.hash = currentURL.hash;
+  window.location.replace(destination.href);
+}
+for (const link of document.querySelectorAll('.language-link')) {
+  link.addEventListener('click', () => {
+    try {
+      window.localStorage.setItem('beamly-language', link.getAttribute('data-language'));
+    } catch {
+      // The language links still work without storage.
+    }
+  });
+}
+
+const playbackText = pageLanguage === 'en'
+  ? { pause: 'Pause the demo', resume: 'Resume the demo', playing: 'Playing on your TV', paused: 'Paused' }
+  : { pause: 'Поставить демонстрацию на паузу', resume: 'Продолжить демонстрацию', playing: 'Воспроизводится на телевизоре', paused: 'На паузе' };
 const playButton = document.querySelector('#demo-play');
 playButton.addEventListener('click', () => {
   const playing = playButton.getAttribute('aria-pressed') !== 'true';
   playButton.setAttribute('aria-pressed', String(playing));
-  playButton.setAttribute('aria-label', playing ? 'Поставить демонстрацию на паузу' : 'Продолжить демонстрацию');
+  playButton.setAttribute('aria-label', playing ? playbackText.pause : playbackText.resume);
   playButton.querySelector('use').setAttribute('href', playing ? '#i-pause' : '#i-play');
-  document.querySelector('#playback-status').textContent = playing ? 'Воспроизводится на телевизоре' : 'На паузе';
+  document.querySelector('#playback-status').textContent = playing ? playbackText.playing : playbackText.paused;
 });
 
 const tabs = [...document.querySelectorAll('[role="tab"]')];
