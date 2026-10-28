@@ -32,6 +32,8 @@ When selecting a video, Beamly scans only its containing folder for readable SRT
 
 That behavior is the default **Automatic** subtitle preference. **Off** prevents automatic caption selection. A specific language matches embedded metadata or the first sidecar suffix, such as `Movie.ru.srt`, `Movie.rus.srt`, or `Movie.ru-RU.srt`; a plain `Movie.srt` has no inferred language. Full captions take priority over tracks marked forced-only, and matching sidecars take priority over embedded captions of the same kind. A missing language leaves captions off. Bitmap captions are not automatically selected while **Preserve video quality** is enabled.
 
+AVFoundation can expose both full and forced-only views of the same MOV/MP4 text track. The source-track menu uses full views when available, retaining the source's forced/default flags and stream IDs, so these generated views do not become nonexistent FFmpeg streams when timing changes require HLS.
+
 **Subtitle timing…** adjusts the selected captions in 0.5-second steps. Positive values show captions later, negative values earlier. WebVTT cue times are shifted relative to the measured HLS origin; compatibility rendering changes only the subtitle clock and restores the video clock afterward. Embedded captions requiring a correction use HLS instead of direct MP4 playback and retain the same profile restrictions. Bitmap caption shifts use FFmpeg's subtitle-video timestamp adjustment before overlay. Corrections survive seeking and track changes and are stored with the movie's queue entry. Existing queues without a correction retain zero offset; removing an entry removes its correction. Source files are never modified.
 
 ## Seeking and buffering

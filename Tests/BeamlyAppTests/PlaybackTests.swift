@@ -374,6 +374,57 @@ final class PlaybackTests: XCTestCase {
     }
 
     @MainActor
+    func testNativeForcedSubtitleVariantsKeepSourceStreamIDsAfterHLSRebuild() async throws {
+        let tools = mediaTestTools()
+        guard let ffmpeg = tools.ffmpegURL, tools.ffprobeURL != nil else { throw XCTSkip("FFmpeg is required") }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-forced-track-\(UUID())")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let suite = "app.beamly.forced-track.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        defaults.set(false, forKey: "autoPlay")
+        defaults.set(ffmpeg.deletingLastPathComponent().path, forKey: "toolsDirectory")
+        defaults.set("ru", forKey: "preferredSubtitleLanguage")
+        let caption = folder.appendingPathComponent("captions.srt")
+        try "1\n00:00:00,500 --> 00:00:05,500\nFull or forced caption\n".write(to: caption, atomically: true, encoding: .utf8)
+        let video = folder.appendingPathComponent("Movie.mp4")
+        let process = Process()
+        process.executableURL = ffmpeg
+        process.arguments = ["-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "color=c=blue:size=160x90:rate=24:duration=6",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=6", "-i", caption.path,
+            "-map", "0:v", "-map", "1:a", "-map", "2:s", "-map", "2:s", "-c:v", "libx264", "-c:a", "aac", "-c:s", "mov_text",
+            "-metadata:s:s:0", "language=rus", "-metadata:s:s:1", "language=rus",
+            "-disposition:s:0", "forced", "-disposition:s:1", "default", "-movflags", "+faststart", video.path]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run(); process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        let model = AppModel(stateURL: folder.appendingPathComponent("queue.json"), defaults: defaults, player: AirPlayTestPlayer())
+        defer { model.shutdown() }
+        model.add([video])
+        try await wait(diagnostic: model.errorMessage ?? "no player error") { !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
+        XCTAssertFalse(model.isUsingHLS)
+        XCTAssertEqual(model.subtitleOptions.map(\.id), [2, 3], "Native forced-only aliases must not become extra source streams")
+        XCTAssertEqual(model.subtitleID, 3, "Prefer full captions of the requested language")
+        guard model.subtitleID == 3 else { return }
+        model.setSubtitleDelay(0.5)
+        try await wait(diagnostic: model.errorMessage ?? "no player error") { !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
+        XCTAssertTrue(model.isUsingHLS)
+        XCTAssertTrue(model.isVideoCopied)
+        XCTAssertEqual(model.subtitleID, 3)
+        model.setSubtitle(2)
+        model.setSubtitleDelay(0)
+        try await wait(diagnostic: model.errorMessage ?? "no player error") { !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
+        XCTAssertFalse(model.isUsingHLS)
+        XCTAssertEqual(model.subtitleID, 2, "A physical forced track remains available for manual selection")
+        model.setSubtitleDelay(-0.5)
+        try await wait(diagnostic: model.errorMessage ?? "no player error") { !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
+        XCTAssertEqual(model.subtitleID, 2)
+        XCTAssertNil(model.errorMessage)
+    }
+
+    @MainActor
     private func findTable(_ view: NSView) -> NSTableView? {
         if let table = view as? NSTableView { return table }
         for child in view.subviews { if let table = findTable(child) { return table } }

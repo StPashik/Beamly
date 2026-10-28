@@ -515,7 +515,11 @@ final class AppModel: ObservableObject {
 
     private static func nativeTracks(in group: AVMediaSelectionGroup?, source: [MediaTrack], choices: inout [Int: AVMediaSelectionOption]) -> [MediaTrack] {
         var remaining = source
-        return (group?.options ?? []).enumerated().map { index, option in
+        let options = group?.options ?? []
+        // AVFoundation adds forced-only views of MOV text tracks; they are not extra source streams.
+        let full = AVMediaSelectionGroup.mediaSelectionOptions(from: options, withoutMediaCharacteristics: [.containsOnlyForcedSubtitles])
+        return (full.isEmpty ? options : full).enumerated().compactMap { index, option -> MediaTrack? in
+            guard source.isEmpty || !remaining.isEmpty else { return nil }
             let language = option.extendedLanguageTag ?? option.locale?.language.languageCode?.identifier
             let code = MediaLanguages.normalized(language)
             // Native groups can omit or reorder streams; retain FFmpeg's global stream IDs.
@@ -523,7 +527,7 @@ final class AppModel: ObservableObject {
             let track = match.map { remaining.remove(at: $0) }
             let id = track?.id ?? (source.map(\.id).max() ?? -1) + index + 1
             var disposition = track?.disposition ?? [:]
-            disposition["default"] = option == group?.defaultOption ? 1 : 0
+            if option == group?.defaultOption { disposition["default"] = 1 }
             if option.hasMediaCharacteristic(.isOriginalContent) { disposition["original"] = 1 }
             if option.hasMediaCharacteristic(.containsOnlyForcedSubtitles) { disposition["forced"] = 1 }
             choices[id] = option
