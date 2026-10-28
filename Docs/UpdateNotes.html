@@ -1,13 +1,17 @@
 <p><strong>4K/HDR over AirPlay has not been tested on physical receivers.
 Playback may be unstable or incompatible with some devices or network configurations.</strong></p>
-<p><strong>More convenient subtitles.</strong> Beamly finds matching SRT, ASS, SSA, and VTT files beside your video,
-including names such as Movie.ru.srt. An exact-basename file or the only match is selected automatically;
-choose between multiple language files in the subtitles menu.</p>
-<p>Choose <strong>Subtitles → Subtitle timing…</strong> to move captions earlier or later in 0.5-second steps,
-or reset the correction. Positive values show subtitles later. Each movie keeps its correction with its
-saved queue entry, including after relaunch. Original video and subtitle files are never changed.</p>
+<p><strong>Audio and subtitle language preferences.</strong> In <strong>Settings → Track preferences</strong>,
+choose your preferred audio language or original audio, and a subtitle language, automatic selection, or off.
+These independent choices are saved across launches and applied when each video opens, including the next queue entry.</p>
+<p>Original audio requires an original-track marker in the file. Missing preferred audio uses the file's default track;
+missing preferred subtitles stay off. Language selection matches embedded metadata and adjacent subtitle filenames,
+and prefers full captions over forced-only captions. The initial file-default and automatic settings retain previous behavior.</p>
+<p>Manual track choices survive seeking and subtitle timing changes. This release also fixes the mapping of
+AVFoundation's generated forced-only subtitle views when playback switches to HLS. Preference controls and help
+are available in all five interface languages.</p>
 <p>Supported 4K HEVC/H.264 video keeps its original quality and supported HDR10/HLG metadata.
-Caption corrections remain aligned after seeking and track changes. Your queue and preferences are preserved.</p>
+Caption corrections remain aligned after seeking and track changes. Your queue, timing corrections, and preferences are preserved.
+Original video and subtitle files are never changed.</p>
 <p>FFmpeg and ffprobe remain included for Apple Silicon and Intel. No Homebrew media packages are required.</p>
 <p>Dolby Vision remuxing is not supported. Bitmap subtitles require compatibility conversion;
 ASS styling is simplified. See the full release notes for supported profiles and verification limits.</p>
