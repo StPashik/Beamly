@@ -1,18 +1,18 @@
 # Releasing Beamly
 
-Requirements: Xcode 26 or later, FFmpeg, Node.js/npm, Git, an authenticated [GitHub CLI](https://cli.github.com/), and the Sparkle signing key in the maintainer's macOS Keychain. Do not include credentials in this repository.
+Requirements: Xcode 26 or later, Python 3.12+, CMake, pkg-config, make, FFmpeg with libx265 for fixtures, Node.js/npm, Git, an authenticated [GitHub CLI](https://cli.github.com/), and the Sparkle signing key in the maintainer's macOS Keychain. Do not include credentials in this repository. The packaged application includes standalone media helpers; Homebrew is only a developer/fixture dependency.
 
 Use GitFlow: start release/<version> from an up-to-date develop, and perform the steps below on that release branch. Feature work targets develop; fixes to a published release start as hotfix/<description> from main. Never commit release preparation directly to main.
 
 1. Update CFBundleShortVersionString and increment CFBundleVersion in Resources/Info.plist. Update the version in package.json, the pinned download/npm versions in README, and the changelog. Sparkle compares the numeric build version.
 
    For releases containing the new 4K/HDR path, include this notice prominently in the GitHub release notes until physical receiver testing is recorded: **"4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations."** Automated FFmpeg, HTTP, and AVPlayer checks are not physical AirPlay validation. Retain specific unverified profiles and subtitle limitations from Docs/Media-Streaming.md.
-2. Run Scripts/test.sh with FFmpeg installed.
-3. Run Scripts/release.sh. This produces dist/Beamly-VERSION-universal.zip, dist/SHA256SUMS, and a cask with that archive's SHA-256 checksum. It verifies both architectures and the embedded framework's code-signature integrity.
+2. Run python3 Scripts/build-media.py, then Scripts/build.sh and BEAMLY_TEST_APP_BUNDLE="$PWD/build/Beamly.app" Scripts/test.sh. Keep the libx265 fixture generator installed on the developer machine. Runtime tests must use the actual bundled helpers.
+3. Run Scripts/release.sh. This produces dist/Beamly-VERSION-universal.zip, dist/Beamly-FFmpeg-Sources-VERSION.tar.xz, dist/SHA256SUMS for both archives, and a cask with the application archive's SHA-256 checksum. It verifies both helper CPU slices without Homebrew in PATH, original license notices, system-only runtime dependencies, subtitle rendering, and code-signature integrity. Review Docs/Bundled-media.md. Publishing complete corresponding source beside the GPLv2 helpers is mandatory.
 4. Run npm test and npm pack --dry-run. Check the ZIP contains only Beamly.app and that no private files are staged in Git.
 5. Review Docs/UpdateNotes.html, then run Scripts/sign-release.sh on the maintainer's Mac. The HTML fragment is embedded in Sparkle's update window, including the physical-testing warning. The script uses Sparkle's generate_appcast with the Keychain account app.peamer.mac to sign the archive and feed, then verifies the feed signature. It writes dist/appcast.xml; no private key leaves Keychain. If signing fails, do not publish an unsigned feed.
 6. Commit the source changes, including the generated cask, and push the release branch. Open a pull request into main, wait for CI, and merge with a merge commit. Tag that exact merge commit. Publish the exact archive whose checksum was committed.
-7. Create a **draft** GitHub release with the ZIP, SHA256SUMS, and appcast.xml attached. Verify all three assets, then publish it as the latest release. Draft publication keeps the feed and archive available together. For example, for a future 1.1.0 release:
+7. Create a **draft** GitHub release with the application ZIP, corresponding media-source TAR.XZ, SHA256SUMS, and appcast.xml attached. Verify all four assets, then publish it as the latest release. The source archive must contain the exact manifest/recipe, upstream archives, notices, and build configurations used for these helpers. Draft publication keeps the feed and binaries/source available together. For example, for a future 1.1.0 release:
 
 ~~~sh
 git switch main
@@ -20,7 +20,8 @@ git pull --ff-only origin main
 git tag -a v1.1.0 -m "Beamly 1.1.0"
 git push origin v1.1.0
 gh release create v1.1.0 \
-  dist/Beamly-1.1.0-universal.zip dist/SHA256SUMS dist/appcast.xml \
+  dist/Beamly-1.1.0-universal.zip dist/Beamly-FFmpeg-Sources-1.1.0.tar.xz \
+  dist/SHA256SUMS dist/appcast.xml \
   --verify-tag --draft --title "Beamly 1.1.0" --notes-file release-notes.md
 gh release edit v1.1.0 --draft=false --latest
 ~~~
@@ -40,7 +41,7 @@ The manual updater reads https://github.com/StPashik/Beamly/releases/latest/down
 
 ## GitHub Actions
 
-[ci.yml](../.github/workflows/ci.yml) runs Swift tests, the universal build, compiled-localization checks, and npm installer tests on macOS 26. It checks pull requests targeting develop or main, and pushes to both branches. CI has read-only repository access, receives no private signing key, and does not publish releases or modify the cask in Git. Workflow changes require permission to write workflows.
+[ci.yml](../.github/workflows/ci.yml) builds the pinned standalone universal helpers, then runs Swift tests against them, the universal app build, compiled-localization checks, corresponding-source packaging, and npm installer tests on standard macOS 26 runners. FFmpeg from Homebrew generates HEVC fixtures only. It checks pull requests targeting develop or main, and pushes to both branches. CI has read-only repository access, receives no private signing key, and does not publish releases or modify the cask in Git. Workflow changes require permission to write workflows.
 
 ## Signing and notarization
 

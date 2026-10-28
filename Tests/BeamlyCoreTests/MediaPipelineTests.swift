@@ -2,6 +2,29 @@ import XCTest
 @testable import BeamlyCore
 
 final class MediaPipelineTests: XCTestCase {
+    func testBundledToolsTakePriorityOverHomebrewAndRetainCustomOverride() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-tools-\(UUID())")
+        let app = root.appendingPathComponent("Fixture.app")
+        let helpers = app.appendingPathComponent("Contents/Helpers")
+        let custom = root.appendingPathComponent("custom")
+        try FileManager.default.createDirectory(at: helpers, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: custom, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>app.beamly.tools-fixture</string></dict></plist>".utf8)
+            .write(to: app.appendingPathComponent("Contents/Info.plist"))
+        for directory in [helpers, custom] {
+            for name in ["ffmpeg", "ffprobe"] {
+                let file = directory.appendingPathComponent(name)
+                try Data("#!/bin/sh\nexit 0\n".utf8).write(to: file)
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+            }
+        }
+        let bundle = try XCTUnwrap(Bundle(url: app))
+        XCTAssertEqual(FFmpegTools(bundle: bundle).ffmpegURL, helpers.appendingPathComponent("ffmpeg"))
+        XCTAssertEqual(FFmpegTools(bundle: bundle).ffprobeURL, helpers.appendingPathComponent("ffprobe"))
+        XCTAssertEqual(FFmpegTools(customDirectory: custom, bundle: bundle).ffmpegURL, custom.appendingPathComponent("ffmpeg"))
+    }
+
     func testProbeKeepsGlobalTrackIndicesAndIgnoresCoverArt() throws {
         let data = Data(#"{"streams":[{"index":0,"codec_type":"video","codec_name":"mjpeg","width":100,"height":100,"disposition":{"attached_pic":1}},{"index":1,"codec_type":"video","codec_name":"hevc","width":1920,"height":1080,"duration":"42.5"},{"index":2,"codec_type":"audio","codec_name":"aac","channels":6,"tags":{"language":"rus","title":"Дубляж"}},{"index":4,"codec_type":"subtitle","codec_name":"subrip","tags":{"language":"eng"}}],"format":{"duration":"N/A"}}"#.utf8)
         let info = try FFmpegTools.decodeProbe(data)
@@ -18,6 +41,38 @@ final class MediaPipelineTests: XCTestCase {
         XCTAssertThrowsError(try FFmpegTools.decodeProbe(Data(#"{"streams":[{"index":0,"codec_type":"audio"}]}"#.utf8)))
         let info = try FFmpegTools.decodeProbe(Data(#"{"streams":[{"index":0,"codec_type":"video"}],"format":{"duration":"inf"}}"#.utf8))
         XCTAssertEqual(info.duration, 0)
+    }
+
+    @MainActor
+    func testAV1InputCanUseSoftwareH264CompatibilityConversion() async throws {
+        let tools = mediaTestTools()
+        guard let generator = FFmpegTools().ffmpegURL, tools.ffmpegURL != nil else { throw XCTSkip("FFmpeg is required") }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-av1-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let input = directory.appendingPathComponent("source.mkv")
+        let job = HLSJob(tools: tools)
+        defer { job.stop(); try? FileManager.default.removeItem(at: directory) }
+        let process = Process()
+        process.executableURL = generator
+        process.arguments = ["-v", "error", "-nostdin", "-y",
+            "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10:duration=2",
+            "-c:v", "libaom-av1", "-cpu-used", "8", "-threads", "2", "-crf", "40", input.path]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        let errors = Pipe()
+        process.standardError = errors
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0, String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+        let info = try await tools.probe(url: input)
+        XCTAssertEqual(info.videoCodec, "av1")
+        let output = try await job.start(input: input, info: info, audioTrack: nil, subtitle: .none,
+                                         startTime: 0, hardwareEncoding: false, preserveQuality: false)
+        let converted = try await tools.probe(url: output)
+        XCTAssertEqual(converted.videoCodec, "h264")
+        XCTAssertEqual(converted.width, 160)
+        XCTAssertEqual(converted.height, 90)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: input.path))
     }
 
     @MainActor
@@ -49,7 +104,7 @@ final class MediaPipelineTests: XCTestCase {
 
     @MainActor
     func testRealFFmpegPreparesSeekedHLSWithQuotedSubtitlePath() async throws {
-        let tools = FFmpegTools()
+        let tools = mediaTestTools()
         guard let ffmpeg = tools.ffmpegURL, tools.ffprobeURL != nil else { throw XCTSkip("FFmpeg не установлен") }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-media-test-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

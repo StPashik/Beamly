@@ -7,6 +7,7 @@ xcuserdata/
 dist/
 node_modules/
 *.tgz
+__pycache__/
 .npmrc
 .env
 .env.*

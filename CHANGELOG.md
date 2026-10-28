@@ -1,3 +1,10 @@
+# Unreleased
+
+- Include standalone universal FFmpeg/FFprobe so MKV playback, external subtitles, and compatibility conversion work without a separate Homebrew installation.
+- Preserve the existing 4K HEVC remux, HDR-to-SDR, libass subtitle, and software/hardware H.264 paths. Retain custom tool-folder overrides.
+- Build pinned upstream sources, include component notices, and package complete corresponding GPLv2 media source beside application archives. Beamly's own code remains MIT licensed.
+- Verify signed arm64/x86_64 helpers without Homebrew in PATH; run media integration tests against the bundled tools.
+
 # Beamly 1.0.3
 
 Beamly 1.0.3 adds quality-preserving 4K HEVC/MKV streaming and supported HDR10/HLG signaling.

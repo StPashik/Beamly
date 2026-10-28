@@ -62,6 +62,12 @@ test('installs the actual signed release into an isolated Applications folder', 
   const sourceKey = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print :SUPublicEDKey', resolve('Resources/Info.plist')], { encoding: 'utf8' }).trim();
   assert.equal(key, sourceKey);
   assert.deepEqual(await readFile(join(installed, 'Contents/Resources/Sparkle.LICENSE')), await readFile(resolve('Resources/Sparkle.LICENSE')));
+  for (const name of ['ffmpeg', 'ffprobe']) {
+    const helper = join(installed, 'Contents/Helpers', name);
+    execFileSync('/usr/bin/lipo', [helper, '-verify_arch', 'arm64', 'x86_64']);
+    execFileSync('/usr/bin/codesign', ['--verify', '--strict', helper]);
+  }
+  assert.ok((await readFile(join(installed, 'Contents/Resources/Media-Licenses/ffmpeg/COPYING.GPLv2'))).length > 1000);
   for (const language of ['en', 'ru', 'de', 'fr', 'es']) {
     const resources = join(installed, 'Contents/Resources', language + '.lproj');
     const ui = execFileSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', join(resources, 'Localizable.strings')], { encoding: 'utf8' });

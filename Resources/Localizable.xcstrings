@@ -3570,6 +3570,74 @@
           }
         }
       }
+    },
+    "%@ is missing. Reinstall Beamly or choose a custom FFmpeg folder in Settings.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ fehlt. Installiere Beamly erneut oder wähle in den Einstellungen einen eigenen FFmpeg-Ordner."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is missing. Reinstall Beamly or choose a custom FFmpeg folder in Settings."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Falta %@. Reinstala Beamly o elige una carpeta de FFmpeg personalizada en Ajustes."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ est introuvable. Réinstallez Beamly ou choisissez un dossier FFmpeg personnalisé dans les réglages."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отсутствует %@. Переустановите Beamly или выберите папку со своей сборкой FFmpeg в настройках."
+          }
+        }
+      }
+    },
+    "FFmpeg and ffprobe are included with Beamly. Choose a folder only to use your own build.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FFmpeg und ffprobe sind in Beamly enthalten. Wähle einen Ordner nur für eine eigene Version."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FFmpeg and ffprobe are included with Beamly. Choose a folder only to use your own build."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FFmpeg y ffprobe vienen incluidos con Beamly. Elige una carpeta solo para usar tu propia compilación."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FFmpeg et ffprobe sont inclus avec Beamly. Choisissez un dossier uniquement pour utiliser votre propre version."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FFmpeg и ffprobe входят в Beamly. Выбирайте папку только для использования собственной сборки."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

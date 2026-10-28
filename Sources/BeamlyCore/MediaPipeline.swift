@@ -152,7 +152,7 @@ public enum MediaPipelineError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .missingTool(let name):
-            return String(format: NSLocalizedString("%@ was not found. Install FFmpeg or choose the folder containing ffmpeg and ffprobe in Settings.", comment: ""), name)
+            return String(format: NSLocalizedString("%@ is missing. Reinstall Beamly or choose a custom FFmpeg folder in Settings.", comment: ""), name)
         case .invalidMedia(let message): return message
         case .processFailed(let name, let message): return "\(name): \(message)"
         case .timedOut: return NSLocalizedString("The video could not be prepared within 90 seconds. Try software encoding.", comment: "")
@@ -162,9 +162,13 @@ public enum MediaPipelineError: LocalizedError {
 
 public struct FFmpegTools: Sendable {
     public let customDirectory: URL?
+    private let helpersDirectory: URL
+    private let resourcesDirectory: URL?
 
-    public init(customDirectory: URL? = nil) {
+    public init(customDirectory: URL? = nil, bundle: Bundle = .main) {
         self.customDirectory = customDirectory
+        helpersDirectory = bundle.bundleURL.appendingPathComponent("Contents/Helpers", isDirectory: true)
+        resourcesDirectory = bundle.resourceURL
     }
 
     public var ffmpegURL: URL? { locate("ffmpeg") }
@@ -173,8 +177,9 @@ public struct FFmpegTools: Sendable {
     private func locate(_ name: String) -> URL? {
         // ffmpeg-full includes subtitle rendering but is keg-only in Homebrew.
         let directories = [customDirectory,
-                           Bundle.main.resourceURL?.appendingPathComponent("Tools", isDirectory: true),
-                           Bundle.main.resourceURL,
+                           helpersDirectory,
+                           resourcesDirectory?.appendingPathComponent("Tools", isDirectory: true),
+                           resourcesDirectory,
                            URL(fileURLWithPath: "/opt/homebrew/opt/ffmpeg-full/bin", isDirectory: true),
                            URL(fileURLWithPath: "/usr/local/opt/ffmpeg-full/bin", isDirectory: true),
                            URL(fileURLWithPath: "/opt/homebrew/bin", isDirectory: true),
