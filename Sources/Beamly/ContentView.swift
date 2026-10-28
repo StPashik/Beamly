@@ -17,6 +17,7 @@ struct ContentView: View {
     @State private var scrubbing = false
     @State private var scrubPosition = 0.0
     @State private var window: NSWindow?
+    @State private var showSubtitleTiming = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -181,12 +182,34 @@ struct ContentView: View {
             ForEach(model.subtitleOptions) { track in
                 Button { model.setSubtitle(track.id) } label: { Label(track.title, systemImage: model.subtitleID == track.id ? "checkmark" : "") }
             }
-            if let external = model.externalSubtitle { Label(external.lastPathComponent, systemImage: "checkmark") }
+            ForEach(model.externalSubtitleOptions, id: \.self) { file in
+                Button { model.attachSubtitle(file) } label: {
+                    Label(file.lastPathComponent, systemImage: model.externalSubtitle == file ? "checkmark" : "")
+                }
+            }
+            if let external = model.externalSubtitle, !model.externalSubtitleOptions.contains(external) {
+                Label(external.lastPathComponent, systemImage: "checkmark")
+            }
             Divider()
             Button("Add subtitle file…", action: model.chooseSubtitle)
+            Button("Subtitle timing…") { showSubtitleTiming = true }
+                .disabled(model.subtitleID == nil && model.externalSubtitle == nil)
         } label: { Image(systemName: "captions.bubble").foregroundStyle(model.subtitleID != nil || model.externalSubtitle != nil ? mint : .primary).frame(width: 20) }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().disabled(model.isPreparing)
         .help("Subtitles").accessibilityLabel("Subtitles")
+        .popover(isPresented: $showSubtitleTiming) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Subtitle timing").font(.headline)
+                Stepper(value: Binding(get: { model.subtitleDelay }, set: model.setSubtitleDelay), step: 0.5) {
+                    Text(String(format: NSLocalizedString("Offset: %@ s", comment: ""), String(format: "%+.1f", locale: Locale.current, model.subtitleDelay)))
+                        .monospacedDigit()
+                }
+                Text("Positive values show subtitles later.").font(.caption).foregroundStyle(.secondary)
+                Button("Reset timing") { model.setSubtitleDelay(0) }.disabled(model.subtitleDelay == 0)
+            }
+            .disabled(model.isPreparing || (model.subtitleID == nil && model.externalSubtitle == nil))
+            .padding(16).frame(width: 280)
+        }
     }
 
     private var queue: some View {

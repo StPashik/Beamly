@@ -69,6 +69,32 @@ public enum SubtitleChoice: Equatable, Sendable {
     case external(URL)
 }
 
+public let videoFileExtensions: Set<String> = ["mp4", "m4v", "mov", "mkv", "avi", "webm", "mpeg", "mpg", "m2ts", "mts", "ts", "m2t", "vob", "flv", "wmv", "ogm", "ogg", "rmvb", "divx", "3gp"]
+
+public func findSubtitleFiles(for video: URL) -> [URL] {
+    guard video.isFileURL else { return [] }
+    let stem = video.deletingPathExtension().lastPathComponent.lowercased()
+    let files = (try? FileManager.default.contentsOfDirectory(at: video.deletingLastPathComponent(),
+        includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])) ?? []
+    let otherMovies = files.filter {
+        videoFileExtensions.contains($0.pathExtension.lowercased()) &&
+            (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+    }.map { $0.deletingPathExtension().lastPathComponent.lowercased() }.filter { $0.hasPrefix(stem + ".") }
+    return files.filter { file in
+        let name = file.deletingPathExtension().lastPathComponent.lowercased()
+        return ["srt", "ass", "ssa", "vtt"].contains(file.pathExtension.lowercased()) &&
+            (name == stem || name.hasPrefix(stem + ".")) &&
+            !otherMovies.contains(where: { name == $0 || name.hasPrefix($0 + ".") }) &&
+            (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true &&
+            FileManager.default.isReadableFile(atPath: file.path)
+    }.sorted { lhs, rhs in
+        let leftExact = lhs.deletingPathExtension().lastPathComponent.lowercased() == stem
+        let rightExact = rhs.deletingPathExtension().lastPathComponent.lowercased() == stem
+        if leftExact != rightExact { return leftExact }
+        return lhs.lastPathComponent.localizedStandardCompare(rhs.lastPathComponent) == .orderedAscending
+    }
+}
+
 enum SubtitleRendering {
     case text(String)
     case bitmap(Int)
@@ -108,7 +134,7 @@ enum HLSCodec {
 enum WebVTTCaptions {
     static func retimed(_ text: String, offset: Double, duration: Double) throws -> String {
         let blocks = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n\n")
-        guard text.hasPrefix("WEBVTT"), offset.isFinite, duration.isFinite, duration > 0 else {
+        guard text.hasPrefix("WEBVTT"), offset.isFinite, duration.isFinite, duration > 0, duration < 1_000_000_000 else {
             throw MediaPipelineError.invalidMedia(NSLocalizedString("The subtitle timestamps are invalid.", comment: ""))
         }
         var result = "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0\n\n"
@@ -451,7 +477,7 @@ public final class HLSJob {
     }
 
     public func start(input: URL, info: MediaInfo, audioTrack: Int?, subtitle: SubtitleChoice,
-                      startTime: Double, hardwareEncoding: Bool, preserveQuality: Bool = true) async throws -> URL {
+                      startTime: Double, hardwareEncoding: Bool, preserveQuality: Bool = true, subtitleDelay: Double = 0) async throws -> URL {
         stop()
         diagnostic = nil
         try validateLocalFile(input)
@@ -459,7 +485,7 @@ public final class HLSJob {
         if let audioTrack, !info.audioTracks.contains(where: { $0.id == audioTrack }) {
             throw MediaPipelineError.invalidMedia(NSLocalizedString("The selected audio track is missing from the file.", comment: ""))
         }
-        guard startTime.isFinite && startTime >= 0 else {
+        guard startTime.isFinite && startTime >= 0 && subtitleDelay.isFinite else {
             throw MediaPipelineError.invalidMedia(NSLocalizedString("Invalid playback position.", comment: ""))
         }
         // Dolby Vision needs profile-specific sample entries and manifest signaling.
@@ -490,7 +516,7 @@ public final class HLSJob {
             guard generation == currentGeneration else { throw CancellationError() }
             sourceOffset = isVideoCopied ? keyTime - info.startTime : startTime
             let arguments = isVideoCopied ? Self.copyArguments(input: input, info: info, audio: audio, keyTime: keyTime) : Self.arguments(input: input, info: info, audioTrack: audioTrack,
-                                           subtitleRendering: rendering, startTime: startTime, hardwareEncoding: hardwareEncoding)
+                                           subtitleRendering: rendering, startTime: startTime, hardwareEncoding: hardwareEncoding, subtitleDelay: subtitleDelay)
             let execution = Task.detached(priority: .userInitiated) {
                 try await process.run(executable: ffmpeg, arguments: arguments, directory: cache)
             }
@@ -551,7 +577,7 @@ public final class HLSJob {
                 try Task.checkCancellation()
                 guard generation == currentGeneration else { throw CancellationError() }
                 sourceOffset -= firstPTS
-                try await prepareCaptions(subtitle, input: input, info: info, cache: cache)
+                try await prepareCaptions(subtitle, input: input, info: info, cache: cache, subtitleDelay: subtitleDelay)
                 let codec = try await HLSCodec.identifier(at: cache.appendingPathComponent("init_0.mp4"))
                 try Task.checkCancellation()
                 guard generation == currentGeneration else { throw CancellationError() }
@@ -567,7 +593,7 @@ public final class HLSJob {
             stop()
             if !copied && hardwareEncoding && !(error is CancellationError) {
                 return try await start(input: input, info: info, audioTrack: audioTrack, subtitle: subtitle,
-                                       startTime: startTime, hardwareEncoding: false, preserveQuality: preserveQuality)
+                                       startTime: startTime, hardwareEncoding: false, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay)
             }
             throw error
         }
@@ -605,7 +631,7 @@ public final class HLSJob {
         return args
     }
 
-    private func prepareCaptions(_ choice: SubtitleChoice, input: URL, info: MediaInfo, cache: URL) async throws {
+    private func prepareCaptions(_ choice: SubtitleChoice, input: URL, info: MediaInfo, cache: URL, subtitleDelay: Double) async throws {
         guard choice != .none else { return }
         let source: URL
         let map: String
@@ -636,7 +662,8 @@ public final class HLSJob {
             "-map", map, "-c:s", "webvtt", raw.path])
         let size = try raw.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         guard size <= 16 * 1024 * 1024 else { throw MediaPipelineError.invalidMedia(NSLocalizedString("The subtitle file is too large.", comment: "")) }
-        let captions = try WebVTTCaptions.retimed(String(contentsOf: raw, encoding: .utf8), offset: offset, duration: duration)
+        // Positive delay moves captions later without changing the media clock.
+        let captions = try WebVTTCaptions.retimed(String(contentsOf: raw, encoding: .utf8), offset: offset - subtitleDelay, duration: duration)
         try captions.write(to: cache.appendingPathComponent("captions.vtt"), atomically: true, encoding: .utf8)
         try "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:\(Int(ceil(duration)))\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:\(duration),\ncaptions.vtt\n#EXT-X-ENDLIST\n"
             .write(to: cache.appendingPathComponent("captions.m3u8"), atomically: true, encoding: .utf8)
@@ -736,16 +763,22 @@ public final class HLSJob {
     }
 
     static func arguments(input: URL, info: MediaInfo, audioTrack: Int?, subtitleRendering: SubtitleRendering?,
-                          startTime: Double, hardwareEncoding: Bool) -> [String] {
+                          startTime: Double, hardwareEncoding: Bool, subtitleDelay: Double = 0) -> [String] {
         var arguments = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
-        if startTime > 0 { arguments += ["-ss", String(startTime)] }
+        var inputSeek = startTime
+        if case .bitmap = subtitleRendering { inputSeek = max(0, startTime - max(0, subtitleDelay)) }
+        if inputSeek > 0 { arguments += ["-ss", String(inputSeek)] }
         arguments += ["-i", input.path]
+        let preroll = startTime - inputSeek
+        // Trim both media streams after rendering any bitmap cue carried across the seek point.
+        if preroll > 0 { arguments += ["-ss", String(preroll)] }
         var filters = [String]()
         if case .text(let subtitleFilter) = subtitleRendering {
-            // Burn subtitles at the movie's original timestamps, then reset the HLS clock.
-            if startTime > 0 { filters.append("setpts=PTS+\(startTime)/TB") }
+            // Sample captions on the shifted movie clock, then restore video/audio synchronization.
+            let clock = startTime - subtitleDelay
+            if clock != 0 { filters.append("setpts=PTS+(\(clock))/TB") }
             filters.append(subtitleFilter)
-            if startTime > 0 { filters.append("setpts=PTS-\(startTime)/TB") }
+            if clock != 0 { filters.append("setpts=PTS-(\(clock))/TB") }
         }
         filters.append("scale=w='min(1920,iw)':h='min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2")
         if info.isHDR {
@@ -753,7 +786,10 @@ public final class HLSJob {
             arguments += ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
         }
         if case .bitmap(let index) = subtitleRendering {
-            arguments += ["-filter_complex", "[0:V:0][0:\(index)]overlay=eof_action=pass:repeatlast=0,\(filters.joined(separator: ","))[rendered]", "-map", "[rendered]"]
+            let source = "[0:\(index)]"
+            let shift = subtitleDelay == 0 ? "" : "\(source)setpts=PTS+(\(subtitleDelay))/TB[caption];"
+            let caption = subtitleDelay == 0 ? source : "[caption]"
+            arguments += ["-filter_complex", "\(shift)[0:V:0]\(caption)overlay=eof_action=pass:repeatlast=0,\(filters.joined(separator: ","))[rendered]", "-map", "[rendered]"]
         } else {
             arguments += ["-map", "0:V:0", "-vf", filters.joined(separator: ",")]
         }

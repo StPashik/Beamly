@@ -5,6 +5,8 @@ public struct PlaylistItem: Identifiable, Codable, Equatable, Sendable {
     public let url: URL
     public var position: Double
     public var duration: Double?
+    // Optional so queues saved before subtitle timing support still decode.
+    public var subtitleDelay: Double?
 
     public init(url: URL) {
         id = UUID()

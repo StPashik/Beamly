@@ -96,6 +96,10 @@ Allow local-network access and incoming connections if macOS asks. An AirPlay re
 3. Drop a video or folder into the window, or press **⌘O**. Playback starts only after an AirPlay device is connected; disconnecting pauses the player. Pressing Play without a connection opens the AirPlay device picker directly, and playback begins after you connect a receiver.
 4. Use the speaker and subtitles menus beside the timeline to choose tracks.
 
+Beamly finds SRT, ASS, SSA, and VTT files beside the video when their names match, for example `Movie.mkv` with `Movie.srt` or `Movie.ru.srt`. It selects an exact-basename match or the only matching file automatically. When several language files match, choose one in the subtitles menu.
+
+Choose **Subtitles → Subtitle timing…** to move captions earlier or later in 0.5-second steps, or reset the correction. Positive values show subtitles later. Each movie's correction is saved with its queue entry and survives relaunches; removing that entry also removes its correction. Original video and subtitle files are never changed.
+
 | Shortcut | Action |
 | --- | --- |
 | ⌘O | Add videos |

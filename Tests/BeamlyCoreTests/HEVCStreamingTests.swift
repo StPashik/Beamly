@@ -42,6 +42,11 @@ final class HEVCStreamingTests: XCTestCase {
         XCTAssertFalse(shifted.contains("Old"))
         XCTAssertThrowsError(try WebVTTCaptions.retimed("bad", offset: 0, duration: 1))
         XCTAssertThrowsError(try WebVTTCaptions.retimed("WEBVTT\n\n00:99.000 --> 00:01.000\nx", offset: 0, duration: 1))
+        let delayed = try WebVTTCaptions.retimed(text, offset: -1.5, duration: 6)
+        XCTAssertTrue(delayed.contains("00:00:02.000 --> 00:00:05.500\nOverlap"))
+        XCTAssertFalse(delayed.contains("Later"), "Cues shifted beyond the movie are omitted")
+        XCTAssertThrowsError(try WebVTTCaptions.retimed(text, offset: .nan, duration: 5))
+        XCTAssertThrowsError(try WebVTTCaptions.retimed(text, offset: 0, duration: 1e100))
     }
 
     @MainActor
@@ -149,6 +154,22 @@ final class HEVCStreamingTests: XCTestCase {
         XCTAssertTrue(Array(hashes[0].suffix(144)) == seekFrames, "Seeking an open GOP must not corrupt or repeat video frames")
         XCTAssertEqual(try frequency(seeked.deletingLastPathComponent(), 1), 440, accuracy: 15)
         XCTAssertEqual(try onset(seeked.deletingLastPathComponent().appendingPathComponent("stream_1.m3u8"), stream: "a:0"), try onset(input, stream: "1") - job.sourceOffset, accuracy: 0.06)
+
+        for (choice, delay) in [(SubtitleChoice.external(captions), -1.5), (.embedded(3), 1.5)] {
+            let shifted = try await job.start(input: input, info: info, audioTrack: 1, subtitle: choice,
+                startTime: 3.5, hardwareEncoding: false, subtitleDelay: delay)
+            let folder = shifted.deletingLastPathComponent()
+            let lines = try String(contentsOf: folder.appendingPathComponent("captions.vtt"), encoding: .utf8).components(separatedBy: .newlines)
+            let cue = try XCTUnwrap(lines.firstIndex(of: "Later cue"))
+            let times = lines[cue - 1].components(separatedBy: " --> ").map { value in
+                value.split(separator: ":").compactMap { Double($0) }.reduce(0) { $0 * 60 + $1 }
+            }
+            XCTAssertEqual(times[0] + job.sourceOffset, 6 + delay, accuracy: 0.03)
+            XCTAssertEqual(times[1] + job.sourceOffset, min(info.duration, 7 + delay), accuracy: 0.03)
+            XCTAssertTrue(job.isVideoCopied)
+            XCTAssertEqual(try frameHashes(folder.appendingPathComponent("stream_0.m3u8"), ffmpeg: ffmpeg), seekFrames)
+            XCTAssertEqual(try onset(folder.appendingPathComponent("stream_1.m3u8"), stream: "a:0"), try onset(input, stream: "1") - job.sourceOffset, accuracy: 0.06)
+        }
 
         let hlg = folder.appendingPathComponent("HLG.mkv")
         _ = try run(ffmpeg, ["-v", "error", "-y", "-i", input.path, "-map", "0", "-c", "copy", "-bsf:v", "hevc_metadata=transfer_characteristics=18", "-color_trc", "arib-std-b67", hlg.path])

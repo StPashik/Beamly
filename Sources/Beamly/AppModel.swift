@@ -30,6 +30,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var audioID: Int?
     @Published private(set) var subtitleID: Int?
     @Published private(set) var externalSubtitle: URL?
+    @Published private(set) var externalSubtitleOptions: [URL] = []
     @Published var errorMessage: String?
     @Published var isAirPlayPickerRequested = false
     @Published var volume = 1.0 { didSet { player.volume = Float(volume) } }
@@ -124,6 +125,7 @@ final class AppModel: ObservableObject {
     }
 
     var current: PlaylistItem? { playlist.current }
+    var subtitleDelay: Double { current?.subtitleDelay ?? 0 }
     var networkAddress: String { server.host }
     var status: String {
         if isPreparing { return NSLocalizedString("Preparing video…", comment: "") }
@@ -143,15 +145,14 @@ final class AppModel: ObservableObject {
     func add(_ urls: [URL]) {
         Task {
             let videos = await Task.detached(priority: .userInitiated) {
-                let extensions: Set<String> = ["mp4", "m4v", "mov", "mkv", "avi", "webm", "mpeg", "mpg", "m2ts", "mts", "ts", "m2t", "vob", "flv", "wmv", "ogm", "ogg", "rmvb", "divx", "3gp"]
                 var result: [URL] = []
                 for url in urls where url.isFileURL {
                     if (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
                         let iterator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles, .skipsPackageDescendants])
                         while let child = iterator?.nextObject() as? URL {
-                            if extensions.contains(child.pathExtension.lowercased()), (try? child.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true { result.append(child) }
+                            if videoFileExtensions.contains(child.pathExtension.lowercased()), (try? child.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true { result.append(child) }
                         }
-                    } else if extensions.contains(url.pathExtension.lowercased()) {
+                    } else if videoFileExtensions.contains(url.pathExtension.lowercased()) {
                         result.append(url)
                     }
                 }
@@ -176,13 +177,14 @@ final class AppModel: ObservableObject {
         audioID = nil
         subtitleID = nil
         externalSubtitle = nil
+        externalSubtitleOptions = []
         audioOptions = []
         subtitleOptions = []
         position = playlist.current?.position ?? 0
         duration = playlist.current?.duration ?? 0
         loadPreview()
         save()
-        prepare(at: duration > 0 && position > duration - 3 ? 0 : position, autoPlay: autoPlay)
+        prepare(at: duration > 0 && position > duration - 3 ? 0 : position, autoPlay: autoPlay, discoverSubtitles: true)
     }
 
     func togglePlay() {
@@ -259,9 +261,17 @@ final class AppModel: ObservableObject {
     func setSubtitle(_ id: Int?) {
         subtitleID = id
         externalSubtitle = nil
-        if let group = subtitleGroup, !isUsingHLS {
+        if let group = subtitleGroup, !isUsingHLS, id == nil || subtitleDelay == 0 {
             player.currentItem?.select(id.flatMap { directSubtitleChoices[$0] }, in: group)
         } else { prepare(at: position, autoPlay: isPlaying) }
+    }
+
+    func setSubtitleDelay(_ seconds: Double) {
+        guard seconds.isFinite, seconds != subtitleDelay,
+              let index = playlist.items.firstIndex(where: { $0.id == playlist.currentID }) else { return }
+        playlist.items[index].subtitleDelay = seconds == 0 ? nil : seconds
+        save()
+        if subtitleID != nil || externalSubtitle != nil { prepare(at: position, autoPlay: isPlaying) }
     }
 
     func chooseSubtitle() {
@@ -271,9 +281,9 @@ final class AppModel: ObservableObject {
         if panel.runModal() == .OK, let url = panel.url { attachSubtitle(url) }
     }
 
-    private func attachSubtitle(_ url: URL) {
+    func attachSubtitle(_ url: URL) {
         guard current != nil else { errorMessage = NSLocalizedString("Add a video first.", comment: ""); return }
-        externalSubtitle = url
+        externalSubtitle = externalSubtitleOptions.first { $0.standardizedFileURL == url.standardizedFileURL } ?? url
         subtitleID = nil
         prepare(at: position, autoPlay: isPlaying)
     }
@@ -288,7 +298,11 @@ final class AppModel: ObservableObject {
             position = playlist.current?.position ?? 0
             duration = playlist.current?.duration ?? 0
             if let next = playlist.currentID { select(next, autoPlay: false) }
-            else { info = nil; position = 0; duration = 0; loadPreview() }
+            else {
+                info = nil; position = 0; duration = 0
+                subtitleID = nil; externalSubtitle = nil; externalSubtitleOptions = []
+                loadPreview()
+            }
         }
     }
 
@@ -296,6 +310,9 @@ final class AppModel: ObservableObject {
         cancelPlayback()
         playlist.items.removeAll()
         playlist.currentID = nil
+        subtitleID = nil
+        externalSubtitle = nil
+        externalSubtitleOptions = []
         loadPreview()
         info = nil
         duration = 0
@@ -344,7 +361,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func prepare(at start: Double, autoPlay: Bool) {
+    private func prepare(at start: Double, autoPlay: Bool, discoverSubtitles: Bool = false) {
         guard let movie = current else { return }
         cancelPlayback()
         // Cancellation is cooperative; this ID also rejects callbacks from an older load.
@@ -357,6 +374,14 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             do {
                 guard FileManager.default.isReadableFile(atPath: movie.url.path) else { throw PlaybackError(String(format: NSLocalizedString("File not found or inaccessible: %@", comment: ""), movie.url.lastPathComponent)) }
+                if discoverSubtitles {
+                    let files = await Task.detached(priority: .userInitiated) { findSubtitleFiles(for: movie.url) }.value
+                    try Task.checkCancellation()
+                    guard loadID == generation else { return }
+                    externalSubtitleOptions = files
+                    let exact = files.first { $0.deletingPathExtension().lastPathComponent.lowercased() == movie.url.deletingPathExtension().lastPathComponent.lowercased() }
+                    externalSubtitle = exact ?? (files.count == 1 ? files.first : nil)
+                }
                 let asset = AVURLAsset(url: movie.url)
                 let metadata: MediaInfo
                 do { metadata = try await tools.probe(url: movie.url) }
@@ -370,7 +395,8 @@ final class AppModel: ObservableObject {
                 info = metadata
                 duration = metadata.duration.isFinite ? max(0, metadata.duration) : 0
                 var canPlayDirect = false
-                if ["mp4", "m4v", "mov"].contains(movie.url.pathExtension.lowercased()), externalSubtitle == nil, defaults.bool(forKey: "directPlayback") {
+                if ["mp4", "m4v", "mov"].contains(movie.url.pathExtension.lowercased()), externalSubtitle == nil,
+                   subtitleID == nil || subtitleDelay == 0, defaults.bool(forKey: "directPlayback") {
                     canPlayDirect = (try? await asset.load(.isPlayable)) == true
                 }
                 try Task.checkCancellation()
@@ -390,7 +416,7 @@ final class AppModel: ObservableObject {
                     let newJob = HLSJob(tools: tools)
                     job = newJob
                     let choice: SubtitleChoice = externalSubtitle.map { .external($0) } ?? subtitleID.map { .embedded($0) } ?? .none
-                    let playlistURL = try await newJob.start(input: movie.url, info: metadata, audioTrack: audioID, subtitle: choice, startTime: start, hardwareEncoding: defaults.bool(forKey: "hardwareEncoding"), preserveQuality: defaults.bool(forKey: "directPlayback"))
+                    let playlistURL = try await newJob.start(input: movie.url, info: metadata, audioTrack: audioID, subtitle: choice, startTime: start, hardwareEncoding: defaults.bool(forKey: "hardwareEncoding"), preserveQuality: defaults.bool(forKey: "directPlayback"), subtitleDelay: subtitleDelay)
                     try Task.checkCancellation()
                     guard loadID == generation else { return }
                     sourceOffset = newJob.sourceOffset
