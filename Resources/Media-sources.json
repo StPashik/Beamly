@@ -1,0 +1,105 @@
+{
+  "nasm": {
+    "version": "3.02",
+    "url": "https://www.nasm.us/pub/nasm/releasebuilds/3.02/nasm-3.02.tar.xz",
+    "sha256": "87336eba53b4acfe917424ab5d500d2b0054d9f5148d35c2273ccf2cfb712f0d",
+    "directory": "nasm-3.02",
+    "archive": "nasm-3.02.tar.xz",
+    "buildOnly": true
+  },
+  "freetype": {
+    "version": "2.15.0",
+    "url": "https://downloads.sourceforge.net/project/freetype/freetype2/2.15.0/freetype-2.15.0.tar.xz",
+    "sha256": "93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5",
+    "directory": "freetype-2.15.0",
+    "archive": "freetype-2.15.0.tar.xz"
+  },
+  "fribidi": {
+    "version": "1.0.17",
+    "url": "https://github.com/fribidi/fribidi/releases/download/v1.0.17/fribidi-1.0.17.tar.xz",
+    "sha256": "6949dcde27d41cebad1fd741fcafc36d55a1020d2d872d4a6eb3914caabbada2",
+    "directory": "fribidi-1.0.17",
+    "archive": "fribidi-1.0.17.tar.xz"
+  },
+  "harfbuzz": {
+    "version": "15.0.0",
+    "url": "https://github.com/harfbuzz/harfbuzz/releases/download/15.0.0/harfbuzz-15.0.0.tar.xz",
+    "sha256": "968536e9abd782f07f7954044c0c4020199fcdd39b41d221ec42d2a3be4a44df",
+    "directory": "harfbuzz-15.0.0",
+    "archive": "harfbuzz-15.0.0.tar.xz"
+  },
+  "libunibreak": {
+    "version": "8.0",
+    "url": "https://github.com/adah1972/libunibreak/releases/download/libunibreak_8_0/libunibreak-8.0.tar.gz",
+    "sha256": "9c4fad6e517338a098373acc9f35579ae2c325e6446666fb9ac2666ba15ceba4",
+    "directory": "libunibreak-8.0",
+    "archive": "libunibreak-8.0.tar.gz"
+  },
+  "libass": {
+    "version": "0.17.5",
+    "url": "https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.xz",
+    "sha256": "2dca25c0e0c837ddf00b52011b3f82cac1e4ddd3ad018227806b0c2288864acc",
+    "directory": "libass-0.17.5",
+    "archive": "libass-0.17.5.tar.xz"
+  },
+  "zimg": {
+    "version": "3.0.6",
+    "url": "https://github.com/sekrit-twc/zimg/archive/refs/tags/release-3.0.6.tar.gz",
+    "sha256": "be89390f13a5c9b2388ce0f44a5e89364a20c1c57ce46d382b1fcc3967057577",
+    "directory": "zimg-release-3.0.6",
+    "archive": "zimg-3.0.6.tar.gz"
+  },
+  "dav1d": {
+    "version": "1.5.4",
+    "url": "https://code.videolan.org/videolan/dav1d/-/archive/1.5.4/dav1d-1.5.4.tar.bz2",
+    "sha256": "2abfb0c89212e6e4733a54e0ae509ec00a5b845a6360946f918806e14aedb011",
+    "directory": "dav1d-1.5.4",
+    "archive": "dav1d-1.5.4.tar.bz2"
+  },
+  "ffmpeg": {
+    "version": "9.0.2",
+    "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
+    "sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e",
+    "directory": "ffmpeg-9.0.2",
+    "archive": "ffmpeg-9.0.2.tar.xz"
+  },
+  "x264": {
+    "version": "b35605ace3ddf7c1a5d67a2eb553f034aef41d55",
+    "url": "https://code.videolan.org/videolan/x264/-/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2",
+    "sha256": "6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224",
+    "archive": "x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2",
+    "directory": "x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55"
+  },
+  "m4": {
+    "version": "1.4.21",
+    "url": "https://ftp.gnu.org/gnu/m4/m4-1.4.21.tar.xz",
+    "sha256": "f25c6ab51548a73a75558742fb031e0625d6485fe5f9155949d6486a2408ab66",
+    "archive": "m4-1.4.21.tar.xz",
+    "directory": "m4-1.4.21",
+    "buildOnly": true
+  },
+  "autoconf": {
+    "version": "2.73",
+    "url": "https://ftp.gnu.org/gnu/autoconf/autoconf-2.73.tar.gz",
+    "sha256": "259ddfa3bddc799cfb81489cc0f17dfdf1bd6d1505dda53c0f45ff60d6a4f9a7",
+    "archive": "autoconf-2.73.tar.gz",
+    "directory": "autoconf-2.73",
+    "buildOnly": true
+  },
+  "automake": {
+    "version": "1.19",
+    "url": "https://ftp.gnu.org/gnu/automake/automake-1.19.tar.xz",
+    "sha256": "e3e2c2e3abf37898138db5b6c1d1dc35c9160c5978be7947d2c741705251d445",
+    "archive": "automake-1.19.tar.xz",
+    "directory": "automake-1.19",
+    "buildOnly": true
+  },
+  "libtool": {
+    "version": "2.6.2",
+    "url": "https://ftp.gnu.org/gnu/libtool/libtool-2.6.2.tar.xz",
+    "sha256": "2ef1067c16c97db930fd740cc9bc3d3ba9a583804ae5ac42cc3e8719e49e191e",
+    "archive": "libtool-2.6.2.tar.xz",
+    "directory": "libtool-2.6.2",
+    "buildOnly": true
+  }
+}

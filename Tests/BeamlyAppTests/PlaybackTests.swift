@@ -13,7 +13,7 @@ final class PlaybackTests: XCTestCase {
 
     @MainActor
     private func verify4KPlayback(hdr: Bool) async throws {
-        let tools = FFmpegTools(customDirectory: ProcessInfo.processInfo.environment["BEAMLY_TEST_TOOLS_DIRECTORY"].map { URL(fileURLWithPath: $0) })
+        let tools = mediaTestTools()
         guard let ffmpeg = tools.ffmpegURL else { throw XCTSkip("FFmpeg is required") }
         let colors = hdr ? "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc" : "colorprim=bt709:transfer=bt709:colormatrix=bt709"
         print("Native 4K HEVC fixture: HDR = \(hdr), HDR eligible = \(AVPlayer.eligibleForHDRPlayback)")
@@ -23,7 +23,7 @@ final class PlaybackTests: XCTestCase {
         let caption = folder.appendingPathComponent("captions.srt")
         try "1\n00:00:00,500 --> 00:00:07,000\nBeamly 4K subtitle\n".write(to: caption, atomically: true, encoding: .utf8)
         let process = Process()
-        process.executableURL = ffmpeg
+        process.executableURL = try XCTUnwrap(FFmpegTools().ffmpegURL)
         process.arguments = ["-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "color=c=blue:size=3840x2160:rate=24:duration=8,drawbox=x=0:y=0:w=iw:h=ih:color=red:t=fill:enable='lt(t,2)'",
             "-f", "lavfi", "-i", "sine=frequency=440:duration=8", "-f", "lavfi", "-i", "sine=frequency=880:duration=8", "-i", caption.path,
             "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s", "-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p10le",
@@ -36,7 +36,7 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(process.terminationStatus, 0)
         let suite = "app.beamly.4k-test.\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        if let directory = tools.customDirectory { defaults.set(directory.path, forKey: "toolsDirectory") }
+        defaults.set(ffmpeg.deletingLastPathComponent().path, forKey: "toolsDirectory")
         defaults.set(false, forKey: "autoPlay")
         var playlist = Playlist()
         playlist.append([input])
@@ -107,7 +107,7 @@ final class PlaybackTests: XCTestCase {
 
     @MainActor
     func testDirectTracksHLSRoundtripRemovalAndCancellation() async throws {
-        let tools = FFmpegTools()
+        let tools = mediaTestTools()
         guard let ffmpeg = tools.ffmpegURL, tools.ffprobeURL != nil else { throw XCTSkip("FFmpeg не установлен") }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-playback-\(UUID())")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -115,6 +115,7 @@ final class PlaybackTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suite)!
         defaults.set(false, forKey: "autoPlay")
         defaults.set(false, forKey: "hardwareEncoding")
+        defaults.set(ffmpeg.deletingLastPathComponent().path, forKey: "toolsDirectory")
         let subtitle = folder.appendingPathComponent("captions.srt")
         try "1\n00:00:00,500 --> 00:00:10,000\nBeamly integration\n".write(to: subtitle, atomically: true, encoding: .utf8)
         let first = folder.appendingPathComponent("First.mp4")

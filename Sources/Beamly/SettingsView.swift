@@ -47,7 +47,7 @@ struct SettingsView: View {
                     Button("Choose Folder…", action: chooseTools)
                     if !toolsDirectory.isEmpty { Button("Automatic") { toolsDirectory = "" } }
                 }
-                Text("Beamly finds FFmpeg in Homebrew or a selected folder. Without it, compatible MP4/MOV files play via AVFoundation.")
+                Text("FFmpeg and ffprobe are included with Beamly. Choose a folder only to use your own build.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Connection") {

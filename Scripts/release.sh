@@ -10,10 +10,11 @@ if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 archive="Beamly-$version-universal.zip"
 mkdir -p dist Casks
+python3 Scripts/package-media-sources.py
 # Do not publish Finder metadata or local extended attributes in the archive.
 ditto -c -k --norsrc --keepParent build/Beamly.app "dist/$archive"
-(cd dist && shasum -a 256 "$archive" > SHA256SUMS)
-archive_hash="$(awk '{print $1}' dist/SHA256SUMS)"
+(cd dist && shasum -a 256 "$archive" "Beamly-FFmpeg-Sources-$version.tar.xz" > SHA256SUMS)
+archive_hash="$(awk 'NR == 1 { print $1; exit }' dist/SHA256SUMS)"
 cat > Casks/beamly.rb <<EOF
 cask "beamly" do
   version "$version"
@@ -29,8 +30,7 @@ cask "beamly" do
   app "Beamly.app"
 
   caveats <<~EOS
-    For MKV streaming and external subtitles: brew install ffmpeg-full
-    Choose its bin folder in Beamly Settings if needed.
+    FFmpeg and ffprobe are included; no Homebrew media packages are required.
     This community build is ad-hoc signed and is not notarized by Apple.
     If macOS blocks the first launch, review System Settings > Privacy & Security.
     See https://github.com/StPashik/Beamly#first-launch for details.
