@@ -13,6 +13,7 @@ A native macOS player for sending local videos to Apple TV and other AirPlay rec
 - Native AirPlay device selection and a static thumbnail from the middle of the video.
 - Direct playback of compatible MP4, M4V, and MOV files; quality-preserving 4K HEVC/H.264 remuxing from MKV, including supported HDR10/HLG streams.
 - Audio-track selection, embedded subtitles, and external SRT, ASS, SSA, and VTT files.
+- Saved audio and subtitle language preferences, applied to each video when opened.
 - Standalone FFmpeg and FFprobe included with the app; see [bundled media tools](Docs/Bundled-media.md).
 - A persistent queue with resume positions, drag reordering, shuffle, repeat, and keyboard controls.
 - Light and dark appearance, custom window controls, and Liquid Glass panels on macOS 26 or later. Earlier supported versions use standard translucent materials.
@@ -97,6 +98,8 @@ Allow local-network access and incoming connections if macOS asks. An AirPlay re
 4. Use the speaker and subtitles menus beside the timeline to choose tracks.
 
 Beamly finds SRT, ASS, SSA, and VTT files beside the video when their names match, for example `Movie.mkv` with `Movie.srt` or `Movie.ru.srt`. It selects an exact-basename match or the only matching file automatically. When several language files match, choose one in the subtitles menu.
+
+In **Settings → Track preferences**, choose an audio language or **Original audio**, and a subtitle language or **Off**. These independent choices are saved across launches and applied when opening each video, including the next queue entry. Manual track changes affect the current video and survive seeking and subtitle timing changes. Missing preferred audio falls back to the file's default track; missing preferred subtitles stay off. **Original audio** requires an explicit original-track marker in the file; Beamly does not guess the original language. The initial **File default / Automatic** settings retain the adjacent-subtitle behavior above.
 
 Choose **Subtitles → Subtitle timing…** to move captions earlier or later in 0.5-second steps, or reset the correction. Positive values show subtitles later. Each movie's correction is saved with its queue entry and survives relaunches; removing that entry also removes its correction. Original video and subtitle files are never changed.
 

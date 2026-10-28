@@ -10,14 +10,23 @@ public struct MediaTrack: Codable, Identifiable, Sendable, Equatable {
     public let title: String?
     public let channels: Int?
     public var profile: String?
+    public var disposition: [String: Int]?
 
-    public init(id: Int, codec: String, language: String? = nil, title: String? = nil, channels: Int? = nil, profile: String? = nil) {
+    public var isDefault: Bool { disposition?["default"] == 1 }
+    public var isOriginal: Bool { disposition?["original"] == 1 }
+    public var isForced: Bool { disposition?["forced"] == 1 }
+    public var isCommentary: Bool { disposition?["comment"] == 1 }
+    public var isTextSubtitle: Bool { ["subrip", "ass", "ssa", "webvtt", "mov_text", "text"].contains(codec) }
+    public var isBitmapSubtitle: Bool { ["hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub"].contains(codec) }
+
+    public init(id: Int, codec: String, language: String? = nil, title: String? = nil, channels: Int? = nil, profile: String? = nil, disposition: [String: Int]? = nil) {
         self.id = id
         self.codec = codec
         self.language = language
         self.title = title
         self.channels = channels
         self.profile = profile
+        self.disposition = disposition
     }
 }
 
@@ -37,6 +46,7 @@ public struct MediaInfo: Codable, Sendable, Equatable {
     public var colorSpace: String?
     public var hasDolbyVision = false
     public var startTime: Double = 0
+    public var defaultAudioTrack: MediaTrack? { audioTracks.first(where: \.isDefault) ?? audioTracks.first }
 
     public var isHDR: Bool { ["smpte2084", "arib-std-b67"].contains(colorTransfer) }
     public var videoRange: String { colorTransfer == "smpte2084" ? "PQ" : colorTransfer == "arib-std-b67" ? "HLG" : "SDR" }
@@ -219,7 +229,7 @@ public struct FFmpegTools: Sendable {
         guard let executable = ffprobeURL else { throw MediaPipelineError.missingTool("ffprobe") }
         let output = try await ProcessRunner().run(executable: executable, arguments: [
             "-v", "error", "-show_entries",
-            "format=duration,start_time:stream=index,codec_type,codec_name,profile,pix_fmt,level,avg_frame_rate,color_transfer,color_primaries,color_space,width,height,channels,duration:stream_tags=language,title:stream_disposition=attached_pic:stream_side_data",
+            "format=duration,start_time:stream=index,codec_type,codec_name,profile,pix_fmt,level,avg_frame_rate,color_transfer,color_primaries,color_space,width,height,channels,duration:stream_tags=language,title:stream_disposition=attached_pic,default,original,forced,comment:stream_side_data",
             "-of", "json", url.path
         ], outputLimit: 2 * 1024 * 1024)
         return try Self.decodeProbe(output.stdout)
@@ -293,7 +303,7 @@ public struct FFmpegTools: Sendable {
         func tracks(_ kind: String) -> [MediaTrack] {
             probe.streams.filter { $0.codec_type == kind }.map {
                 MediaTrack(id: $0.index, codec: $0.codec_name ?? "unknown", language: $0.tags?["language"],
-                           title: $0.tags?["title"], channels: $0.channels, profile: $0.profile)
+                           title: $0.tags?["title"], channels: $0.channels, profile: $0.profile, disposition: $0.disposition)
             }
         }
         let durations = ([probe.format?.duration] + probe.streams.map(\.duration)).compactMap { $0 }.compactMap(Double.init)
@@ -510,7 +520,7 @@ public final class HLSJob {
             throw error
         }
         do {
-            let audio = info.audioTracks.first { $0.id == audioTrack } ?? info.audioTracks.first
+            let audio = info.audioTracks.first { $0.id == audioTrack } ?? info.defaultAudioTrack
             let keyTime = isVideoCopied ? try await tools.firstVideoTimestamp(url: input, seek: startTime + info.startTime) : startTime
             try Task.checkCancellation()
             guard generation == currentGeneration else { throw CancellationError() }
@@ -648,7 +658,7 @@ public final class HLSJob {
             guard let track = info.subtitleTracks.first(where: { $0.id == id }) else {
                 throw MediaPipelineError.invalidMedia(NSLocalizedString("The selected subtitle track is missing from the file.", comment: ""))
             }
-            guard ["subrip", "ass", "ssa", "webvtt", "mov_text", "text"].contains(track.codec) else {
+            guard track.isTextSubtitle else {
                 throw MediaPipelineError.invalidMedia(NSLocalizedString("Bitmap subtitles require video conversion. Choose text subtitles or turn off Preserve video quality.", comment: ""))
             }
             source = input; map = "0:\(id)"; offset = sourceOffset + info.startTime
@@ -743,8 +753,7 @@ public final class HLSJob {
             guard let ordinal = info.subtitleTracks.firstIndex(where: { $0.id == index }) else {
                 throw MediaPipelineError.invalidMedia(NSLocalizedString("The selected subtitle track is missing from the file.", comment: ""))
             }
-            let codec = info.subtitleTracks[ordinal].codec
-            if ["hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub"].contains(codec) {
+            if info.subtitleTracks[ordinal].isBitmapSubtitle {
                 return .bitmap(index)
             }
             // Fixed relative symlinks keep filenames out of FFmpeg's filter expression parser.
@@ -793,7 +802,7 @@ public final class HLSJob {
         } else {
             arguments += ["-map", "0:V:0", "-vf", filters.joined(separator: ",")]
         }
-        if let audio = audioTrack ?? info.audioTracks.first?.id { arguments += ["-map", "0:\(audio)"] }
+        if let audio = audioTrack ?? info.defaultAudioTrack?.id { arguments += ["-map", "0:\(audio)"] }
         arguments += ["-pix_fmt", "yuv420p", "-c:v", hardwareEncoding ? "h264_videotoolbox" : "libx264"]
         if hardwareEncoding {
             arguments += ["-b:v", "6000k", "-allow_sw", "1"]
