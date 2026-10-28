@@ -272,6 +272,108 @@ final class PlaybackTests: XCTestCase {
     }
 
     @MainActor
+    func testSavedTrackPreferencesAcrossNativePlaybackHLSQueueAndRelaunch() async throws {
+        let tools = mediaTestTools()
+        guard let ffmpeg = tools.ffmpegURL, tools.ffprobeURL != nil else { throw XCTSkip("FFmpeg is required") }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-track-preferences-\(UUID())")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let suite = "app.beamly.track-preferences.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        defaults.set(false, forKey: "autoPlay")
+        defaults.set(false, forKey: "hardwareEncoding")
+        defaults.set(ffmpeg.deletingLastPathComponent().path, forKey: "toolsDirectory")
+        defaults.set("ru", forKey: "preferredAudioLanguage")
+        defaults.set("off", forKey: "preferredSubtitleLanguage")
+        let russian = folder.appendingPathComponent("First.ru.srt")
+        try "1\n00:00:00,500 --> 00:00:07,000\nTrack preference caption\n".write(to: russian, atomically: true, encoding: .utf8)
+        let first = folder.appendingPathComponent("First.mp4")
+        let second = folder.appendingPathComponent("Second.mkv")
+        let process = Process()
+        process.executableURL = ffmpeg
+        process.arguments = ["-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "color=c=blue:size=160x90:rate=24:duration=8",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=8", "-f", "lavfi", "-i", "sine=frequency=880:duration=8", "-i", russian.path,
+            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s", "-c:v", "libx264", "-c:a", "aac", "-c:s", "mov_text",
+            "-metadata:s:a:0", "language=eng", "-metadata:s:a:1", "language=rus", "-metadata:s:s:0", "language=eng",
+            "-disposition:a:0", "0", "-disposition:a:1", "default", "-movflags", "+faststart", first.path]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run(); process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        let remux = Process()
+        remux.executableURL = ffmpeg
+        remux.arguments = ["-v", "error", "-nostdin", "-y", "-i", first.path, "-map", "0", "-c", "copy", "-c:s", "srt", "-disposition:a:0", "original", second.path]
+        remux.standardInput = FileHandle.nullDevice
+        remux.standardOutput = FileHandle.nullDevice
+        remux.standardError = FileHandle.nullDevice
+        try remux.run(); remux.waitUntilExit()
+        XCTAssertEqual(remux.terminationStatus, 0)
+        var playlist = Playlist()
+        playlist.append([first, second])
+        let state = folder.appendingPathComponent("playlist.json")
+        try JSONEncoder().encode(playlist).write(to: state)
+        let player = AirPlayTestPlayer()
+        let model = AppModel(stateURL: state, defaults: defaults, player: player)
+        defer { model.shutdown() }
+        model.select(playlist.items[0].id, autoPlay: false)
+        try await wait(diagnostic: model.errorMessage ?? "no player error") { !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        XCTAssertFalse(model.isUsingHLS)
+        XCTAssertEqual(model.audioID, 2)
+        XCTAssertNil(model.subtitleID)
+        XCTAssertNil(model.externalSubtitle, "Off must ignore adjacent files")
+        let item = try XCTUnwrap(player.currentItem)
+        let loadedAudio = try await item.asset.loadMediaSelectionGroup(for: .audible)
+        let group = try XCTUnwrap(loadedAudio)
+        XCTAssertEqual(MediaLanguages.normalized(item.currentMediaSelection.selectedMediaOption(in: group)?.extendedLanguageTag), "ru")
+        let loadedSubtitles = try await item.asset.loadMediaSelectionGroup(for: .legible)
+        let captions = try XCTUnwrap(loadedSubtitles)
+        XCTAssertNil(item.currentMediaSelection.selectedMediaOption(in: captions))
+        model.setAudio(nil)
+        XCTAssertEqual(MediaLanguages.normalized(item.currentMediaSelection.selectedMediaOption(in: group)?.extendedLanguageTag), "ru", "File default is the flagged track, not the first stream")
+        model.setAudio(1)
+        model.setSubtitle(3)
+        model.seek(2)
+        model.setSubtitleDelay(0.5)
+        try await wait(diagnostic: model.errorMessage ?? "no player error") { !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        XCTAssertTrue(model.isUsingHLS)
+        XCTAssertTrue(model.isVideoCopied)
+        XCTAssertEqual(model.audioID, 1)
+        XCTAssertEqual(model.subtitleID, 3, "Rebuilds retain manual captions despite global Off")
+        model.seek(5)
+        try await wait { !model.isPreparing && abs(model.position - 5) < 0.2 }
+        defaults.set("original", forKey: "preferredAudioLanguage")
+        defaults.set("ru", forKey: "preferredSubtitleLanguage")
+        XCTAssertEqual(model.audioID, 1)
+        XCTAssertEqual(model.subtitleID, 3)
+        model.next()
+        try await wait(diagnostic: model.errorMessage ?? "no player error") { model.current?.url == second && !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        XCTAssertTrue(model.info?.audioTracks.first?.isOriginal == true)
+        XCTAssertEqual(model.info?.defaultAudioTrack?.id, 2)
+        XCTAssertEqual(model.audioID, 1)
+        XCTAssertNil(model.subtitleID, "Missing preferred subtitles must stay off")
+        model.setAudio(nil)
+        try await wait { !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        let hlsAudio = try await player.currentItem?.asset.loadMediaSelectionGroup(for: .audible)
+        let hlsGroup = try XCTUnwrap(hlsAudio)
+        XCTAssertEqual(MediaLanguages.normalized(player.currentItem?.currentMediaSelection.selectedMediaOption(in: hlsGroup)?.extendedLanguageTag), "ru")
+        defaults.set("en", forKey: "preferredAudioLanguage")
+        model.select(playlist.items[0].id, autoPlay: false)
+        try await wait { !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        XCTAssertEqual(model.audioID, 1)
+        XCTAssertEqual(model.externalSubtitle?.resolvingSymlinksInPath().path, russian.resolvingSymlinksInPath().path)
+        model.shutdown()
+        let restoredDefaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let restored = AppModel(stateURL: state, defaults: restoredDefaults, player: AirPlayTestPlayer())
+        defer { restored.shutdown() }
+        restored.select(playlist.items[0].id, autoPlay: false)
+        try await wait { !restored.isPreparing && restored.player.currentItem?.status == .readyToPlay }
+        XCTAssertEqual(restored.audioID, 1)
+        XCTAssertEqual(restored.externalSubtitle?.resolvingSymlinksInPath().path, russian.resolvingSymlinksInPath().path)
+        XCTAssertNil(restored.errorMessage)
+    }
+
+    @MainActor
     private func findTable(_ view: NSView) -> NSTableView? {
         if let table = view as? NSTableView { return table }
         for child in view.subviews { if let table = findTable(child) { return table } }

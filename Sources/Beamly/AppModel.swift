@@ -70,7 +70,7 @@ final class AppModel: ObservableObject {
         // Keep the original data location so renaming the app preserves the queue.
         self.stateURL = stateURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Peamer/playlist.json")
         self.defaults = defaults
-        defaults.register(defaults: ["autoPlay": true, "directPlayback": true, "hardwareEncoding": true, "appearance": "system"])
+        defaults.register(defaults: ["autoPlay": true, "directPlayback": true, "hardwareEncoding": true, "appearance": "system", "preferredAudioLanguage": "default", "preferredSubtitleLanguage": "automatic"])
         restore()
         duration = playlist.current?.duration ?? 0
         position = playlist.current?.position ?? 0
@@ -184,7 +184,7 @@ final class AppModel: ObservableObject {
         duration = playlist.current?.duration ?? 0
         loadPreview()
         save()
-        prepare(at: duration > 0 && position > duration - 3 ? 0 : position, autoPlay: autoPlay, discoverSubtitles: true)
+        prepare(at: duration > 0 && position > duration - 3 ? 0 : position, autoPlay: autoPlay, applyTrackPreferences: true)
     }
 
     func togglePlay() {
@@ -254,6 +254,7 @@ final class AppModel: ObservableObject {
         audioID = id
         if let group = directAudioGroup, !isUsingHLS {
             if let id { player.currentItem?.select(directAudioChoices[id], in: group) }
+            else if let option = group.defaultOption { player.currentItem?.select(option, in: group) }
             else { player.currentItem?.selectMediaOptionAutomatically(in: group) }
         } else { prepare(at: position, autoPlay: isPlaying) }
     }
@@ -361,7 +362,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func prepare(at start: Double, autoPlay: Bool, discoverSubtitles: Bool = false) {
+    private func prepare(at start: Double, autoPlay: Bool, applyTrackPreferences: Bool = false) {
         guard let movie = current else { return }
         cancelPlayback()
         // Cancellation is cooperative; this ID also rejects callbacks from an older load.
@@ -370,17 +371,17 @@ final class AppModel: ObservableObject {
         isPreparing = true
         playRequested = autoPlay
         position = start
+        let preferences = TrackPreferences(audio: defaults.string(forKey: "preferredAudioLanguage") ?? "default",
+                                           subtitles: defaults.string(forKey: "preferredSubtitleLanguage") ?? "automatic")
         preparation = Task { [weak self] in
             guard let self else { return }
             do {
                 guard FileManager.default.isReadableFile(atPath: movie.url.path) else { throw PlaybackError(String(format: NSLocalizedString("File not found or inaccessible: %@", comment: ""), movie.url.lastPathComponent)) }
-                if discoverSubtitles {
+                if applyTrackPreferences {
                     let files = await Task.detached(priority: .userInitiated) { findSubtitleFiles(for: movie.url) }.value
                     try Task.checkCancellation()
                     guard loadID == generation else { return }
                     externalSubtitleOptions = files
-                    let exact = files.first { $0.deletingPathExtension().lastPathComponent.lowercased() == movie.url.deletingPathExtension().lastPathComponent.lowercased() }
-                    externalSubtitle = exact ?? (files.count == 1 ? files.first : nil)
                 }
                 let asset = AVURLAsset(url: movie.url)
                 let metadata: MediaInfo
@@ -394,6 +395,16 @@ final class AppModel: ObservableObject {
                 guard loadID == generation else { return }
                 info = metadata
                 duration = metadata.duration.isFinite ? max(0, metadata.duration) : 0
+                // Rebuilds retain manual choices; preferences apply only when opening a video.
+                if applyTrackPreferences {
+                    audioID = preferences.audioTrack(in: metadata.audioTracks)
+                    let captions = metadata.subtitleTracks.filter { $0.isTextSubtitle || (!self.defaults.bool(forKey: "directPlayback") && $0.isBitmapSubtitle) }
+                    switch preferences.subtitleChoice(in: captions, files: externalSubtitleOptions, video: movie.url) {
+                    case .none: subtitleID = nil; externalSubtitle = nil
+                    case .embedded(let id): subtitleID = id; externalSubtitle = nil
+                    case .external(let url): subtitleID = nil; externalSubtitle = url
+                    }
+                }
                 var canPlayDirect = false
                 if ["mp4", "m4v", "mov"].contains(movie.url.pathExtension.lowercased()), externalSubtitle == nil,
                    subtitleID == nil || subtitleDelay == 0, defaults.bool(forKey: "directPlayback") {
@@ -439,15 +450,18 @@ final class AppModel: ObservableObject {
                     guard loadID == generation else { return }
                     directAudioGroup = audioGroup
                     self.subtitleGroup = subtitleGroup
-                    audioOptions = (audioGroup?.options ?? []).enumerated().map { index, option in
-                        let id = metadata.audioTracks.indices.contains(index) ? metadata.audioTracks[index].id : index
-                        self.directAudioChoices[id] = option
-                        return TrackOption(id: id, title: option.displayName)
-                    }
-                    subtitleOptions = (subtitleGroup?.options ?? []).enumerated().map { index, option in
-                        let id = metadata.subtitleTracks.indices.contains(index) ? metadata.subtitleTracks[index].id : index
-                        self.directSubtitleChoices[id] = option
-                        return TrackOption(id: id, title: option.displayName)
+                    let audioTracks = Self.nativeTracks(in: audioGroup, source: metadata.audioTracks, choices: &directAudioChoices)
+                    let subtitleTracks = Self.nativeTracks(in: subtitleGroup, source: metadata.subtitleTracks, choices: &directSubtitleChoices)
+                    audioOptions = audioTracks.map { TrackOption(id: $0.id, title: $0.title ?? "") }
+                    subtitleOptions = subtitleTracks.map { TrackOption(id: $0.id, title: $0.title ?? "") }
+                    if applyTrackPreferences {
+                        audioID = preferences.audioTrack(in: audioTracks)
+                        if case .embedded(let id) = preferences.subtitleChoice(in: subtitleTracks, files: [], video: movie.url) { subtitleID = id }
+                        else { subtitleID = nil }
+                        if subtitleID != nil, subtitleDelay != 0 {
+                            prepare(at: start, autoPlay: playRequested)
+                            return
+                        }
                     }
                 }
                 item.preferredForwardBufferDuration = 8
@@ -460,7 +474,7 @@ final class AppModel: ObservableObject {
                         } else if item.status == .readyToPlay {
                             if self.isUsingHLS, let group = self.subtitleGroup { item.select(group.options.first, in: group) }
                             if !self.isUsingHLS {
-                                if let group = self.directAudioGroup, let id = self.audioID { item.select(self.directAudioChoices[id], in: group) }
+                                if self.directAudioGroup != nil { self.setAudio(self.audioID) }
                                 if let group = self.subtitleGroup { item.select(self.subtitleID.flatMap { self.directSubtitleChoices[$0] }, in: group) }
                             }
                             // Ignore time-zero callbacks until the saved position has been restored.
@@ -496,6 +510,25 @@ final class AppModel: ObservableObject {
                 errorMessage = error.localizedDescription
                 cancelPlayback()
             }
+        }
+    }
+
+    private static func nativeTracks(in group: AVMediaSelectionGroup?, source: [MediaTrack], choices: inout [Int: AVMediaSelectionOption]) -> [MediaTrack] {
+        var remaining = source
+        return (group?.options ?? []).enumerated().map { index, option in
+            let language = option.extendedLanguageTag ?? option.locale?.language.languageCode?.identifier
+            let code = MediaLanguages.normalized(language)
+            // Native groups can omit or reorder streams; retain FFmpeg's global stream IDs.
+            let match = code.flatMap { code in remaining.firstIndex { MediaLanguages.normalized($0.language) == code } } ?? remaining.indices.first
+            let track = match.map { remaining.remove(at: $0) }
+            let id = track?.id ?? (source.map(\.id).max() ?? -1) + index + 1
+            var disposition = track?.disposition ?? [:]
+            disposition["default"] = option == group?.defaultOption ? 1 : 0
+            if option.hasMediaCharacteristic(.isOriginalContent) { disposition["original"] = 1 }
+            if option.hasMediaCharacteristic(.containsOnlyForcedSubtitles) { disposition["forced"] = 1 }
+            choices[id] = option
+            return MediaTrack(id: id, codec: track?.codec ?? "unknown", language: language ?? track?.language,
+                              title: option.displayName, disposition: disposition)
         }
     }
 
