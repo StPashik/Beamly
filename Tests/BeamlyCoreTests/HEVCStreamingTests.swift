@@ -46,7 +46,7 @@ final class HEVCStreamingTests: XCTestCase {
 
     @MainActor
     func testReal4KHDRCopySeekAudioSubtitlesAndHTTP() async throws {
-        let tools = FFmpegTools(customDirectory: ProcessInfo.processInfo.environment["BEAMLY_TEST_TOOLS_DIRECTORY"].map { URL(fileURLWithPath: $0) })
+        let tools = mediaTestTools()
         guard let ffmpeg = tools.ffmpegURL, let ffprobe = tools.ffprobeURL else { throw XCTSkip("FFmpeg is required") }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-4k-\(UUID())")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -56,7 +56,9 @@ final class HEVCStreamingTests: XCTestCase {
         let job = HLSJob(tools: tools)
         let server = MediaHTTPServer()
         defer { job.stop(); server.stop(); try? FileManager.default.removeItem(at: folder) }
-        _ = try run(ffmpeg, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=192x108:rate=24:duration=8,scale=3840:2160:flags=neighbor",
+        // libx265 is a fixture generator, not a dependency of the shipped remux player.
+        let generator = try XCTUnwrap(FFmpegTools().ffmpegURL)
+        _ = try run(generator, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=192x108:rate=24:duration=8,scale=3840:2160:flags=neighbor",
             "-f", "lavfi", "-i", "sine=frequency=440:duration=8,volume=0:enable='lt(t,4)'", "-f", "lavfi", "-i", "sine=frequency=880:duration=8,volume=0:enable='lt(t,4)'", "-i", captions.path,
             "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s", "-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p10le",
             "-x265-params", "pools=2:frame-threads=2:keyint=48:min-keyint=48:scenecut=0:open-gop=1:log-level=error:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,400",

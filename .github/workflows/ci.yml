@@ -12,7 +12,7 @@ permissions:
 jobs:
   build-and-test:
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
@@ -23,13 +23,19 @@ jobs:
         with:
           node-version: "24"
           package-manager-cache: false
-      - name: Install media tools
-        run: brew install ffmpeg-full
-      - name: Test Swift application and core
-        run: Scripts/test.sh
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install build tools and the HEVC fixture generator
+        run: brew install cmake pkg-config ffmpeg-full
+      - name: Build standalone universal media tools
+        run: python3 Scripts/build-media.py
       - name: Build and verify universal release
         run: Scripts/release.sh
+      - name: Test Swift application and core using bundled tools
+        run: BEAMLY_TEST_APP_BUNDLE="$PWD/build/Beamly.app" Scripts/test.sh
       - name: Test installer and inspect npm package
         run: |
+          python3 -m unittest discover -s Tests/PackagingTests -v
           npm test
           npm pack --dry-run

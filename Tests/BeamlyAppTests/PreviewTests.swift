@@ -6,7 +6,7 @@ import XCTest
 final class PreviewTests: XCTestCase {
     @MainActor
     func testMidpointImageForMP4AndMKVDoesNotLoadOrMoveThePlayer() async throws {
-        let tools = FFmpegTools()
+        let tools = mediaTestTools()
         guard let ffmpeg = tools.ffmpegURL, tools.ffprobeURL != nil else { throw XCTSkip("FFmpeg is not installed") }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-preview-\(UUID())")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -47,6 +47,7 @@ final class PreviewTests: XCTestCase {
         for movie in [mp4, mkv] {
             let name = "app.beamly.preview-tests.\(UUID())"
             let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+            defaults.set(ffmpeg.deletingLastPathComponent().path, forKey: "toolsDirectory")
             var saved = Playlist()
             saved.append([movie])
             saved.items[0].duration = 6

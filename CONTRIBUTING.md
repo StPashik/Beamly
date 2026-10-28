@@ -8,9 +8,9 @@ Create `feature/<description>` from `develop` and target your pull request at `d
 
 ## Checks
 
-- Use Xcode 26 or later, with the macOS 26 SDK. Install FFmpeg for integration tests.
+- Use Xcode 26 or later, with the macOS 26 SDK, Python 3.12+, CMake, pkg-config, and make. Build the standalone helpers with `python3 Scripts/build-media.py`. Install ffmpeg-full only for the HEVC test-fixture generator.
 - Keep UI and playback coordination in `Sources/Beamly`; reusable queue, media, and HTTP code lives in `Sources/BeamlyCore`.
-- Run `Scripts/test.sh` after changing application behavior. Run `Scripts/release.sh` and `npm test` after changing packaging or installation.
+- Run `BEAMLY_TEST_APP_BUNDLE="$PWD/build/Beamly.app" Scripts/test.sh` after changing application behavior. Run `Scripts/release.sh` and `npm test` after changing packaging or installation. Keep the corresponding media-source archive beside the app when publishing.
 - GitHub Actions runs these checks for pull requests targeting `develop` or `main`, and for pushes to both branches. The workflow is defined in `.github/workflows/ci.yml`.
 - Keep all five translations in Resources/Localizable.xcstrings and Resources/InfoPlist.xcstrings complete. English is the source language; keep format arguments consistent across translations.
 - Add a small regression test for a bug. Explain non-obvious platform behavior in English comments.

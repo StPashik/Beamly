@@ -13,6 +13,7 @@ A native macOS player for sending local videos to Apple TV and other AirPlay rec
 - Native AirPlay device selection and a static thumbnail from the middle of the video.
 - Direct playback of compatible MP4, M4V, and MOV files; quality-preserving 4K HEVC/H.264 remuxing from MKV, including supported HDR10/HLG streams.
 - Audio-track selection, embedded subtitles, and external SRT, ASS, SSA, and VTT files.
+- Standalone FFmpeg and FFprobe included with the app; see [bundled media tools](Docs/Bundled-media.md).
 - A persistent queue with resume positions, drag reordering, shuffle, repeat, and keyboard controls.
 - Light and dark appearance, custom window controls, and Liquid Glass panels on macOS 26 or later. Earlier supported versions use standard translucent materials.
 - English, Russian, German, French, and Spanish interfaces, selectable in Settings. English is the default.
@@ -27,15 +28,15 @@ Chromecast is not supported. See [video quality and AirPlay](Docs/Media-Streamin
 
 - **macOS 14 Sonoma or later**, on Apple Silicon or Intel. The release is a universal application.
 - An Apple TV or compatible AirPlay receiver on the same local network.
-- **FFmpeg and ffprobe** for conversion and external subtitles. Compatible MP4/MOV files can use AVFoundation without them.
+- **FFmpeg and ffprobe are included** for MKV streaming, external subtitles, and compatibility conversion. No Homebrew installation or separate codec download is required.
 
-Install FFmpeg with subtitle rendering support using [Homebrew](https://brew.sh):
+For **Beamly 1.0.3 and earlier**, FFmpeg was a separate dependency. Users of those versions can update Beamly or install subtitle-capable FFmpeg with [Homebrew](https://brew.sh):
 
 ```sh
 brew install ffmpeg-full
 ```
 
-Beamly uses the folder selected in Settings first, then bundled tools, Homebrew's `ffmpeg-full` installation, and the standard `/opt/homebrew/bin` and `/usr/local/bin` directories. The full Homebrew build includes the `subtitles` filter required for burning text subtitles; the regular formula may omit it. FFmpeg is a separate dependency and is not included in the release archive.
+Beamly uses the folder selected in Settings first, then bundled helpers, legacy resource-folder tools, Homebrew's `ffmpeg-full` installation, and the standard `/opt/homebrew/bin` and `/usr/local/bin` directories. The full Homebrew build includes the `subtitles` filter required for burning text subtitles; the regular formula may omit it. Beamly 1.0.4 bundles this functionality, including HDR-to-SDR conversion, with complete corresponding source and license notices.
 
 When using Beamly 1.0.0, select the `ffmpeg-full` bin folder in Settings if it is not detected: `/opt/homebrew/opt/ffmpeg-full/bin` on Apple Silicon or `/usr/local/opt/ffmpeg-full/bin` on Intel.
 
@@ -43,15 +44,17 @@ When using Beamly 1.0.0, select the `ffmpeg-full` bin folder in Settings if it i
 
 ### Download
 
-1. Download `Beamly-1.0.3-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
+1. Download `Beamly-1.0.4-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
 2. Extract it and move **Beamly.app** to **Applications**, or to your personal `~/Applications` folder.
 3. See [First launch](#first-launch) before opening a downloaded build.
 
-To verify the archive, download `SHA256SUMS` from the same release and run this in the download directory:
+To verify the app ZIP, download `SHA256SUMS` from the same release and run this in the download directory:
 
 ```sh
-shasum -a 256 -c SHA256SUMS
+awk '$2 == "Beamly-1.0.4-universal.zip"' SHA256SUMS | shasum -a 256 -c -
 ```
+
+The same checksum file also lists `Beamly-FFmpeg-Sources-1.0.4.tar.xz`, the complete corresponding source for the bundled media tools. If both archives are downloaded, `shasum -a 256 -c SHA256SUMS` verifies both.
 
 ### Homebrew
 
@@ -62,19 +65,19 @@ brew tap stpashik/beamly https://github.com/StPashik/Beamly.git
 brew install --cask stpashik/beamly/beamly
 ```
 
-The cask installs the universal app and verifies the archive's pinned SHA-256 checksum. Install FFmpeg separately for conversion and external subtitles; installing Beamly does not upgrade your existing media-tool dependencies. This is a third-party tap, separate from Homebrew's official cask collection.
+The cask installs the universal app and verifies the archive's pinned SHA-256 checksum. FFmpeg and ffprobe are included; installing Beamly does not upgrade your existing Homebrew media-tool dependencies. This is a third-party tap, separate from Homebrew's official cask collection.
 
 ### npm
 
 With Node.js 18 or later and npm installed (omit `--allow-git=root` on npm 11 or earlier):
 
 ```sh
-npm install --global --allow-git=root github:StPashik/Beamly#v1.0.3
+npm install --global --allow-git=root github:StPashik/Beamly#v1.0.4
 beamly install
 beamly
 ```
 
-The npm package is a small installer and launcher for the native app. It downloads the matching GitHub release, checks its SHA-256 checksum and code-signature integrity, then installs into `~/Applications` without administrator access. FFmpeg is installed separately. It refuses to overwrite an existing application; quit and move the old app to the Trash before reinstalling. Your queue and settings are stored outside the application.
+The npm package is a small installer and launcher for the native app. It downloads the matching GitHub release, checks its SHA-256 checksum and code-signature integrity, then installs into `~/Applications` without administrator access. FFmpeg and ffprobe are included in the downloaded app. The installer refuses to overwrite an existing application; quit and move the old app to the Trash before reinstalling. Your queue and settings are stored outside the application.
 
 The command above installs directly from GitHub; it does not require the package to be published on the npm registry. npm 12 requires explicit permission for the requested GitHub dependency. There are no npm dependencies or automatic post-install scripts. The flag is per-command; no global npm configuration needs to be changed.
 
@@ -121,7 +124,7 @@ brew upgrade --cask stpashik/beamly/beamly
 
 ## Build from source
 
-Building requires **Xcode 26 or later with the macOS 26 SDK**, including its Swift toolchain. Running the compiled app requires only macOS 14 or later.
+Building requires **Xcode 26 or later with the macOS 26 SDK**, Python 3.12+, CMake, pkg-config, and make. The build downloads and compiles pinned media sources for both CPUs; subsequent matching builds reuse the generated tools. Running the compiled app requires only macOS 14 or later.
 
 ```sh
 git clone https://github.com/StPashik/Beamly.git
@@ -132,16 +135,16 @@ open build/Beamly.app
 
 The script builds and verifies both `arm64` and `x86_64` slices, assembles the app, includes the license and icon, and applies a local ad-hoc signature. No paid Apple Developer account is required. Swift Package Manager downloads the pinned [Sparkle](https://sparkle-project.org) update framework; its license is included in the app.
 
-For development, open **Beamly.xcodeproj**, select your development team in **Signing & Capabilities**, then select the **Beamly** scheme and **My Mac**, and run. Xcode uses Apple Development signing with hardened runtime; its embedded Sparkle framework must be signed with the same team. Use the script above for a local ad-hoc build without a development signing identity. The Xcode project and Swift package share the same core library.
+For development, run `python3 Scripts/build-media.py` first, then open **Beamly.xcodeproj**, select your development team in **Signing & Capabilities**, then select the **Beamly** scheme and **My Mac**, and run. Xcode uses Apple Development signing with hardened runtime; its embedded Sparkle framework and media helpers use the same identity. Use the script above for a local ad-hoc build without a development signing identity. The Xcode project and Swift package share the same core library.
 
 ```sh
-Scripts/test.sh                # Swift tests: HTTP, FFmpeg, queue, AVPlayer, window behavior, and localization
+BEAMLY_TEST_APP_BUNDLE="$PWD/build/Beamly.app" Scripts/test.sh # Test the bundled media pipeline
 Scripts/release.sh             # Universal ZIP, SHA256SUMS, and updated Homebrew cask
 npm test                      # Installer integrity, existing-app protection, and real ZIP installation
 npm pack --dry-run            # Inspect the files included in the npm package
 ```
 
-Run `Scripts/release.sh` before `npm test`; the installation test uses the actual release ZIP. FFmpeg integration tests skip when FFmpeg is missing. Tests generate their own small videos and use isolated playlists, settings, and installation directories.
+Run `Scripts/release.sh` before `npm test`; the installation test uses the actual release ZIP and verifies both bundled helpers. Install `ffmpeg-full` on the developer/CI machine for the HEVC fixture generator; runtime playback tests use the bundled helpers when `BEAMLY_TEST_APP_BUNDLE` is set. Tests generate their own small videos and use isolated playlists, settings, and installation directories. Apple Silicon builds run both helper CPU slices without Homebrew in PATH, using Rosetta 2 for Intel; Intel hosts inspect ARM linkage but execute only x86_64.
 
 [GitHub Actions](.github/workflows/ci.yml) runs these checks for pull requests targeting `develop` or `main`, and for pushes to both branches. CI builds and verifies the application; publishing a release remains a separate maintainer action.
 
@@ -162,4 +165,4 @@ See [release instructions](Docs/RELEASING.md) and the [media HTTP contract](Docs
 
 Bug reports and focused pull requests are welcome. Include your macOS version, Mac architecture, receiver model, and a small reproducible example. Do not include private videos or complete media URLs in public reports. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Beamly's source code, documentation, and original icon are available under the [MIT license](LICENSE). The bundled Sparkle framework retains its [upstream license notices](Resources/Sparkle.LICENSE). FFmpeg is distributed separately under its own license. Beamly is an independent project; it is not affiliated with Apple or Beamer and includes no proprietary Beamer code or assets.
+Beamly's own source code, documentation, and original icon are available under the [MIT license](LICENSE). The bundled Sparkle framework retains its [upstream license notices](Resources/Sparkle.LICENSE). Beamly includes separate GPLv2 FFmpeg/FFprobe executables with corresponding source and their libraries' [license notices](Docs/Bundled-media.md); no FFmpeg libraries are linked into Beamly's application. Beamly is an independent project; it is not affiliated with Apple or Beamer and includes no proprietary Beamer code or assets.
