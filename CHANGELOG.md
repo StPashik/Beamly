@@ -1,3 +1,11 @@
+# Unreleased
+
+- Find adjacent SRT, ASS, SSA, and VTT files matching the video's basename, including language suffixes such as `Movie.ru.srt`. Select an exact-basename match or the only match automatically; list other matches in the subtitle menu.
+- Adjust subtitle timing in 0.5-second steps and reset it from a dedicated popover. Keep each movie's correction with its saved queue entry, including across relaunches.
+- Apply timing to separate WebVTT captions and compatibility subtitle rendering without shifting the video or audio. Preserve corrections across seeks and track changes.
+
+---
+
 # Beamly 1.0.4
 
 Beamly now includes FFmpeg and FFprobe for MKV streaming, external subtitles, and compatibility conversion without a separate installation.
