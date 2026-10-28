@@ -6,6 +6,8 @@ The header's RU / EN links work without JavaScript. With JavaScript, the chosen 
 
 The player and feature panels are explicitly labeled illustrations; they do not connect to devices or play video. Download links point to the latest GitHub release. No analytics, external fonts, runtime dependencies, or personal media are included.
 
+Both languages share a short hero entrance, a single soft TV glow animation, and transitions when switching feature panels. All added motion uses CSS, respects `prefers-reduced-motion`, and has no continuous animation loop.
+
 Run the focused interaction checks with `node --test Website/script.test.cjs`. Verify the desktop and mobile layout in a browser after changing markup or styles.
 
 ## Hosting

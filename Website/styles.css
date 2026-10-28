@@ -350,6 +350,34 @@ h2{font-size:36px;letter-spacing:-1.6px}
 .footer-links{font-size:9px;gap:18px}
 }
 
+@keyframes intro-reveal{
+from{opacity:0;transform:translateY(14px)}
+to{opacity:1;transform:none}
+}
+@keyframes cinema-glow{
+0%{opacity:.35;transform:scale(.96)}
+55%{opacity:1;transform:scale(1.06)}
+100%{opacity:1;transform:none}
+}
+@keyframes panel-reveal{
+from{opacity:0;transform:translateY(6px)}
+to{opacity:1;transform:none}
+}
+
+@media(prefers-reduced-motion:no-preference){
+.hero>.eyebrow,.hero h1,.hero-description,.hero-actions,.hero-requirements,.cinema-stage{animation:intro-reveal .8s cubic-bezier(.22,1,.36,1) backwards}
+.hero h1{animation-delay:.08s}
+.hero-description{animation-delay:.16s}
+.hero-actions,.hero-requirements{animation-delay:.24s}
+.cinema-stage{animation-duration:1s;animation-delay:.32s}
+.ambient-glow{animation:cinema-glow 4.6s ease-in-out backwards}
+.feature-panel:not([hidden]){animation:panel-reveal .28s ease-out}
+.feature-tab>.icon{transition:opacity .2s,transform .2s;transform:translateX(-4px)}
+.feature-tab[aria-selected="true"]>.icon{transform:none}
+.play-button{transition:background .2s,transform .15s}
+.play-button:active{transform:scale(.92)}
+}
+
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}
 *,*::before,*::after{transition:none!important;animation:none!important}
 .button:hover{transform:none}
