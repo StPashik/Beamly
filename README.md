@@ -142,7 +142,7 @@ npm test                      # Installer integrity, existing-app protection, an
 npm pack --dry-run            # Inspect the files included in the npm package
 ```
 
-Run `Scripts/release.sh` before `npm test`; the installation test uses the actual release ZIP and verifies both bundled helpers. Install `ffmpeg-full` on the developer/CI machine for the HEVC fixture generator; runtime playback tests use the bundled helpers when `BEAMLY_TEST_APP_BUNDLE` is set. Tests generate their own small videos and use isolated playlists, settings, and installation directories. The build also runs both helper CPU slices without Homebrew in PATH.
+Run `Scripts/release.sh` before `npm test`; the installation test uses the actual release ZIP and verifies both bundled helpers. Install `ffmpeg-full` on the developer/CI machine for the HEVC fixture generator; runtime playback tests use the bundled helpers when `BEAMLY_TEST_APP_BUNDLE` is set. Tests generate their own small videos and use isolated playlists, settings, and installation directories. Apple Silicon builds run both helper CPU slices without Homebrew in PATH, using Rosetta 2 for Intel; Intel hosts inspect ARM linkage but execute only x86_64.
 
 [GitHub Actions](.github/workflows/ci.yml) runs these checks for pull requests targeting `develop` or `main`, and for pushes to both branches. CI builds and verifies the application; publishing a release remains a separate maintainer action.
 

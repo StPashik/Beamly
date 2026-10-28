@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Check the actual signed app's helpers on both CPUs without Homebrew in PATH."""
+"""Inspect signed universal helpers and execute supported CPUs without Homebrew in PATH."""
 
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import subprocess
 import sys
@@ -40,6 +41,10 @@ with tempfile.TemporaryDirectory(prefix="beamly-bundled-check-") as folder:
                        for line in dependencies.splitlines() if "compatibility version" in line), dependencies
             load_commands = subprocess.check_output(["otool", "-arch", arch, "-l", str(tool)], text=True)
             assert re.search(r"\bminos 14\.0\b", load_commands), "Unexpected deployment target"
+        if arch == "arm64" and platform.machine() == "x86_64":
+            print("arm64: signatures/linkage/deployment verified; runtime requires an Apple Silicon host.", flush=True)
+            continue
+        for name in ["ffmpeg", "ffprobe"]:
             assert ("ffmpeg version " if name == "ffmpeg" else "ffprobe version ").encode() in run(name, "-version")
         input = root / f"{arch}.mkv"
         run("ffmpeg", "-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=10:duration=2",

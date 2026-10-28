@@ -2,9 +2,13 @@ import hashlib
 import importlib.util
 import io
 from pathlib import Path
+import runpy
+import sys
 import tarfile
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from unittest.mock import patch
 
 
 class MediaSourceSafetyTests(unittest.TestCase):
@@ -39,6 +43,18 @@ class MediaSourceSafetyTests(unittest.TestCase):
         with self.assertRaises(tarfile.OutsideDestinationError):
             self.builder.extract("fixture", work)
         self.assertFalse((self.root / "escaped-source").exists())
+
+    def test_intel_build_host_checks_arm_linkage_without_executing_arm_code(self):
+        root = Path(__file__).resolve().parents[2]
+        app = root / "build/Beamly.app"
+        if not (app / "Contents/Helpers/ffmpeg").exists():
+            self.skipTest("Build the packaged app first")
+        output = io.StringIO()
+        script = root / "Scripts/verify-bundled-media.py"
+        with patch("platform.machine", return_value="x86_64"), patch.object(sys, "argv", [str(script), str(app)]), redirect_stdout(output):
+            runpy.run_path(str(script), run_name="__main__")
+        self.assertIn("arm64: signatures/linkage/deployment verified; runtime requires an Apple Silicon host.", output.getvalue())
+        self.assertIn("x86_64: signed helpers run without Homebrew", output.getvalue())
 
 
 if __name__ == "__main__":
