@@ -18,14 +18,17 @@ const languageTags = html => html.match(/<a\b[^>]*\bclass="language-link"[^>]*>/
 
 function fixture(language = 'ru', options = {}) {
   const html = pages[language];
-  let focused, icon;
+  let focused, icon, revealEntries;
+  const observed = new Set();
   const redirects = [];
   const stored = new Map(options.saved ? [['beamly-language', options.saved]] : []);
   const elements = new Map();
   function node(tag) {
     const attrs = attributes(tag);
+    const classes = new Set((attrs.class || '').split(/\s+/));
     return {
       attrs, handlers: {}, hidden: /\shidden[\s>]/.test(tag), tabIndex: Number(attrs.tabindex),
+      classList: { add: value => classes.add(value), contains: value => classes.has(value) },
       getAttribute: name => attrs[name],
       setAttribute: (name, value) => { attrs[name] = value; },
       addEventListener(type, handler) { this.handlers[type] = handler; },
@@ -45,9 +48,16 @@ function fixture(language = 'ru', options = {}) {
   const tabs = ['queue', 'subtitles', 'airplay'].map(name => element(`tab-${name}`));
   const panels = tabs.map(tab => element(tab.attrs['aria-controls']));
   const links = languageTags(html).map(node);
+  const scrollTargets = ['<div class="section-heading">', '<article>', '<div class="privacy-card">'].map(node);
   runInNewContext(script, {
     URL,
     window: {
+      ...(options.observerSupported ? { IntersectionObserver: class {
+        constructor(callback) { revealEntries = callback; }
+        observe(target) { observed.add(target); }
+        unobserve(target) { observed.delete(target); }
+      } } : {}),
+      matchMedia: () => ({ matches: !options.reducedMotion }),
       location: {
         href: options.href || `https://beamly.example/site/${language === 'ru' ? 'index' : 'en'}.html`,
         replace: url => redirects.push(url),
@@ -60,11 +70,12 @@ function fixture(language = 'ru', options = {}) {
     document: {
       documentElement: { lang: language },
       querySelector: selector => elements.get(selector.slice(1)),
-      querySelectorAll: selector => selector === '.language-link' ? links : tabs,
+      querySelectorAll: selector => selector === '.language-link' ? links : selector === '[role="tab"]' ? tabs : scrollTargets,
       getElementById: id => elements.get(id),
     },
   });
-  return { play, status, tabs, panels, links, stored, redirects, icon: () => icon, focused: () => focused };
+  return { play, status, tabs, panels, links, stored, redirects, scrollTargets, observed,
+    reveal: entries => revealEntries(entries), icon: () => icon, focused: () => focused };
 }
 
 function assertSelected(ui, index) {
@@ -140,6 +151,33 @@ test(`${language}: denied storage leaves language links and player controls usab
   ui.play.handlers.click();
   assert.equal(ui.play.attrs['aria-pressed'], 'false');
   assert.deepEqual(ui.redirects, []);
+});
+
+test(`${language}: scroll reveals start only on entry and stop observing each revealed block`, () => {
+  const ui = fixture(language, { observerSupported: true });
+  assert.equal(ui.observed.size, ui.scrollTargets.length);
+  assert.ok(ui.scrollTargets.every(target => !target.classList.contains('scroll-reveal') && !target.hidden));
+  const [first, second, third] = ui.scrollTargets;
+  ui.reveal([{ target: first, isIntersecting: false }]);
+  assert.equal(first.classList.contains('scroll-reveal'), false);
+  assert.equal(ui.observed.size, 3);
+  ui.reveal([{ target: first, isIntersecting: true }, { target: second, isIntersecting: false }]);
+  assert.equal(first.classList.contains('scroll-reveal'), true);
+  assert.equal(ui.observed.has(first), false);
+  assert.equal(second.classList.contains('scroll-reveal'), false);
+  ui.reveal([{ target: second, isIntersecting: true }, { target: third, isIntersecting: true }]);
+  assert.ok(ui.scrollTargets.every(target => target.classList.contains('scroll-reveal') && !target.hidden));
+  assert.equal(ui.observed.size, 0);
+});
+
+test(`${language}: reduced motion and unavailable observers leave content visible`, () => {
+  for (const options of [{ observerSupported: true, reducedMotion: true }, { observerSupported: false }]) {
+    const ui = fixture(language, options);
+    assert.equal(ui.observed.size, 0);
+    assert.ok(ui.scrollTargets.every(target => !target.classList.contains('scroll-reveal') && !target.hidden));
+    ui.play.handlers.click();
+    assert.equal(ui.play.attrs['aria-pressed'], 'false');
+  }
 });
 }
 

@@ -61,3 +61,16 @@ for (const [index, tab] of tabs.entries()) {
     tabs[next].focus();
   });
 }
+
+if ('IntersectionObserver' in window && window.matchMedia('(prefers-reduced-motion: no-preference)').matches) {
+  const revealObserver = new window.IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      entry.target.classList.add('scroll-reveal');
+      revealObserver.unobserve(entry.target);
+    }
+  }, { threshold: 0.12 });
+  for (const element of document.querySelectorAll('.section-heading, .steps article, .feature-explorer, .feature-details > div, .privacy-card, .faq-section > div, .download-section')) {
+    revealObserver.observe(element);
+  }
+}
