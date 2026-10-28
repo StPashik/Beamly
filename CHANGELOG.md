@@ -1,3 +1,23 @@
+# Beamly 1.0.6
+
+**4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**
+
+Beamly remembers your preferred audio and subtitle languages and applies them when each video opens.
+
+- Choose independent audio and subtitle preferences in **Settings → Track preferences**, including file-default or explicitly marked original audio, preferred languages, automatic subtitles, and subtitles off. Settings survive relaunches and apply to subsequent queue entries.
+- Match embedded language metadata and adjacent subtitle filenames, including two- and three-letter ISO codes and regional tags. Prefer full captions over forced-only captions. Missing preferred audio falls back to the file's default track; missing preferred subtitles stay off.
+- Keep manual track choices while seeking or changing subtitle timing. Honor the file's default audio in direct and HLS playback.
+- Keep AVFoundation's generated forced-only subtitle views mapped to physical source streams, preserving track selection when timing corrections switch playback to HLS.
+- Include preference labels and help in all five interface languages. Original audio requires a marker in the file; Beamly does not guess the original language.
+
+**Update:** choose **Beamly → Check for Updates…** or **Settings → Updates**. Your queue, timing corrections, and preferences are preserved. FFmpeg and FFprobe remain included for Apple Silicon and Intel.
+
+Dolby Vision remuxing is not supported. Bitmap subtitles require compatibility conversion; ASS styling is simplified. See [video quality and AirPlay](Docs/Media-Streaming.md) for supported profiles and verification limits.
+
+**This community build is ad-hoc signed and is not notarized by Apple.** Requires macOS 14 or later on Apple Silicon or Intel.
+
+---
+
 # Beamly 1.0.5
 
 Beamly finds matching subtitle files beside your videos and remembers each movie's timing correction.

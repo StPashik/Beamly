@@ -1,6 +1,6 @@
 {
   "name": "@stpashik/beamly",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Installer and launcher for the native Beamly macOS AirPlay video player",
   "license": "MIT",
   "author": "StPashik",

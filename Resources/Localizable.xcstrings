@@ -3808,6 +3808,210 @@
           }
         }
       }
+    },
+    "Audio": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Audio"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Озвучка"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ton"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Audio"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Audio"
+          }
+        }
+      }
+    },
+    "Track preferences": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Track preferences"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Языки дорожек"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sprachpräferenzen"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Langues des pistes"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Idiomas de las pistas"
+          }
+        }
+      }
+    },
+    "File default": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "File default"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "По умолчанию в файле"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dateivorgabe"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Piste par défaut du fichier"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Predeterminado del archivo"
+          }
+        }
+      }
+    },
+    "Original audio": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Original audio"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Оригинальная озвучка"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Originalton"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Version originale"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Audio original"
+          }
+        }
+      }
+    },
+    "Applies when opening a video. If the preferred language is missing, Beamly uses the file’s default audio and turns subtitles off. Manual choices stay until another video is opened.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applies when opening a video. If the preferred language is missing, Beamly uses the file’s default audio and turns subtitles off. Manual choices stay until another video is opened."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Применяется при открытии видео. Если нужного языка нет, Beamly использует озвучку по умолчанию из файла и выключает субтитры. Ручной выбор сохраняется до открытия другого видео."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gilt beim Öffnen eines Videos. Fehlt die bevorzugte Sprache, verwendet Beamly die Standardtonspur der Datei und schaltet Untertitel aus. Die manuelle Auswahl bleibt bis zum Öffnen eines anderen Videos erhalten."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "S’applique à l’ouverture d’une vidéo. Si la langue souhaitée est absente, Beamly utilise la piste audio par défaut du fichier et désactive les sous-titres. Vos choix manuels restent actifs jusqu’à l’ouverture d’une autre vidéo."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se aplica al abrir un vídeo. Si falta el idioma preferido, Beamly usa el audio predeterminado del archivo y desactiva los subtítulos. La selección manual se conserva hasta abrir otro vídeo."
+          }
+        }
+      }
+    },
+    "Original audio requires an original-track marker in the file. Automatic subtitles select a matching adjacent file when the choice is unambiguous.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Original audio requires an original-track marker in the file. Automatic subtitles select a matching adjacent file when the choice is unambiguous."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Для оригинальной озвучки дорожка должна быть отмечена как оригинал в метаданных файла. Автоматический режим субтитров выбирает подходящий файл рядом с видео, если выбор однозначен."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Für Originalton muss die Tonspur in der Datei als Original markiert sein. Automatische Untertitel wählen eine passende Datei neben dem Video, wenn die Auswahl eindeutig ist."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La piste originale doit être marquée comme telle dans le fichier. Le mode automatique sélectionne un fichier de sous-titres correspondant à côté de la vidéo si le choix est sans ambiguïté."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El audio original requiere que la pista esté marcada como original en el archivo. Los subtítulos automáticos seleccionan un archivo junto al vídeo cuando la elección es inequívoca."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

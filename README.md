@@ -13,6 +13,7 @@ A native macOS player for sending local videos to Apple TV and other AirPlay rec
 - Native AirPlay device selection and a static thumbnail from the middle of the video.
 - Direct playback of compatible MP4, M4V, and MOV files; quality-preserving 4K HEVC/H.264 remuxing from MKV, including supported HDR10/HLG streams.
 - Audio-track selection, embedded subtitles, and external SRT, ASS, SSA, and VTT files.
+- Saved audio and subtitle language preferences, applied to each video when opened.
 - Standalone FFmpeg and FFprobe included with the app; see [bundled media tools](Docs/Bundled-media.md).
 - A persistent queue with resume positions, drag reordering, shuffle, repeat, and keyboard controls.
 - Light and dark appearance, custom window controls, and Liquid Glass panels on macOS 26 or later. Earlier supported versions use standard translucent materials.
@@ -44,17 +45,17 @@ When using Beamly 1.0.0, select the `ffmpeg-full` bin folder in Settings if it i
 
 ### Download
 
-1. Download `Beamly-1.0.5-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
+1. Download `Beamly-1.0.6-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
 2. Extract it and move **Beamly.app** to **Applications**, or to your personal `~/Applications` folder.
 3. See [First launch](#first-launch) before opening a downloaded build.
 
 To verify the app ZIP, download `SHA256SUMS` from the same release and run this in the download directory:
 
 ```sh
-awk '$2 == "Beamly-1.0.5-universal.zip"' SHA256SUMS | shasum -a 256 -c -
+awk '$2 == "Beamly-1.0.6-universal.zip"' SHA256SUMS | shasum -a 256 -c -
 ```
 
-The same checksum file also lists `Beamly-FFmpeg-Sources-1.0.5.tar.xz`, the complete corresponding source for the bundled media tools. If both archives are downloaded, `shasum -a 256 -c SHA256SUMS` verifies both.
+The same checksum file also lists `Beamly-FFmpeg-Sources-1.0.6.tar.xz`, the complete corresponding source for the bundled media tools. If both archives are downloaded, `shasum -a 256 -c SHA256SUMS` verifies both.
 
 ### Homebrew
 
@@ -72,7 +73,7 @@ The cask installs the universal app and verifies the archive's pinned SHA-256 ch
 With Node.js 18 or later and npm installed (omit `--allow-git=root` on npm 11 or earlier):
 
 ```sh
-npm install --global --allow-git=root github:StPashik/Beamly#v1.0.5
+npm install --global --allow-git=root github:StPashik/Beamly#v1.0.6
 beamly install
 beamly
 ```
@@ -97,6 +98,8 @@ Allow local-network access and incoming connections if macOS asks. An AirPlay re
 4. Use the speaker and subtitles menus beside the timeline to choose tracks.
 
 Beamly finds SRT, ASS, SSA, and VTT files beside the video when their names match, for example `Movie.mkv` with `Movie.srt` or `Movie.ru.srt`. It selects an exact-basename match or the only matching file automatically. When several language files match, choose one in the subtitles menu.
+
+In **Settings → Track preferences**, choose an audio language or **Original audio**, and a subtitle language or **Off**. These independent choices are saved across launches and applied when opening each video, including the next queue entry. Manual track changes affect the current video and survive seeking and subtitle timing changes. Missing preferred audio falls back to the file's default track; missing preferred subtitles stay off. **Original audio** requires an explicit original-track marker in the file; Beamly does not guess the original language. The initial **File default / Automatic** settings retain the adjacent-subtitle behavior above.
 
 Choose **Subtitles → Subtitle timing…** to move captions earlier or later in 0.5-second steps, or reset the correction. Positive values show subtitles later. Each movie's correction is saved with its queue entry and survives relaunches; removing that entry also removes its correction. Original video and subtitle files are never changed.
 
