@@ -44,17 +44,17 @@ When using Beamly 1.0.0, select the `ffmpeg-full` bin folder in Settings if it i
 
 ### Download
 
-1. Download `Beamly-1.0.4-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
+1. Download `Beamly-1.0.5-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
 2. Extract it and move **Beamly.app** to **Applications**, or to your personal `~/Applications` folder.
 3. See [First launch](#first-launch) before opening a downloaded build.
 
 To verify the app ZIP, download `SHA256SUMS` from the same release and run this in the download directory:
 
 ```sh
-awk '$2 == "Beamly-1.0.4-universal.zip"' SHA256SUMS | shasum -a 256 -c -
+awk '$2 == "Beamly-1.0.5-universal.zip"' SHA256SUMS | shasum -a 256 -c -
 ```
 
-The same checksum file also lists `Beamly-FFmpeg-Sources-1.0.4.tar.xz`, the complete corresponding source for the bundled media tools. If both archives are downloaded, `shasum -a 256 -c SHA256SUMS` verifies both.
+The same checksum file also lists `Beamly-FFmpeg-Sources-1.0.5.tar.xz`, the complete corresponding source for the bundled media tools. If both archives are downloaded, `shasum -a 256 -c SHA256SUMS` verifies both.
 
 ### Homebrew
 
@@ -72,7 +72,7 @@ The cask installs the universal app and verifies the archive's pinned SHA-256 ch
 With Node.js 18 or later and npm installed (omit `--allow-git=root` on npm 11 or earlier):
 
 ```sh
-npm install --global --allow-git=root github:StPashik/Beamly#v1.0.4
+npm install --global --allow-git=root github:StPashik/Beamly#v1.0.5
 beamly install
 beamly
 ```
@@ -95,6 +95,10 @@ Allow local-network access and incoming connections if macOS asks. An AirPlay re
 2. Click **AirPlay** in the top-right corner and select the receiver.
 3. Drop a video or folder into the window, or press **⌘O**. Playback starts only after an AirPlay device is connected; disconnecting pauses the player. Pressing Play without a connection opens the AirPlay device picker directly, and playback begins after you connect a receiver.
 4. Use the speaker and subtitles menus beside the timeline to choose tracks.
+
+Beamly finds SRT, ASS, SSA, and VTT files beside the video when their names match, for example `Movie.mkv` with `Movie.srt` or `Movie.ru.srt`. It selects an exact-basename match or the only matching file automatically. When several language files match, choose one in the subtitles menu.
+
+Choose **Subtitles → Subtitle timing…** to move captions earlier or later in 0.5-second steps, or reset the correction. Positive values show subtitles later. Each movie's correction is saved with its queue entry and survives relaunches; removing that entry also removes its correction. Original video and subtitle files are never changed.
 
 | Shortcut | Action |
 | --- | --- |

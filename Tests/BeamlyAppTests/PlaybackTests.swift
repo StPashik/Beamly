@@ -200,6 +200,45 @@ final class PlaybackTests: XCTestCase {
         XCTAssertNotNil(restoredItem.currentMediaSelection.selectedMediaOption(in: captions))
         XCTAssertEqual(model.subtitleID, embedded.id)
 
+        let captionPosition = model.position
+        model.setSubtitleDelay(1.5)
+        try await wait(diagnostic: model.errorMessage ?? "no player error") { model.isUsingHLS && !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        XCTAssertTrue(model.isVideoCopied)
+        XCTAssertEqual(model.position, captionPosition, accuracy: 0.2)
+        XCTAssertEqual(model.subtitleID, embedded.id)
+        model.setSubtitleDelay(-0.5)
+        try await wait { !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        model.setSubtitleDelay(.nan)
+        XCTAssertEqual(model.subtitleDelay, -0.5)
+        let persisted = try JSONDecoder().decode(Playlist.self, from: Data(contentsOf: state))
+        XCTAssertEqual(persisted.items[0].subtitleDelay, -0.5)
+        XCTAssertNil(persisted.items[1].subtitleDelay)
+
+        let english = folder.appendingPathComponent("First.en.srt")
+        let russian = folder.appendingPathComponent("First.ru.srt")
+        try FileManager.default.copyItem(at: subtitle, to: english)
+        model.select(saved.items[0].id, autoPlay: false)
+        try await wait { !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        XCTAssertEqual(model.externalSubtitleOptions.map { $0.resolvingSymlinksInPath().path }, [english.resolvingSymlinksInPath().path])
+        XCTAssertEqual(model.externalSubtitle?.resolvingSymlinksInPath().path, english.resolvingSymlinksInPath().path)
+        XCTAssertEqual(model.subtitleDelay, -0.5)
+        try FileManager.default.copyItem(at: subtitle, to: russian)
+        model.select(saved.items[0].id, autoPlay: false)
+        try await wait { !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        XCTAssertEqual(Set(model.externalSubtitleOptions.map { $0.resolvingSymlinksInPath().path }), Set([english, russian].map { $0.resolvingSymlinksInPath().path }))
+        XCTAssertNil(model.externalSubtitle, "Multiple languages require an explicit choice")
+        model.attachSubtitle(russian)
+        try await wait { !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        XCTAssertEqual(model.externalSubtitle?.resolvingSymlinksInPath().path, russian.resolvingSymlinksInPath().path)
+        model.setSubtitle(nil)
+        try await wait { !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        XCTAssertNil(model.externalSubtitle, "Rebuilding the stream must retain the Off selection")
+        let plain = folder.appendingPathComponent("First.srt")
+        try FileManager.default.copyItem(at: subtitle, to: plain)
+        model.select(saved.items[0].id, autoPlay: false)
+        try await wait { !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        XCTAssertEqual(model.externalSubtitle?.resolvingSymlinksInPath().path, plain.resolvingSymlinksInPath().path, "An exact-basename file takes priority")
+
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 674, height: 390), styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
@@ -219,6 +258,8 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(model.playlist.items.count, 1)
         try await wait { !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
         XCTAssertEqual(model.current?.url, second)
+        XCTAssertEqual(model.subtitleDelay, 0)
+        XCTAssertTrue(model.externalSubtitleOptions.isEmpty)
         XCTAssertEqual(model.current?.position ?? -1, 2, accuracy: 0.6)
         XCTAssertEqual(model.player.currentTime().seconds, 2, accuracy: 0.6)
         XCTAssertTrue(FileManager.default.fileExists(atPath: first.path))

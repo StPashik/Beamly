@@ -26,6 +26,10 @@ Selected embedded text subtitles and external SRT/ASS/SSA/WebVTT are converted t
 
 Text extraction reads the subtitle source before publishing the selected rendition. For embedded subtitles this can require scanning the movie; large files and slow storage increase preparation time. Subtitle intermediates stay under `.inputs` and are not served. The selected caption track is explicitly enabled in AVPlayer, independently of system caption preferences.
 
+When selecting a video, Beamly scans only its containing folder for readable SRT, ASS, SSA, and VTT files. Names must match the video basename exactly or append a dot-separated suffix, such as `Movie.ru.srt`; similarly prefixed movies do not match. An exact-basename file takes priority, and a single match is selected automatically. Multiple language files remain available in the subtitle menu without guessing a preferred language.
+
+**Subtitle timing…** adjusts the selected captions in 0.5-second steps. Positive values show captions later, negative values earlier. WebVTT cue times are shifted relative to the measured HLS origin; compatibility rendering changes only the subtitle clock and restores the video clock afterward. Embedded captions requiring a correction use HLS instead of direct MP4 playback and retain the same profile restrictions. Bitmap caption shifts use FFmpeg's subtitle-video timestamp adjustment before overlay. Corrections survive seeking and track changes and are stored with the movie's queue entry. Existing queues without a correction retain zero offset; removing an entry removes its correction. Source files are never modified.
+
 ## Seeking and buffering
 
 Remuxing starts at a preceding demuxer keyframe. FFmpeg reads preroll with original timestamps; a packet filter with `amount=0` discards only pictures before that random-access point, including leading open-GOP pictures that depend on an earlier GOP. Compressed payloads of retained pictures are untouched. Beamly measures the first output video timestamp and maps the generated timeline back to the original movie, including B-frame delay. Initial resume, track changes, and seeks outside the published range prepare a new stream and seek to the requested position within its initial GOP. Seeking within the published range uses AVPlayer directly.
@@ -54,5 +58,6 @@ The native 4K frame test uses HDR only when AVPlayer reports HDR eligibility, ot
 - [FFmpeg streamcopy](https://ffmpeg.org/ffmpeg.html#Streamcopy): copying compressed packets without decoding or encoding.
 - [FFmpeg HLS muxer](https://ffmpeg.org/ffmpeg-formats.html#hls-2): fragmented MP4, variant playlists, and event playlists.
 - [FFmpeg filters](https://ffmpeg.org/ffmpeg-filters.html#tonemap): explicit HDR-to-SDR compatibility conversion.
+- [FFmpeg advanced options](https://ffmpeg.org/ffmpeg.html#Advanced-options): bitmap subtitle timestamp shifting before overlay.
 - [FFmpeg packet filtering](https://www.ffmpeg.org/ffmpeg-bitstream-filters.html#noise): timestamp-based preroll removal with payload modification disabled.
 - [ETSI TS 103 285](https://www.etsi.org/deliver/etsi_ts/103200_103299/103285/01.01.01_60/ts_103285v010101p.pdf): HEVC codec-string fields and compatibility/constraint bit representation.
