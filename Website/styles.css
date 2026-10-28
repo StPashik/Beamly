@@ -370,6 +370,8 @@ to{opacity:1;transform:none}
 .hero-description{animation-delay:.16s}
 .hero-actions,.hero-requirements{animation-delay:.24s}
 .cinema-stage{animation-duration:1s;animation-delay:.32s}
+.television{transform:translateY(calc(var(--hero-scroll,0) * -24px))}
+.player-window{transform:translateY(calc(var(--hero-scroll,0) * -48px))}
 .ambient-glow{animation:cinema-glow 4.6s ease-in-out backwards}
 .feature-panel:not([hidden]){animation:panel-reveal .28s ease-out}
 .feature-tab>.icon{transition:opacity .2s,transform .2s;transform:translateX(-4px)}
@@ -380,6 +382,11 @@ to{opacity:1;transform:none}
 .steps article.scroll-reveal:nth-child(2),.feature-details>div.scroll-reveal:nth-child(2){animation-delay:.1s}
 .steps article.scroll-reveal:nth-child(3),.feature-details>div.scroll-reveal:nth-child(3){animation-delay:.2s}
 .scroll-reveal:focus-within{opacity:1!important;transform:none!important}
+}
+
+@media(prefers-reduced-motion:no-preference) and (max-width:760px){
+.television{transform:translateY(calc(var(--hero-scroll,0) * -12px))}
+.player-window{transform:translateY(calc(var(--hero-scroll,0) * -24px))}
 }
 
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}

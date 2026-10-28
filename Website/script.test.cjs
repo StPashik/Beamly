@@ -19,6 +19,16 @@ const languageTags = html => html.match(/<a\b[^>]*\bclass="language-link"[^>]*>/
 function fixture(language = 'ru', options = {}) {
   const html = pages[language];
   let focused, icon, revealEntries;
+  let scrollY = options.scrollY || 0;
+  let stageBottom = options.stageBottom ?? 1200;
+  let nextFrame = 0;
+  const frames = new Map();
+  const listeners = new Map();
+  const heroStyles = new Map();
+  const motionPreference = {
+    matches: !options.reducedMotion,
+    addEventListener(type, handler) { this.onchange = handler; },
+  };
   const observed = new Set();
   const redirects = [];
   const stored = new Map(options.saved ? [['beamly-language', options.saved]] : []);
@@ -48,6 +58,13 @@ function fixture(language = 'ru', options = {}) {
   const tabs = ['queue', 'subtitles', 'airplay'].map(name => element(`tab-${name}`));
   const panels = tabs.map(tab => element(tab.attrs['aria-controls']));
   const links = languageTags(html).map(node);
+  const cinemaStage = {
+    getBoundingClientRect: () => ({ bottom: stageBottom - scrollY }),
+    style: {
+      setProperty: (name, value) => heroStyles.set(name, String(value)),
+      removeProperty: name => heroStyles.delete(name),
+    },
+  };
   const scrollTargets = ['<div class="section-heading">', '<article>', '<div class="privacy-card">'].map(node);
   runInNewContext(script, {
     URL,
@@ -57,7 +74,15 @@ function fixture(language = 'ru', options = {}) {
         observe(target) { observed.add(target); }
         unobserve(target) { observed.delete(target); }
       } } : {}),
-      matchMedia: () => ({ matches: !options.reducedMotion }),
+      matchMedia: () => motionPreference,
+      get scrollY() { return scrollY; },
+      addEventListener(type, handler) {
+        if (!listeners.has(type)) listeners.set(type, new Set());
+        listeners.get(type).add(handler);
+      },
+      removeEventListener: (type, handler) => listeners.get(type)?.delete(handler),
+      requestAnimationFrame(callback) { frames.set(++nextFrame, callback); return nextFrame; },
+      cancelAnimationFrame: id => frames.delete(id),
       location: {
         href: options.href || `https://beamly.example/site/${language === 'ru' ? 'index' : 'en'}.html`,
         replace: url => redirects.push(url),
@@ -69,12 +94,16 @@ function fixture(language = 'ru', options = {}) {
     },
     document: {
       documentElement: { lang: language },
-      querySelector: selector => elements.get(selector.slice(1)),
+      querySelector: selector => selector === '.cinema-stage' ? cinemaStage : elements.get(selector.slice(1)),
       querySelectorAll: selector => selector === '.language-link' ? links : selector === '[role="tab"]' ? tabs : scrollTargets,
       getElementById: id => elements.get(id),
     },
   });
-  return { play, status, tabs, panels, links, stored, redirects, scrollTargets, observed,
+  return { play, status, tabs, panels, links, stored, redirects, scrollTargets, observed, heroStyles, frames, listeners,
+    scroll(y) { scrollY = y; for (const listener of listeners.get('scroll') || []) listener(); },
+    resize(bottom) { stageBottom = bottom; for (const listener of listeners.get('resize') || []) listener(); },
+    flushFrames() { for (const [id, callback] of [...frames]) { frames.delete(id); callback(); } },
+    reduceMotion(reduced) { motionPreference.matches = !reduced; motionPreference.onchange(); },
     reveal: entries => revealEntries(entries), icon: () => icon, focused: () => focused };
 }
 
@@ -178,6 +207,57 @@ test(`${language}: reduced motion and unavailable observers leave content visibl
     ui.play.handlers.click();
     assert.equal(ui.play.attrs['aria-pressed'], 'false');
   }
+});
+
+test(`${language}: parallax coalesces scroll events and clamps overscroll`, () => {
+  const ui = fixture(language);
+  ui.flushFrames();
+  assert.equal(ui.heroStyles.get('--hero-scroll'), '0');
+  ui.scroll(300);
+  ui.scroll(600);
+  assert.equal(ui.frames.size, 1);
+  ui.flushFrames();
+  assert.equal(ui.heroStyles.get('--hero-scroll'), '0.5');
+  ui.scroll(2400);
+  ui.flushFrames();
+  assert.equal(ui.heroStyles.get('--hero-scroll'), '1');
+  ui.scroll(-20);
+  ui.flushFrames();
+  assert.equal(ui.heroStyles.get('--hero-scroll'), '0');
+});
+
+test(`${language}: parallax handles restored positions and viewport resizing`, () => {
+  const ui = fixture(language, { scrollY: 300 });
+  ui.flushFrames();
+  assert.equal(ui.heroStyles.get('--hero-scroll'), '0.25');
+  ui.resize(600);
+  ui.flushFrames();
+  assert.equal(ui.heroStyles.get('--hero-scroll'), '0.5');
+  ui.resize(0);
+  ui.flushFrames();
+  assert.equal(ui.heroStyles.get('--hero-scroll'), '1');
+});
+
+test(`${language}: changing motion preference cancels and resets parallax`, () => {
+  const ui = fixture(language, { reducedMotion: true });
+  assert.equal(ui.frames.size, 0);
+  assert.equal(ui.heroStyles.has('--hero-scroll'), false);
+  assert.equal(ui.listeners.get('scroll')?.size || 0, 0);
+  ui.reduceMotion(false);
+  ui.scroll(600);
+  ui.flushFrames();
+  assert.equal(ui.heroStyles.get('--hero-scroll'), '0.5');
+  ui.scroll(900);
+  assert.equal(ui.frames.size, 1);
+  ui.reduceMotion(true);
+  assert.equal(ui.frames.size, 0);
+  assert.equal(ui.heroStyles.has('--hero-scroll'), false);
+  assert.equal(ui.listeners.get('scroll').size, 0);
+  assert.equal(ui.listeners.get('resize').size, 0);
+  ui.reduceMotion(false);
+  ui.flushFrames();
+  assert.equal(ui.heroStyles.get('--hero-scroll'), '0.75');
+  assert.equal(ui.listeners.get('scroll').size, 1);
 });
 }
 

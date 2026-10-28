@@ -62,7 +62,35 @@ for (const [index, tab] of tabs.entries()) {
   });
 }
 
-if ('IntersectionObserver' in window && window.matchMedia('(prefers-reduced-motion: no-preference)').matches) {
+const motionPreference = window.matchMedia('(prefers-reduced-motion: no-preference)');
+const cinemaStage = document.querySelector('.cinema-stage');
+let parallaxFrame = 0;
+function updateParallax() {
+  parallaxFrame = 0;
+  const stageBottom = cinemaStage.getBoundingClientRect().bottom + window.scrollY;
+  const progress = Math.min(1, Math.max(0, window.scrollY / Math.max(1, stageBottom)));
+  cinemaStage.style.setProperty('--hero-scroll', progress);
+}
+function scheduleParallax() {
+  if (!parallaxFrame) parallaxFrame = window.requestAnimationFrame(updateParallax);
+}
+function syncParallax() {
+  if (motionPreference.matches) {
+    window.addEventListener('scroll', scheduleParallax, { passive: true });
+    window.addEventListener('resize', scheduleParallax);
+    scheduleParallax();
+  } else {
+    window.removeEventListener('scroll', scheduleParallax);
+    window.removeEventListener('resize', scheduleParallax);
+    window.cancelAnimationFrame(parallaxFrame);
+    parallaxFrame = 0;
+    cinemaStage.style.removeProperty('--hero-scroll');
+  }
+}
+motionPreference.addEventListener('change', syncParallax);
+syncParallax();
+
+if ('IntersectionObserver' in window && motionPreference.matches) {
   const revealObserver = new window.IntersectionObserver((entries) => {
     for (const entry of entries) {
       if (!entry.isIntersecting) continue;

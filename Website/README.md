@@ -8,6 +8,8 @@ The player and feature panels are explicitly labeled illustrations; they do not 
 
 Both languages share a short hero entrance, a single soft TV glow animation, and transitions when switching feature panels. Headings, the setup steps, feature blocks, privacy panel, FAQ, and download section also enter once when scrolled into view; the three setup steps and feature highlights are staggered. A native IntersectionObserver triggers these CSS animations without a scroll handler. Content stays visible without JavaScript or observer support, keyboard focus skips the reveal, and `prefers-reduced-motion` disables the effects. There are no continuous animation loops.
 
+The hero TV and player have a small scroll parallax, capped at 24 px and 48 px respectively (half on mobile). A passive scroll listener coalesces updates into animation frames; it also handles restored scroll positions and resizing. Enabling reduced motion removes the listeners, cancels pending frames, and resets the effect.
+
 Run the focused interaction checks with `node --test Website/script.test.cjs`. Verify the desktop and mobile layout in a browser after changing markup or styles.
 
 ## Hosting
