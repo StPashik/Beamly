@@ -441,9 +441,11 @@ final class PlaybackTests: XCTestCase {
 }
 
 // Simulates the system's route signal; the AVPlayer decoder and clock remain real.
-private final class AirPlayTestPlayer: AVPlayer, @unchecked Sendable {
+final class AirPlayTestPlayer: AVPlayer, @unchecked Sendable {
     private let lock = NSLock()
     private var external = false
+    private var simulatedStatus: AVPlayer.TimeControlStatus?
+    private var simulatedReason: AVPlayer.WaitingReason?
     private(set) var playCalls = 0
     private(set) var lastConfiguredItem: AVPlayerItem?
 
@@ -456,6 +458,43 @@ private final class AirPlayTestPlayer: AVPlayer, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return external
+    }
+
+    override var timeControlStatus: AVPlayer.TimeControlStatus {
+        lock.lock()
+        let status = simulatedStatus
+        lock.unlock()
+        return status ?? super.timeControlStatus
+    }
+
+    override var reasonForWaitingToPlay: AVPlayer.WaitingReason? {
+        lock.lock()
+        let active = simulatedStatus != nil
+        let reason = simulatedReason
+        lock.unlock()
+        return active ? reason : super.reasonForWaitingToPlay
+    }
+
+    func simulateTimeControl(_ status: AVPlayer.TimeControlStatus?, reason: AVPlayer.WaitingReason? = nil) {
+        lock.lock()
+        let changedStatus = simulatedStatus != status
+        lock.unlock()
+        if changedStatus { willChangeValue(forKey: "timeControlStatus") }
+        willChangeValue(forKey: "reasonForWaitingToPlay")
+        lock.lock()
+        simulatedStatus = status
+        simulatedReason = reason
+        lock.unlock()
+        didChangeValue(forKey: "reasonForWaitingToPlay")
+        if changedStatus { didChangeValue(forKey: "timeControlStatus") }
+    }
+
+    override func pause() {
+        lock.lock()
+        let simulated = simulatedStatus != nil
+        lock.unlock()
+        if simulated { simulateTimeControl(.paused) }
+        super.pause()
     }
 
     func setExternalPlaybackActive(_ value: Bool) {

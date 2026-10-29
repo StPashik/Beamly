@@ -105,9 +105,9 @@ struct ContentView: View {
 
     private func movieInfo(_ movie: PlaylistItem) -> some View {
         HStack(spacing: 17) {
-            PlaybackPreview(image: model.previewImage, isPreparing: model.isPreparing)
+            PlaybackPreview(image: model.previewImage)
                 .frame(width: 144, height: 81)
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(movie.title).font(.system(size: 14, weight: .semibold)).lineLimit(2).textSelection(.enabled)
                 HStack(spacing: 8) {
                     Text(movie.url.pathExtension.uppercased()).font(.system(size: 9, weight: .semibold, design: .monospaced))
@@ -121,11 +121,19 @@ struct ContentView: View {
                     if model.duration > 0 { Text(mediaTime(model.duration)) }
                 }
                 .font(.system(size: 10)).foregroundStyle(.secondary)
-                Text(LocalizedStringKey(model.isPreparing ? "Preparing video…" : model.player.currentItem == nil ? "Ready to play" : model.isPlaying ? "Playing" : "Paused"))
-                    .font(.system(size: 10)).foregroundStyle(model.isPreparing ? .secondary : mint)
-                if model.player.currentItem != nil, !model.isPreparing {
-                    Text(LocalizedStringKey(model.isUsingHLS && !model.isVideoCopied ? "1080p compatibility" : "Original video quality"))
-                        .font(.system(size: 9)).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    if model.isPreparing || model.isBuffering {
+                        ProgressView().controlSize(.mini).frame(width: 10, height: 10).accessibilityHidden(true)
+                    }
+                    Text(model.playbackStatus).lineLimit(1).help(model.playbackStatus)
+                }
+                .font(.system(size: 10)).foregroundStyle(model.isPreparing || model.isBuffering ? .secondary : mint)
+                if let title = model.qualityTitle {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).help(title)
+                        if let explanation = model.qualityExplanation { Text(explanation).help(explanation) }
+                    }
+                    .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -355,7 +363,6 @@ struct AirPlayPicker: NSViewRepresentable {
 
 struct PlaybackPreview: View {
     let image: NSImage?
-    let isPreparing: Bool
 
     var body: some View {
         ZStack {
@@ -365,7 +372,6 @@ struct PlaybackPreview: View {
             } else {
                 Image(systemName: "photo").font(.system(size: 24, weight: .ultraLight)).foregroundStyle(.secondary)
             }
-            if isPreparing { ProgressView().controlSize(.small) }
         }
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(mint.opacity(0.12), lineWidth: 0.5))

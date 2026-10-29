@@ -14,6 +14,7 @@ A native macOS player for sending local videos to Apple TV and other AirPlay rec
 - Direct playback of compatible MP4, M4V, and MOV files; quality-preserving 4K HEVC/H.264 remuxing from MKV, including supported HDR10/HLG streams.
 - Audio-track selection, embedded subtitles, and external SRT, ASS, SSA, and VTT files.
 - Saved audio and subtitle language preferences, applied to each video when opened.
+- Playback preparation and buffering status, with explanations for original-quality streaming, compatibility conversion, and software-encoder retries.
 - Standalone FFmpeg and FFprobe included with the app; see [bundled media tools](Docs/Bundled-media.md).
 - A persistent queue with resume positions, drag reordering, shuffle, repeat, and keyboard controls.
 - Light and dark appearance, custom window controls, and Liquid Glass panels on macOS 26 or later. Earlier supported versions use standard translucent materials.
@@ -115,6 +116,10 @@ Choose **Subtitles → Subtitle timing…** to move captions earlier or later in
 | ⌘, | Settings |
 
 The window stays 674 points wide. Resize its height or use the green button to zoom vertically. The preview shows a still frame from the middle of the source video; it does not play or follow the timeline.
+
+The status beside the preview follows file inspection, stream preparation, subtitles, and loading. **Buffering…** appears when AVPlayer reports that it is waiting to avoid a playback stall; its brief initial buffer evaluation is shown as **Starting playback…**. Pause remains available while buffering. Without a connected receiver, the status asks you to choose an AirPlay device.
+
+The quality line distinguishes direct/original-quality delivery from **compatibility conversion up to 1080p SDR**; small videos are not enlarged to 1080p. The explanation below identifies the quality setting, a video format requiring conversion, or a retry with the software encoder. Hover over a long explanation to read it in full. These states do not estimate a completion percentage, diagnose Wi-Fi quality, or certify physical receiver output.
 
 ## Language and updates
 

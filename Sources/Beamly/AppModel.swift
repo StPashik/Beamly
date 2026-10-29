@@ -18,8 +18,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var info: MediaInfo?
     @Published private(set) var position = 0.0
     @Published private(set) var duration = 0.0
-    @Published private(set) var isPlaying = false
+    @Published private var playbackControlStatus = AVPlayer.TimeControlStatus.paused
+    @Published private var waitingReason: AVPlayer.WaitingReason?
     @Published private(set) var isPreparing = false
+    @Published private(set) var preparationStage = PlaybackPreparationStage.readingFile
+    @Published private(set) var usesSoftwareEncoder = false
+    @Published private(set) var usedSoftwareFallback = false
+    @Published private var compatibilityReason: String?
     @Published private(set) var isExternal = false
     @Published private(set) var routesDetected = false
     @Published private(set) var isUsingHLS = false
@@ -92,10 +97,11 @@ final class AppModel: ObservableObject {
                 if !player.isExternalPlaybackActive, player.timeControlStatus != .paused { player.pause() }
                 Task { @MainActor in
                     guard let self else { return }
-                    self.isPlaying = player.timeControlStatus != .paused
-                    self.updateActivity()
-                    self.updateNowPlaying()
+                    self.refreshPlaybackState()
                 }
+            },
+            player.observe(\.reasonForWaitingToPlay, options: [.new]) { [weak self] _, _ in
+                Task { @MainActor in self?.refreshPlaybackState() }
             },
             routeDetector.observe(\.multipleRoutesDetected, options: [.initial, .new]) { [weak self] detector, _ in
                 Task { @MainActor in self?.routesDetected = detector.multipleRoutesDetected }
@@ -127,9 +133,38 @@ final class AppModel: ObservableObject {
     var current: PlaylistItem? { playlist.current }
     var subtitleDelay: Double { current?.subtitleDelay ?? 0 }
     var networkAddress: String { server.host }
+    // Waiting playback still needs a Pause action, even though media is not advancing yet.
+    var isPlaying: Bool { playbackControlStatus != .paused }
+    var isBuffering: Bool {
+        !isPreparing && isExternal && player.currentItem != nil &&
+            playbackControlStatus == .waitingToPlayAtSpecifiedRate && waitingReason == .toMinimizeStalls
+    }
+    var playbackStatus: String {
+        if isPreparing { return NSLocalizedString(preparationStage.rawValue, comment: "") }
+        guard player.currentItem != nil else { return errorMessage ?? NSLocalizedString("Ready to play", comment: "") }
+        if !isExternal { return NSLocalizedString("Choose an AirPlay device to start playback.", comment: "") }
+        if isBuffering { return NSLocalizedString("Buffering…", comment: "") }
+        if playbackControlStatus == .waitingToPlayAtSpecifiedRate { return NSLocalizedString("Starting playback…", comment: "") }
+        return isPlaying ? NSLocalizedString("Playing via AirPlay", comment: "") : NSLocalizedString("Paused", comment: "")
+    }
+    var qualityTitle: String? {
+        guard (isPreparing && preparationStage != .readingFile) || player.currentItem != nil else { return nil }
+        return isUsingHLS && !isVideoCopied
+            ? NSLocalizedString("Compatibility conversion · up to 1080p SDR", comment: "")
+            : NSLocalizedString("Original video quality", comment: "")
+    }
+    var qualityExplanation: String? {
+        guard qualityTitle != nil else { return nil }
+        if !isUsingHLS { return NSLocalizedString("Direct playback without video conversion.", comment: "") }
+        if isVideoCopied { return NSLocalizedString("Prepared for AirPlay without video conversion.", comment: "") }
+        var reasons = [compatibilityReason].compactMap { $0 }
+        if usedSoftwareFallback { reasons.insert(NSLocalizedString("System conversion failed; using the software encoder.", comment: ""), at: 0) }
+        else if usesSoftwareEncoder { reasons.append(NSLocalizedString("Software encoding is in use.", comment: "")) }
+        return reasons.joined(separator: " ")
+    }
     var status: String {
-        if isPreparing { return NSLocalizedString("Preparing video…", comment: "") }
-        if isExternal { return isPlaying ? NSLocalizedString("Playing via AirPlay", comment: "") : NSLocalizedString("AirPlay connected", comment: "") }
+        if isPreparing || (isExternal && player.currentItem != nil) { return playbackStatus }
+        if isExternal { return NSLocalizedString("AirPlay connected", comment: "") }
         return routesDetected ? NSLocalizedString("AirPlay devices available", comment: "") : NSLocalizedString("Choose an Apple TV or AirPlay TV", comment: "")
     }
 
@@ -213,13 +248,22 @@ final class AppModel: ObservableObject {
         }
         playRequested = true
         player.play()
+        refreshPlaybackState()
     }
 
     private func pausePlayback() {
         isAirPlayPickerRequested = false
         playRequested = false
         player.pause()
+        refreshPlaybackState()
         remember()
+    }
+
+    private func refreshPlaybackState() {
+        playbackControlStatus = player.timeControlStatus
+        waitingReason = player.reasonForWaitingToPlay
+        updateActivity()
+        updateNowPlaying()
     }
 
     func stop() {
@@ -369,10 +413,13 @@ final class AppModel: ObservableObject {
         let generation = loadID
         let start = max(0, start)
         isPreparing = true
+        preparationStage = .readingFile
         playRequested = autoPlay
         position = start
         let preferences = TrackPreferences(audio: defaults.string(forKey: "preferredAudioLanguage") ?? "default",
                                            subtitles: defaults.string(forKey: "preferredSubtitleLanguage") ?? "automatic")
+        let preserveQuality = defaults.bool(forKey: "directPlayback")
+        let hardwareEncoding = defaults.bool(forKey: "hardwareEncoding")
         preparation = Task { [weak self] in
             guard let self else { return }
             do {
@@ -398,7 +445,7 @@ final class AppModel: ObservableObject {
                 // Rebuilds retain manual choices; preferences apply only when opening a video.
                 if applyTrackPreferences {
                     audioID = preferences.audioTrack(in: metadata.audioTracks)
-                    let captions = metadata.subtitleTracks.filter { $0.isTextSubtitle || (!self.defaults.bool(forKey: "directPlayback") && $0.isBitmapSubtitle) }
+                    let captions = metadata.subtitleTracks.filter { $0.isTextSubtitle || (!preserveQuality && $0.isBitmapSubtitle) }
                     switch preferences.subtitleChoice(in: captions, files: externalSubtitleOptions, video: movie.url) {
                     case .none: subtitleID = nil; externalSubtitle = nil
                     case .embedded(let id): subtitleID = id; externalSubtitle = nil
@@ -407,7 +454,7 @@ final class AppModel: ObservableObject {
                 }
                 var canPlayDirect = false
                 if ["mp4", "m4v", "mov"].contains(movie.url.pathExtension.lowercased()), externalSubtitle == nil,
-                   subtitleID == nil || subtitleDelay == 0, defaults.bool(forKey: "directPlayback") {
+                   subtitleID == nil || subtitleDelay == 0, preserveQuality {
                     canPlayDirect = (try? await asset.load(.isPlayable)) == true
                 }
                 try Task.checkCancellation()
@@ -426,8 +473,19 @@ final class AppModel: ObservableObject {
                     subtitleOptions = metadata.subtitleTracks.map { TrackOption(id: $0.id, title: self.trackTitle($0)) }
                     let newJob = HLSJob(tools: tools)
                     job = newJob
+                    compatibilityReason = NSLocalizedString(preserveQuality ? "This video format requires compatibility conversion." : "Preserve video quality is off.", comment: "")
                     let choice: SubtitleChoice = externalSubtitle.map { .external($0) } ?? subtitleID.map { .embedded($0) } ?? .none
-                    let playlistURL = try await newJob.start(input: movie.url, info: metadata, audioTrack: audioID, subtitle: choice, startTime: start, hardwareEncoding: defaults.bool(forKey: "hardwareEncoding"), preserveQuality: defaults.bool(forKey: "directPlayback"), subtitleDelay: subtitleDelay)
+                    let playlistURL = try await newJob.start(input: movie.url, info: metadata, audioTrack: audioID, subtitle: choice, startTime: start, hardwareEncoding: hardwareEncoding, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay) { [weak self] stage in
+                        guard let self, self.loadID == generation else { return }
+                        self.preparationStage = stage
+                        switch stage {
+                        case .originalStream: self.isVideoCopied = true
+                        case .systemEncoding: self.isVideoCopied = false; self.usesSoftwareEncoder = false
+                        case .softwareEncoding: self.isVideoCopied = false; self.usesSoftwareEncoder = true
+                        case .softwareFallback: self.usedSoftwareFallback = true
+                        default: break
+                        }
+                    }
                     try Task.checkCancellation()
                     guard loadID == generation else { return }
                     sourceOffset = newJob.sourceOffset
@@ -436,6 +494,7 @@ final class AppModel: ObservableObject {
                 }
                 try Task.checkCancellation()
                 guard loadID == generation else { return }
+                preparationStage = .loadingPlayer
                 let item = AVPlayerItem(url: playbackURL)
                 let loadedSubtitles = isUsingHLS && (externalSubtitle != nil || subtitleID != nil)
                     ? try await item.asset.loadMediaSelectionGroup(for: .legible) : nil
@@ -572,7 +631,12 @@ final class AppModel: ObservableObject {
         directAudioChoices = [:]
         directSubtitleChoices = [:]
         isPreparing = false
-        isPlaying = false
+        preparationStage = .readingFile
+        playbackControlStatus = .paused
+        waitingReason = nil
+        usesSoftwareEncoder = false
+        usedSoftwareFallback = false
+        compatibilityReason = nil
         isVideoCopied = false
         updateActivity()
     }

@@ -36,7 +36,7 @@ final class WindowAppearanceTests: XCTestCase {
     func testPreviewNeverEmbedsALivePlayer() {
         _ = NSApplication.shared
         for image in [nil, NSImage(systemSymbolName: "film", accessibilityDescription: nil)] {
-            let preview = NSHostingView(rootView: PlaybackPreview(image: image, isPreparing: false).frame(width: 144, height: 81))
+            let preview = NSHostingView(rootView: PlaybackPreview(image: image).frame(width: 144, height: 81))
             preview.layoutSubtreeIfNeeded()
             XCTAssertFalse(containsPlayerView(preview))
         }
