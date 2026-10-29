@@ -1,10 +1,49 @@
 import AppKit
 import AVKit
+import BeamlyCore
 import SwiftUI
 import XCTest
 @testable import Beamly
 
 final class WindowAppearanceTests: XCTestCase {
+    @MainActor
+    func testHistoryUsesBeamlyWindowMaterialAndChromeInBothAppearances() async throws {
+        _ = NSApplication.shared
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-history-window-\(UUID())")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var playlist = Playlist()
+        playlist.append([folder.appendingPathComponent("Continue.mp4"), folder.appendingPathComponent("Watched.mp4")])
+        for index in playlist.items.indices {
+            playlist.items[index].duration = 120
+            playlist.items[index].position = index == 0 ? 20 : 120
+            playlist.recordHistory(playlist.items[index])
+        }
+        let state = folder.appendingPathComponent("queue.json")
+        try JSONEncoder().encode(playlist).write(to: state)
+        let suite = "app.beamly.history-window.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let model = AppModel(stateURL: state, defaults: defaults)
+        defer { model.shutdown(); defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        for scheme in [ColorScheme.light, .dark] {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 674, height: 460), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            defer { window.close() }
+            window.contentView = NSHostingView(rootView: WatchHistoryView(model: model).environment(\.colorScheme, scheme))
+            window.makeKeyAndOrderFront(nil)
+            try await Task.sleep(for: .milliseconds(100))
+            func containsMaterial(_ view: NSView) -> Bool {
+                view is NSVisualEffectView || view.subviews.contains(where: containsMaterial)
+            }
+            XCTAssertTrue(window.contentView.map(containsMaterial) ?? false)
+            XCTAssertFalse(window.isOpaque)
+            XCTAssertEqual(window.backgroundColor.alphaComponent, 0)
+            XCTAssertTrue(window.standardWindowButton(.closeButton)?.isHidden == true)
+            XCTAssertEqual(window.contentMinSize.width, 674)
+            XCTAssertEqual(window.contentMaxSize.width, 674)
+            XCTAssertEqual(model.watchHistory.count, 2, "Restyling must preserve history")
+        }
+    }
+
     @MainActor
     func testCustomChromeKeepsNativeWindowActionsAndClearsOpaqueBackground() {
         _ = NSApplication.shared

@@ -158,12 +158,12 @@ final class PlaybackExtrasTests: XCTestCase {
             if let slider = view as? NSSlider { return slider }
             return view.subviews.lazy.compactMap(findSlider).first
         }
-        let slider = try XCTUnwrap(window.contentView.flatMap(findSlider))
-        slider.doubleValue = 0.25
-        XCTAssertTrue(slider.sendAction(slider.action, to: slider.target))
-        try await Task.sleep(for: .milliseconds(50))
-        XCTAssertEqual(model.volume, 0.25, accuracy: 0.001, "The mini remote adjusts the shared player's volume")
-        XCTAssertEqual(model.player.volume, 0.25, accuracy: 0.001)
+        XCTAssertNil(window.contentView.flatMap(findSlider), "Volume belongs to the receiver, not the mini remote")
+        func containsStop(_ view: NSView) -> Bool {
+            if let button = view as? NSButton, button.title == "Stop" || button.accessibilityLabel() == "Stop" { return true }
+            return view.subviews.contains(where: containsStop)
+        }
+        XCTAssertFalse(window.contentView.map(containsStop) ?? false)
         model.setSleepTimer(60)
         XCTAssertFalse(delegate.applicationShouldTerminateAfterLastWindowClosed(app))
         window.performClose(nil)

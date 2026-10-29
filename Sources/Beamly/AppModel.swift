@@ -26,6 +26,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var usedSoftwareFallback = false
     @Published private var compatibilityReason: String?
     @Published private(set) var isExternal = false
+    @Published private(set) var isConnectingAirPlay = false
     @Published private(set) var routesDetected = false
     @Published private(set) var isUsingHLS = false
     @Published private(set) var isVideoCopied = false
@@ -42,14 +43,16 @@ final class AppModel: ObservableObject {
     @Published private(set) var externalSubtitleOptions: [URL] = []
     @Published var errorMessage: String?
     @Published var isAirPlayPickerRequested = false
-    @Published var volume = 1.0 { didSet { player.volume = Float(volume) } }
 
     // Keep one player when changing files so AVKit retains the selected AirPlay route.
     let player: AVPlayer
-    private let server = MediaHTTPServer()
+    private var server = MediaHTTPServer()
+    private var previousPlayback: (item: AVPlayerItem, server: MediaHTTPServer, job: HLSJob?)?
     private let routeDetector = AVRouteDetector()
     private var job: HLSJob?
     private var preparation: Task<Void, Never>?
+    private var routePreparation: Task<Void, Never>?
+    private var shouldShowAirPlayPicker = false
     private var previewTask: Task<Void, Never>?
     private var seekPreviewTask: Task<Void, Never>?
     private var sleepTimerTask: Task<Void, Never>?
@@ -101,7 +104,7 @@ final class AppModel: ObservableObject {
                     self.isExternal = player.isExternalPlaybackActive
                     if self.isExternal { self.isAirPlayPickerRequested = false }
                     if self.isExternal, self.playRequested, !self.isPreparing { self.playIfConnected() }
-                    else if wasExternal, !self.isExternal, !self.isPreparing { self.pausePlayback() }
+                    else if wasExternal, !self.isExternal, !self.isPreparing, !self.isConnectingAirPlay { self.pausePlayback() }
                 }
             },
             player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
@@ -187,7 +190,7 @@ final class AppModel: ObservableObject {
     func clearHistory() { lastHistoryItem = current; playlist.history = []; save() }
     var networkAddress: String { server.host }
     // Waiting playback still needs a Pause action, even though media is not advancing yet.
-    var isPlaying: Bool { playbackControlStatus != .paused }
+    var isPlaying: Bool { playbackControlStatus != .paused || isConnectingAirPlay }
     var isBuffering: Bool {
         !isPreparing && isExternal && player.currentItem != nil &&
             playbackControlStatus == .waitingToPlayAtSpecifiedRate && waitingReason == .toMinimizeStalls
@@ -195,13 +198,14 @@ final class AppModel: ObservableObject {
     var playbackStatus: String {
         if isPreparing { return NSLocalizedString(preparationStage.rawValue, comment: "") }
         guard player.currentItem != nil else { return errorMessage ?? NSLocalizedString("Ready to play", comment: "") }
+        if isConnectingAirPlay { return NSLocalizedString("Starting playback…", comment: "") }
         if !isExternal { return NSLocalizedString("Choose an AirPlay device to start playback.", comment: "") }
         if isBuffering { return NSLocalizedString("Buffering…", comment: "") }
         if playbackControlStatus == .waitingToPlayAtSpecifiedRate { return NSLocalizedString("Starting playback…", comment: "") }
         return isPlaying ? NSLocalizedString("Playing via AirPlay", comment: "") : NSLocalizedString("Paused", comment: "")
     }
     var qualityTitle: String? {
-        guard (isPreparing && preparationStage != .readingFile) || player.currentItem != nil else { return nil }
+        guard isPreparing ? preparationStage != .readingFile : player.currentItem != nil else { return nil }
         return isUsingHLS && !isVideoCopied
             ? NSLocalizedString("Compatibility conversion · up to 1080p SDR", comment: "")
             : NSLocalizedString("Original video quality", comment: "")
@@ -216,7 +220,7 @@ final class AppModel: ObservableObject {
         return reasons.joined(separator: " ")
     }
     var status: String {
-        if isPreparing || (isExternal && player.currentItem != nil) { return playbackStatus }
+        if isPreparing || isConnectingAirPlay || (isExternal && player.currentItem != nil) { return playbackStatus }
         if isExternal { return NSLocalizedString("AirPlay connected", comment: "") }
         return routesDetected ? NSLocalizedString("AirPlay devices available", comment: "") : NSLocalizedString("Choose an Apple TV or AirPlay TV", comment: "")
     }
@@ -263,7 +267,6 @@ final class AppModel: ObservableObject {
     func select(_ id: UUID, autoPlay: Bool = true, resumeAt: Double? = nil) {
         guard playlist.items.contains(where: { $0.id == id }) else { return }
         remember()
-        cancelPlayback()
         playlist.currentID = id
         info = nil
         audioID = nil
@@ -283,9 +286,8 @@ final class AppModel: ObservableObject {
         if isPreparing { stop(); return }
         if player.currentItem == nil {
             if let id = playlist.currentID {
-                let connected = player.isExternalPlaybackActive
-                select(id, autoPlay: connected)
-                if !connected { playIfConnected(showPicker: true) }
+                select(id)
+                playIfConnected(showPicker: true)
             } else { openFiles() }
         } else if isPlaying { pausePlayback() }
         else {
@@ -295,21 +297,45 @@ final class AppModel: ObservableObject {
     }
 
     private func playIfConnected(showPicker: Bool = false) {
-        // Nearby routes are discovery results, not permission to play on this Mac.
+        playRequested = true
+        shouldShowAirPlayPicker = shouldShowAirPlayPicker || showPicker
+        guard !isPreparing, player.status == .readyToPlay, player.currentItem?.status == .readyToPlay else { return }
         guard player.isExternalPlaybackActive else {
-            if showPicker {
-                playRequested = true
-                isAirPlayPickerRequested = true
+            guard routePreparation == nil else { return }
+            // Preroll primes an already selected route at rate zero; discovery never authorizes local playback.
+            isConnectingAirPlay = true
+            let generation = loadID
+            routePreparation = Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(3)) }
+                catch { return }
+                guard let self, self.loadID == generation, self.playRequested else { return }
+                self.routePreparation = nil
+                self.player.cancelPendingPrerolls()
+                self.isConnectingAirPlay = false
+                if self.player.isExternalPlaybackActive { self.playIfConnected() }
+                else if self.shouldShowAirPlayPicker { self.isAirPlayPickerRequested = true }
             }
+            player.preroll(atRate: 1, completionHandler: nil)
             return
         }
-        playRequested = true
+        cancelRoutePreparation()
+        isAirPlayPickerRequested = false
+        shouldShowAirPlayPicker = false
         player.play()
         refreshPlaybackState()
     }
 
+    private func cancelRoutePreparation() {
+        routePreparation?.cancel()
+        routePreparation = nil
+        player.cancelPendingPrerolls()
+        isConnectingAirPlay = false
+    }
+
     private func pausePlayback() {
+        cancelRoutePreparation()
         isAirPlayPickerRequested = false
+        shouldShowAirPlayPicker = false
         playRequested = false
         player.pause()
         refreshPlaybackState()
@@ -378,7 +404,7 @@ final class AppModel: ObservableObject {
         if isUsingHLS {
             let local = target - sourceOffset
             let seekable = player.currentItem?.seekableTimeRanges.contains { CMTimeRangeContainsTime($0.timeRangeValue, time: CMTime(seconds: local, preferredTimescale: 600)) } == true
-            if local < 0 || !seekable { prepare(at: target, autoPlay: isPlaying); return }
+            if local < 0 || !seekable { prepare(at: target, autoPlay: isPlaying || playRequested); return }
         }
         player.seek(to: CMTime(seconds: max(0, target - sourceOffset), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         remember()
@@ -391,7 +417,7 @@ final class AppModel: ObservableObject {
             if let id { player.currentItem?.select(directAudioChoices[id], in: group) }
             else if let option = group.defaultOption { player.currentItem?.select(option, in: group) }
             else { player.currentItem?.selectMediaOptionAutomatically(in: group) }
-        } else { prepare(at: position, autoPlay: isPlaying) }
+        } else { prepare(at: position, autoPlay: isPlaying || playRequested) }
     }
 
     func setSubtitle(_ id: Int?) {
@@ -399,7 +425,7 @@ final class AppModel: ObservableObject {
         externalSubtitle = nil
         if let group = subtitleGroup, !isUsingHLS, id == nil || subtitleDelay == 0 {
             player.currentItem?.select(id.flatMap { directSubtitleChoices[$0] }, in: group)
-        } else { prepare(at: position, autoPlay: isPlaying) }
+        } else { prepare(at: position, autoPlay: isPlaying || playRequested) }
     }
 
     func setSubtitleDelay(_ seconds: Double) {
@@ -407,7 +433,7 @@ final class AppModel: ObservableObject {
               let index = playlist.items.firstIndex(where: { $0.id == playlist.currentID }) else { return }
         playlist.items[index].subtitleDelay = seconds == 0 ? nil : seconds
         save()
-        if subtitleID != nil || externalSubtitle != nil { prepare(at: position, autoPlay: isPlaying) }
+        if subtitleID != nil || externalSubtitle != nil { prepare(at: position, autoPlay: isPlaying || playRequested) }
     }
 
     func setAudioDelay(_ seconds: Double) {
@@ -432,7 +458,7 @@ final class AppModel: ObservableObject {
         guard current != nil else { errorMessage = NSLocalizedString("Add a video first.", comment: ""); return }
         externalSubtitle = externalSubtitleOptions.first { $0.standardizedFileURL == url.standardizedFileURL } ?? url
         subtitleID = nil
-        prepare(at: position, autoPlay: isPlaying)
+        prepare(at: position, autoPlay: isPlaying || playRequested)
     }
 
     func remove(_ id: UUID) {
@@ -565,13 +591,15 @@ final class AppModel: ObservableObject {
 
     private func prepare(at start: Double, autoPlay: Bool, applyTrackPreferences: Bool = false) {
         guard let movie = current else { return }
-        cancelPlayback()
+        let showPicker = shouldShowAirPlayPicker
+        cancelPlayback(keepingItem: true)
         // Cancellation is cooperative; this ID also rejects callbacks from an older load.
         let generation = loadID
         let start = max(0, start)
         isPreparing = true
         preparationStage = .readingFile
         playRequested = autoPlay
+        shouldShowAirPlayPicker = autoPlay && showPicker
         position = start
         let preferences = TrackPreferences(audio: defaults.string(forKey: "preferredAudioLanguage") ?? "default",
                                            subtitles: defaults.string(forKey: "preferredSubtitleLanguage") ?? "automatic")
@@ -700,6 +728,7 @@ final class AppModel: ObservableObject {
                             self.player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
                                 Task { @MainActor in
                                     guard let self, self.loadID == generation else { return }
+                                    self.releasePreviousPlayback()
                                     self.isPreparing = false
                                     if self.playRequested { self.playIfConnected() }
                                     self.updateNowPlaying()
@@ -772,9 +801,11 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func cancelPlayback() {
+    private func cancelPlayback(keepingItem: Bool = false) {
         requestSeekPreview(nil)
+        cancelRoutePreparation()
         isAirPlayPickerRequested = false
+        shouldShowAirPlayPicker = false
         playRequested = false
         loadID = UUID()
         preparation?.cancel()
@@ -785,10 +816,21 @@ final class AppModel: ObservableObject {
         if let failureObserver { NotificationCenter.default.removeObserver(failureObserver) }
         endObserver = nil
         failureObserver = nil
-        player.replaceCurrentItem(with: nil)
-        job?.stop()
+        if keepingItem, let item = player.currentItem {
+            // Keep the old item and its URLs alive until replacement is ready so AVKit retains the route.
+            if previousPlayback?.item !== item {
+                releasePreviousPlayback()
+                previousPlayback = (item, server, job)
+            }
+            else { job?.stop(); server.stop() }
+            server = MediaHTTPServer()
+        } else {
+            if player.currentItem != nil { player.replaceCurrentItem(with: nil) }
+            job?.stop()
+            server.revokeAll()
+            releasePreviousPlayback()
+        }
         job = nil
-        server.revokeAll()
         directAudioGroup = nil
         subtitleGroup = nil
         directAudioChoices = [:]
@@ -802,6 +844,12 @@ final class AppModel: ObservableObject {
         compatibilityReason = nil
         isVideoCopied = false
         updateActivity()
+    }
+
+    private func releasePreviousPlayback() {
+        previousPlayback?.job?.stop()
+        previousPlayback?.server.stop()
+        previousPlayback = nil
     }
 
     private func trackTitle(_ track: MediaTrack) -> String {

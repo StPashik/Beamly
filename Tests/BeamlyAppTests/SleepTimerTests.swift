@@ -97,7 +97,7 @@ final class SleepTimerTests: XCTestCase {
         let state = folder.appendingPathComponent("queue.json")
         let model = AppModel(stateURL: state, defaults: defaults, player: player)
         defer { model.shutdown(); defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
-        model.volume = 0
+        player.isMuted = true
         model.add([mkv, mp4])
         try await wait { !model.isPreparing && player.currentItem?.status == .readyToPlay }
         let first = try XCTUnwrap(model.current?.id)
