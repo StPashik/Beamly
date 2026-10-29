@@ -23,7 +23,7 @@ A native macOS player for sending local videos to Apple TV and other AirPlay rec
 - A persistent queue with resume positions, drag reordering, shuffle, repeat, and keyboard controls.
 - Light and dark appearance, custom window controls, and Liquid Glass panels on macOS 26 or later. Earlier supported versions use standard translucent materials.
 - English, Russian, German, French, and Spanish interfaces, selectable in Settings. English is the default.
-- Manual update checks and installation through Sparkle, with signed update feeds and archives.
+- Automatic update checks at launch and periodically, with install/later/skip choices, a Settings toggle, and signed Sparkle feeds and archives.
 - No accounts, subscriptions, analytics, or bundled video content.
 
 Chromecast is not supported. See [video quality and AirPlay](Docs/Media-Streaming.md) for supported profiles, subtitles, audio, and verification limits.
@@ -141,7 +141,9 @@ The quality line distinguishes direct/original-quality delivery from **compatibi
 
 Open **Beamly → Settings → Language** to choose English, Russian, German, French, or Spanish. Restart Beamly to apply the selection to the interface and native dialogs. English is used on first launch, regardless of the system language. Your queue and preferences are preserved.
 
-Choose **Beamly → Check for Updates…** or use the same button in **Settings → Updates**. Sparkle checks the latest GitHub release, verifies the signed feed and archive, and offers to download, install, and relaunch. Checks and installations only start when you request them.
+Beamly checks for signed updates when it starts and periodically while it runs (normally once a day). If a newer version is available, Sparkle offers **Install Update**, **Remind Me Later**, and **Skip This Version**. Remind Me Later dismisses the window until the next check, including the next launch; Skip This Version suppresses that version in automatic checks. Automatic checks stay quiet when there is no update or the network is unavailable.
+
+**Settings → Updates → Check for updates automatically** is enabled by default. Turn it off to disable subsequent automatic checks; the choice survives relaunches. **Beamly → Check for Updates…** and the matching Settings button remain available and can find a previously skipped version. Downloads and installation require your choice to install. Feed/archive signatures and the existing trusted key are retained; system profiling and automatic downloading/installation are disabled.
 
 The updater is included starting with **1.0.1**. Users of 1.0.0 must install 1.0.1 or later through the ZIP, Homebrew, or npm first. Homebrew users can also run:
 
