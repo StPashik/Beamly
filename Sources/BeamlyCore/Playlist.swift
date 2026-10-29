@@ -7,6 +7,7 @@ public struct PlaylistItem: Identifiable, Codable, Equatable, Sendable {
     public var duration: Double?
     // Optional so queues saved before subtitle timing support still decode.
     public var subtitleDelay: Double?
+    public var audioDelay: Double?
 
     public init(url: URL) {
         id = UUID()
@@ -17,6 +18,13 @@ public struct PlaylistItem: Identifiable, Codable, Equatable, Sendable {
     public var title: String { url.deletingPathExtension().lastPathComponent }
 }
 
+public struct WatchHistoryEntry: Identifiable, Codable, Equatable, Sendable {
+    public var video: PlaylistItem
+    public var watchedAt: Date
+    public var id: URL { video.url }
+    public var isFinished: Bool { video.duration.map { video.position >= $0 - 3 } ?? false }
+}
+
 public enum RepeatMode: String, Codable, CaseIterable, Sendable {
     case off, one, all
 }
@@ -24,6 +32,8 @@ public enum RepeatMode: String, Codable, CaseIterable, Sendable {
 public struct Playlist: Codable, Equatable, Sendable {
     public var items: [PlaylistItem] = []
     public var currentID: UUID?
+    // Optional so existing queues migrate without losing their saved positions.
+    public var history: [WatchHistoryEntry]?
     public var repeatMode: RepeatMode = .off
     public var shuffle = false {
         didSet { if oldValue != shuffle { shuffleOrder.removeAll() } }
@@ -31,17 +41,38 @@ public struct Playlist: Codable, Equatable, Sendable {
     private var shuffleOrder: [UUID] = []
 
     // Navigation order is temporary; restored playlists begin a fresh shuffle cycle.
-    private enum CodingKeys: CodingKey { case items, currentID, repeatMode, shuffle }
+    private enum CodingKeys: CodingKey { case items, currentID, repeatMode, shuffle, history }
 
     public init() {}
 
     public var current: PlaylistItem? { items.first { $0.id == currentID } }
 
+    public mutating func recordHistory(_ item: PlaylistItem, at date: Date = Date()) {
+        guard item.url.isFileURL, item.position.isFinite, item.position >= 0,
+              item.position > 0 || item.audioDelay != nil || item.subtitleDelay != nil,
+              let duration = item.duration, duration.isFinite, duration > 0 else { return }
+        var saved = item
+        saved.position = min(item.position, duration)
+        history = (history ?? []).filter { $0.id != item.url }
+        history?.insert(WatchHistoryEntry(video: saved, watchedAt: date), at: 0)
+        // Bound local metadata; the source movies are never modified or deleted.
+        history = Array((history ?? []).prefix(100))
+    }
+
     public mutating func append(_ urls: [URL]) {
         var existing = Set(items.map { $0.url })
         for url in urls where url.isFileURL {
             let normalized = url.standardizedFileURL
-            if existing.insert(normalized).inserted { items.append(PlaylistItem(url: normalized)) }
+            if existing.insert(normalized).inserted {
+                var item = PlaylistItem(url: normalized)
+                if let saved = history?.first(where: { $0.id == normalized })?.video {
+                    item.position = saved.position
+                    item.duration = saved.duration
+                    item.subtitleDelay = saved.subtitleDelay
+                    item.audioDelay = saved.audioDelay
+                }
+                items.append(item)
+            }
         }
         if currentID == nil { currentID = items.first?.id }
     }

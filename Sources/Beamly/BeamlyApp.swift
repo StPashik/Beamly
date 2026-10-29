@@ -27,6 +27,9 @@ struct BeamlyApp: App {
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
         .commands {
+            CommandGroup(after: .newItem) {
+                ShowHistoryButton()
+            }
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…", action: updater.checkForUpdates)
                     .disabled(!updater.canCheckForUpdates)
@@ -54,6 +57,17 @@ struct BeamlyApp: App {
                 }
             }
         }
+        Window("Watch history", id: "history") {
+            WatchHistoryView(model: model)
+                .environment(\.locale, Locale(identifier: language.rawValue))
+                .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
+        }.defaultSize(width: 520, height: 400)
+        MenuBarExtra("Beamly", systemImage: "play.rectangle") {
+            MenuBarRemote(model: model)
+                .environment(\.locale, Locale(identifier: language.rawValue))
+                .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
+                .onAppear { delegate.attach(model) }
+        }.menuBarExtraStyle(.window)
         Settings { SettingsView(updater: updater).environment(\.locale, Locale(identifier: language.rawValue)).preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil) }
     }
 }
@@ -72,6 +86,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let model { model.add(urls) } else { pending += urls }
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    // The menu bar remote continues controlling the same player after closing the main window.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationWillTerminate(_ notification: Notification) { model?.shutdown() }
+}
+
+private struct ShowHistoryButton: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View { Button("Watch history") { openWindow(id: "history") } }
 }
