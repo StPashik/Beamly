@@ -30,6 +30,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var isUsingHLS = false
     @Published private(set) var isVideoCopied = false
     @Published private(set) var previewImage: NSImage?
+    @Published private(set) var seekPreviewImage: NSImage?
+    @Published private(set) var seekPreviewTime: Double?
+    @Published private(set) var isLoadingSeekPreview = false
     @Published private(set) var audioOptions: [TrackOption] = []
     @Published private(set) var subtitleOptions: [TrackOption] = []
     @Published private(set) var audioID: Int?
@@ -47,6 +50,8 @@ final class AppModel: ObservableObject {
     private var job: HLSJob?
     private var preparation: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
+    private var seekPreviewTask: Task<Void, Never>?
+    private let seekPreviewCache = NSCache<NSNumber, NSImage>()
     private var playRequested = false
     private var loadID = UUID()
     private var timeObserver: Any?
@@ -75,6 +80,8 @@ final class AppModel: ObservableObject {
         // Keep the original data location so renaming the app preserves the queue.
         self.stateURL = stateURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Peamer/playlist.json")
         self.defaults = defaults
+        seekPreviewCache.countLimit = 16
+        seekPreviewCache.totalCostLimit = 4 * 1024 * 1024
         defaults.register(defaults: ["autoPlay": true, "directPlayback": true, "hardwareEncoding": true, "appearance": "system", "preferredAudioLanguage": "default", "preferredSubtitleLanguage": "automatic"])
         restore()
         duration = playlist.current?.duration ?? 0
@@ -131,6 +138,18 @@ final class AppModel: ObservableObject {
     }
 
     var current: PlaylistItem? { playlist.current }
+    var chapters: [MediaChapter] { info?.chapters ?? [] }
+    func chapter(at seconds: Double) -> MediaChapter? {
+        guard seconds.isFinite else { return nil }
+        return chapters.last { $0.start <= seconds && seconds < $0.end }
+    }
+    func chapterTitle(_ chapter: MediaChapter) -> String {
+        chapter.title ?? String(format: NSLocalizedString("Chapter %d", comment: ""), (chapters.firstIndex { $0.id == chapter.id } ?? 0) + 1)
+    }
+    func seekChapter(_ id: Int) {
+        guard !isPreparing, let chapter = chapters.first(where: { $0.id == id }) else { return }
+        seek(chapter.start)
+    }
     var subtitleDelay: Double { current?.subtitleDelay ?? 0 }
     var networkAddress: String { server.host }
     // Waiting playback still needs a Pause action, even though media is not advancing yet.
@@ -372,6 +391,8 @@ final class AppModel: ObservableObject {
 
     private func loadPreview() {
         previewTask?.cancel()
+        requestSeekPreview(nil)
+        seekPreviewCache.removeAllObjects()
         previewImage = nil
         guard let movie = current else { return }
         let tools = tools
@@ -385,25 +406,75 @@ final class AppModel: ObservableObject {
             }
             guard !Task.isCancelled else { return }
             let middle = duration.isFinite && duration > 0 ? duration / 2 : 0
-            let generator = AVAssetImageGenerator(asset: asset)
-            generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = CGSize(width: 288, height: 162)
-            generator.requestedTimeToleranceBefore = .zero
-            generator.requestedTimeToleranceAfter = .zero
-            var image: NSImage?
-            do {
-                let frame = try await withTaskCancellationHandler {
-                    try Task.checkCancellation()
-                    return try await generator.image(at: CMTime(seconds: middle, preferredTimescale: 600)).image
-                } onCancel: { generator.cancelAllCGImageGeneration() }
-                image = NSImage(cgImage: frame, size: .zero)
-            } catch {
-                guard !Task.isCancelled else { return }
-                if let data = try? await tools.thumbnail(url: movie.url, at: middle) { image = NSImage(data: data) }
-            }
+            let image = await Self.thumbnail(url: movie.url, at: middle, tools: tools)
             guard !Task.isCancelled, self?.current?.id == movie.id else { return }
             self?.previewImage = image
         }
+    }
+
+    func requestSeekPreview(_ seconds: Double?) {
+        guard let seconds, seconds.isFinite, seconds >= 0, duration.isFinite, duration > 0,
+              !isPreparing, let movie = current else {
+            seekPreviewTask?.cancel()
+            seekPreviewTask = nil
+            seekPreviewTime = nil
+            seekPreviewImage = nil
+            isLoadingSeekPreview = false
+            return
+        }
+        // One source frame per second avoids decoding on every pointer movement.
+        let target = min(floor(seconds), max(0, duration - 0.05))
+        guard seekPreviewTime != target else { return }
+        seekPreviewTask?.cancel()
+        seekPreviewTask = nil
+        seekPreviewTime = target
+        seekPreviewImage = seekPreviewCache.object(forKey: NSNumber(value: target))
+        isLoadingSeekPreview = seekPreviewImage == nil
+        guard isLoadingSeekPreview else { return }
+        let tools = tools
+        seekPreviewTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: 150_000_000) }
+            catch { return }
+            let image = await Self.thumbnail(url: movie.url, at: target, tools: tools)
+            guard !Task.isCancelled, let self, self.current?.id == movie.id, self.seekPreviewTime == target else { return }
+            if let image { self.seekPreviewCache.setObject(image, forKey: NSNumber(value: target), cost: 288 * 162 * 4) }
+            self.seekPreviewImage = image
+            self.isLoadingSeekPreview = false
+        }
+    }
+
+    private static func thumbnail(url: URL, at seconds: Double, tools: FFmpegTools) async -> NSImage? {
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 288, height: 162)
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        do {
+            let frame = try await withTaskCancellationHandler {
+                try Task.checkCancellation()
+                return try await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600)).image
+            } onCancel: { generator.cancelAllCGImageGeneration() }
+            return NSImage(cgImage: frame, size: .zero)
+        } catch {
+            guard !Task.isCancelled, let data = try? await tools.thumbnail(url: url, at: seconds), !Task.isCancelled else { return nil }
+            return NSImage(data: data)
+        }
+    }
+
+    static func nativeChapters(in asset: AVAsset, duration: Double) async -> [MediaChapter] {
+        var groups = (try? await asset.loadChapterMetadataGroups(bestMatchingPreferredLanguages: Locale.preferredLanguages)) ?? []
+        // Unlabelled (und) chapters do not match the user's preferred languages.
+        if groups.isEmpty, let locale = (try? await asset.load(.availableChapterLocales))?.first {
+            groups = (try? await asset.loadChapterMetadataGroups(withTitleLocale: locale, containingItemsWithCommonKeys: [.commonKeyTitle])) ?? []
+        }
+        var chapters: [MediaChapter] = []
+        for (index, group) in groups.enumerated() {
+            let item = AVMetadataItem.metadataItems(from: group.items, withKey: AVMetadataKey.commonKeyTitle, keySpace: .common).first
+            let title = try? await item?.load(.stringValue)
+            if let chapter = MediaChapter(id: index, start: group.timeRange.start.seconds, end: CMTimeRangeGetEnd(group.timeRange).seconds,
+                                          title: title, duration: duration) { chapters.append(chapter) }
+        }
+        return chapters.sorted { $0.start == $1.start ? $0.id < $1.id : $0.start < $1.start }
     }
 
     private func prepare(at start: Double, autoPlay: Bool, applyTrackPreferences: Bool = false) {
@@ -436,7 +507,9 @@ final class AppModel: ObservableObject {
                 catch {
                     try Task.checkCancellation()
                     guard ["mp4", "m4v", "mov"].contains(movie.url.pathExtension.lowercased()), (try? await asset.load(.isPlayable)) == true else { throw error }
-                    metadata = MediaInfo(duration: try await asset.load(.duration).seconds, width: 0, height: 0, videoCodec: nil, audioTracks: [], subtitleTracks: [])
+                    let seconds = try await asset.load(.duration).seconds
+                    metadata = MediaInfo(duration: seconds, width: 0, height: 0, videoCodec: nil,
+                                         chapters: await Self.nativeChapters(in: asset, duration: seconds))
                 }
                 try Task.checkCancellation()
                 guard loadID == generation else { return }
@@ -611,6 +684,7 @@ final class AppModel: ObservableObject {
     }
 
     private func cancelPlayback() {
+        requestSeekPreview(nil)
         isAirPlayPickerRequested = false
         playRequested = false
         loadID = UUID()
@@ -697,6 +771,7 @@ final class AppModel: ObservableObject {
 
     func shutdown() {
         previewTask?.cancel()
+        seekPreviewCache.removeAllObjects()
         remember()
         cancelPlayback()
         server.stop()
