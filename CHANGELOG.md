@@ -1,9 +1,20 @@
-# Unreleased
+# Beamly 1.0.10
 
-- Preserve the selected AirPlay route and playback intent while replacing audio/subtitle streams and seeking; prepare a selected receiver before requesting device selection. Playback remains blocked without an active external route.
-- Remove volume controls throughout Beamly and Stop from the menu bar mini remote. Receiver volume is controlled on the receiver.
-- Match watch history to Beamly's compact window controls, translucent background, adaptive accent, and glass panels.
-- Add simulated route-handoff, disconnection, cancellation, and native-window regression checks. These are not physical receiver validation.
+**4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**
+
+Beamly fixes AirPlay route reuse and stream replacement, simplifies playback controls, and brings watch history into the application's visual style.
+
+- Keep the selected AirPlay route while preparing a video or replacing audio/subtitle streams. Preserve the source position and request to continue playback across track changes, seeks, and overlapping preparation. Pause on a genuine receiver disconnection.
+- Prepare an already selected receiver before asking for device selection. If no external connection becomes active within three seconds, a manual Play request opens the native AirPlay picker. Playback remains blocked without an active external route; Pause and Stop cancel pending connection preparation.
+- Remove volume controls throughout Beamly. Control volume on the TV, receiver, or its remote. Remove **Stop** from the macOS menu bar mini remote; retain playback, skips, queue navigation, and the sleep timer. Audio-track selection and per-video audio timing remain in the audio menu; manual Stop remains in the Playback menu.
+- Restyle **Watch history** with Beamly's compact custom window controls, fixed width, translucent background, adaptive accent, and glass panels. Retain Continue watching, watched videos, progress, local history management, and the reduced-transparency fallback. Liquid Glass requires macOS 26; earlier supported versions use standard materials.
+- Keep all five interface languages complete and preserve the existing queue, history, resume positions, timing corrections, and preferences. Original videos and subtitles are never changed.
+
+**Update:** choose **Beamly → Check for Updates…** or **Settings → Updates**. Homebrew and the tagged GitHub npm installer are also updated. FFmpeg and FFprobe remain included for Apple Silicon and Intel.
+
+AirPlay reconnection fixes were checked with generated media and simulated route transitions; physical receiver retesting is still required. The three-second connection window does not guarantee reconnection on every receiver or network. Physical testing of audio timing correction was not performed. Dolby Vision remuxing is not supported. Bitmap subtitles require compatibility conversion; ASS styling is simplified. See [video quality and AirPlay](Docs/Media-Streaming.md) for supported profiles and verification limits.
+
+**This community build is ad-hoc signed and is not notarized by Apple.** Requires macOS 14 or later on Apple Silicon or Intel.
 
 ---
 
