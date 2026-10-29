@@ -328,6 +328,7 @@ struct SeekTimeline: View {
     @Binding var scrubbing: Bool
     @Binding var position: Double
     @State private var hoveredPosition: Double?
+    @State private var knobInset = CGFloat.zero
 
     private var previewPosition: Double? {
         guard !model.isPreparing, model.duration > 0 else { return nil }
@@ -350,20 +351,25 @@ struct SeekTimeline: View {
             .accessibilityLabel("Playback position")
             .onContinuousHover { phase in
                 switch phase {
-                case .active(let point): hoveredPosition = Self.time(at: point.x, width: geometry.size.width, duration: model.duration)
+                case .active(let point): hoveredPosition = Self.time(at: point.x, width: geometry.size.width, duration: model.duration, inset: knobInset)
                 case .ended: hoveredPosition = nil
                 }
             }
             .overlay(alignment: .bottomLeading) {
                 if previewPosition != nil, let seconds = model.seekPreviewTime {
                     SeekPreview(model: model, seconds: seconds)
-                        .offset(x: Self.previewOrigin(at: seconds, width: geometry.size.width, duration: model.duration), y: -24)
+                        .offset(x: Self.previewOrigin(at: seconds, width: geometry.size.width, duration: model.duration, inset: knobInset), y: -24)
                         .allowsHitTesting(false).accessibilityHidden(true)
                 }
             }
         }
         .frame(height: 16)
         .disabled(model.isPreparing || model.duration <= 0)
+        .onAppear {
+            let sizing = NSSlider(frame: NSRect(x: 0, y: 0, width: 100, height: 16))
+            sizing.controlSize = .mini
+            knobInset = sizing.knobThickness / 2
+        }
         .onChange(of: previewPosition) { _, seconds in model.requestSeekPreview(seconds) }
         .onChange(of: model.current?.id) { _, _ in hoveredPosition = nil; scrubbing = false }
         .onChange(of: model.isPreparing) { _, preparing in
@@ -372,14 +378,14 @@ struct SeekTimeline: View {
         .onDisappear { model.requestSeekPreview(nil) }
     }
 
-    static func time(at x: CGFloat, width: CGFloat, duration: Double) -> Double? {
-        guard x.isFinite, width.isFinite, width > 0, duration.isFinite, duration > 0 else { return nil }
-        return min(1, max(0, x / width)) * duration
+    static func time(at x: CGFloat, width: CGFloat, duration: Double, inset: CGFloat = 0) -> Double? {
+        guard x.isFinite, width.isFinite, inset.isFinite, inset >= 0, width > 2 * inset, duration.isFinite, duration > 0 else { return nil }
+        return min(1, max(0, (x - inset) / (width - 2 * inset))) * duration
     }
 
-    static func previewOrigin(at seconds: Double, width: CGFloat, duration: Double) -> CGFloat {
-        guard seconds.isFinite, width.isFinite, duration.isFinite, duration > 0 else { return 0 }
-        return min(max(0, width - 160), max(0, seconds / duration * width - 80))
+    static func previewOrigin(at seconds: Double, width: CGFloat, duration: Double, inset: CGFloat = 0) -> CGFloat {
+        guard seconds.isFinite, width.isFinite, inset.isFinite, duration.isFinite, duration > 0 else { return 0 }
+        return min(max(0, width - 160), max(0, inset + seconds / duration * max(0, width - 2 * inset) - 80))
     }
 }
 
