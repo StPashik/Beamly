@@ -1,8 +1,20 @@
-# Unreleased
+# Beamly 1.0.11
 
-- Check for signed updates at launch and periodically using Sparkle’s native install, remind-later, and skip-version window. Keep automatic checks quiet when no update is available or a connection fails.
-- Add an enabled-by-default automatic-check checkbox to Settings → Updates, backed by Sparkle’s persistent preference. Retain manual checks, explicit download/installation approval, and disabled system profiling.
-- Translate the new update setting and explanation into all five interface languages.
+**4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**
+
+Beamly adds automatic update checks at startup and a persistent checkbox in Settings.
+
+- Check for signed updates when Beamly starts and on Sparkle's regular schedule while it runs, normally once a day. Automatic checks stay quiet when no newer version is available or the network is unavailable.
+- Use the native **Install Update**, **Remind Me Later**, and **Skip This Version** choices. Remind Me Later dismisses the window until the next check, including the next launch. Skip This Version suppresses that version in automatic checks; a manual check can still find it.
+- Control the enabled-by-default **Settings → Updates → Check for updates automatically** checkbox. Turning it off disables subsequent automatic checks, and the choice survives relaunches. Manual checks remain available.
+- Keep downloads and installation under explicit user control. Signed HTTPS feeds, archive verification, and the existing trusted update key are retained. Automatic downloads/installs and system profiling remain disabled, using Sparkle's documented settings.
+- Include the new setting and explanation in English, Russian, German, French, and Spanish. Preserve the existing queue, watch history, resume positions, timing corrections, and preferences; original videos and subtitles are never changed.
+
+**Update from 1.0.10 or earlier:** choose **Beamly → Check for Updates…** or **Settings → Updates** to install this version. Automatic startup checking becomes available after upgrading to 1.0.11. Homebrew and the tagged GitHub npm installer are also updated. FFmpeg and FFprobe remain included for Apple Silicon and Intel.
+
+Update checking, the native choices, and the checkbox were checked in isolated applications; this does not certify physical AirPlay output. Receiver retesting of the existing reconnection fixes and audio timing correction is still required. Dolby Vision remuxing is not supported. Bitmap subtitles require compatibility conversion; ASS styling is simplified. See [video quality and AirPlay](Docs/Media-Streaming.md) for supported profiles and verification limits.
+
+**This community build is ad-hoc signed and is not notarized by Apple.** Requires macOS 14 or later on Apple Silicon or Intel.
 
 ---
 
