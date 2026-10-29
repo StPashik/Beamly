@@ -1,22 +1,17 @@
 <p><strong>4K/HDR over AirPlay has not been tested on physical receivers.
 Playback may be unstable or incompatible with some devices or network configurations.</strong></p>
-<p><strong>AirPlay reconnection and a cleaner interface.</strong> Keep the selected receiver and playback intent when changing audio or subtitles.
-An already selected route is prepared before opening device selection; playback still requires an active AirPlay receiver.
-Volume is controlled on the receiver, and the mini remote no longer includes Stop. Watch history now matches Beamly's compact translucent window and glass panels.</p>
-<p><strong>Watch history, audio timing, and menu bar remote.</strong> Open <strong>Watch history</strong> from the header's clock icon
-or the File menu to continue unfinished videos or restart watched ones. Keep up to 100 videos locally, including resume positions
-and timing corrections after queue removal. Existing positions migrate automatically; clearing history does not delete movies or change the active queue.</p>
-<p>Choose <strong>Audio timing…</strong> in the audio menu to move sound earlier or later in 0.1-second steps, from −10 to +10 seconds.
-The correction is saved per video and survives seeking and track changes. Compatible video, resolution, and HDR metadata are preserved;
-AAC and supported surround copy paths remain available. Reset to zero to allow direct playback again. Audio outside the source's time range is silent.
-Physical testing of audio correction on an AirPlay receiver was not performed.</p>
-<p>The <strong>Beamly icon in the macOS menu bar</strong> opens a mini remote for playback, skips, previous/next, and the sleep timer.
-Closing the main window now keeps Beamly and playback available. Choose <strong>Show Beamly</strong> to reopen it or <strong>Quit Beamly</strong> to exit.
-Play still requires an AirPlay receiver.</p>
-<p>Choose <strong>Playback → Sleep Timer</strong> for 15, 30, 45, 60, 90, or 120 minutes. The timer continues across pauses, seeks, track changes,
-and queue transitions. On expiry, playback/preparation stops and the resume position is saved. Stop, clearing the queue, removing its last entry,
-or quitting cancels the timer; it is not restored on relaunch.</p>
-<p>All new controls are available in five interface languages. Your queue, timing corrections, and preferences are preserved.
+<p><strong>AirPlay reconnection and interface fixes.</strong> Keep the selected receiver while preparing a video or changing audio/subtitles.
+Retain the source position and request to continue playback across stream rebuilds and seeks. A genuine disconnection pauses playback.</p>
+<p>An already selected route is prepared before requesting device selection. If it does not become active within three seconds,
+a manual Play request opens the native AirPlay picker. Playback remains blocked without an active external route; Pause and Stop cancel pending preparation.
+Physical receiver retesting of these fixes is still required; reconnection is not guaranteed on every device or network.</p>
+<p>Volume controls have been removed throughout Beamly; use your TV, receiver, or its remote.
+The menu bar mini remote no longer includes Stop, while playback, skips, previous/next, and the sleep timer remain.
+Choose audio tracks and per-video timing in the audio menu; manual Stop remains in the Playback menu.</p>
+<p><strong>Watch history</strong> now matches Beamly's compact custom window controls, fixed width, translucent background, adaptive accent, and glass panels.
+Continue watching, watched videos, and history management remain available. Reduced transparency and earlier macOS material fallbacks are retained.</p>
+<p>All five interface languages are complete. Your queue, history, resume positions, timing corrections, and preferences are preserved.
 Original videos and subtitle files are never changed. FFmpeg and ffprobe remain included for Apple Silicon and Intel.</p>
-<p>Moved or renamed videos must be added from their new location. Dolby Vision remuxing is not supported. Bitmap subtitles require compatibility conversion;
-ASS styling is simplified. This community build is ad-hoc signed and is not notarized by Apple. See the full release notes for verification limits.</p>
+<p>Physical testing of audio timing correction was not performed. Dolby Vision remuxing is not supported.
+Bitmap subtitles require compatibility conversion; ASS styling is simplified. This community build is ad-hoc signed and is not notarized by Apple.
+See the full release notes for verification limits.</p>
