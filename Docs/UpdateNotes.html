@@ -1,15 +1,14 @@
 <p><strong>4K/HDR over AirPlay has not been tested on physical receivers.
 Playback may be unstable or incompatible with some devices or network configurations.</strong></p>
-<p><strong>Clear playback status.</strong> Follow preparation stages beside the preview, from reading video information
-to original-video streaming, system or software encoding, subtitles, and player loading. Software-encoder retries
-are shown when system conversion fails.</p>
-<p>Starting playback and AVPlayer-reported buffering have distinct statuses. Pause remains available while playback
-waits, and the status shows when an AirPlay device must be selected.</p>
-<p>Quality details identify video preserved without conversion or compatibility conversion up to 1080p SDR.
-They explain format and quality-setting requirements, software encoding, and encoder retries. Hover for the full
-text. Status and quality explanations are available in all five interface languages.</p>
-<p>Statuses reset when switching videos, stopping, or cancelling preparation. They describe the preparation path
-and AVPlayer state; they do not certify the receiver's actual resolution or HDR output.</p>
+<p><strong>Chapters and seek previews.</strong> Choose an embedded chapter from the chapter icon beside the timeline
+or <strong>Playback → Chapters</strong>. The menu shows the current chapter and source titles, with numbered labels for unnamed chapters.</p>
+<p>Hover over the timeline or drag its handle to inspect a small source frame, time, and chapter title. Hovering
+does not move playback or change your saved position. Dragging seeks when released and preserves paused or playing state.
+The main midpoint image stays static.</p>
+<p>Preview time follows the native slider's thumb bounds, including the ends of long videos. Frame requests use
+cancellation, debounce, and a small per-video cache. Chapter controls and preview messages are available in all five interface languages.</p>
+<p>Chapter seeks retain the original movie's clock through HLS buffer rebuilds. Native MP4/MOV chapter loading remains
+available if probing fails, including chapters without a language tag. This release also fixes the initialization filename for video-only HLS.</p>
 <p>Supported 4K HEVC/H.264 video keeps its original quality and supported HDR10/HLG metadata.
 Caption corrections remain aligned after seeking and track changes. Your queue, timing corrections, and preferences are preserved.
 Original video and subtitle files are never changed.</p>
