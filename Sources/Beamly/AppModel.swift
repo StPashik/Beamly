@@ -33,6 +33,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var seekPreviewImage: NSImage?
     @Published private(set) var seekPreviewTime: Double?
     @Published private(set) var isLoadingSeekPreview = false
+    @Published private(set) var sleepTimerRemaining: Double?
     @Published private(set) var audioOptions: [TrackOption] = []
     @Published private(set) var subtitleOptions: [TrackOption] = []
     @Published private(set) var audioID: Int?
@@ -51,6 +52,7 @@ final class AppModel: ObservableObject {
     private var preparation: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
     private var seekPreviewTask: Task<Void, Never>?
+    private var sleepTimerTask: Task<Void, Never>?
     private let seekPreviewCache = NSCache<NSNumber, NSImage>()
     private var playRequested = false
     private var loadID = UUID()
@@ -138,6 +140,9 @@ final class AppModel: ObservableObject {
     }
 
     var current: PlaylistItem? { playlist.current }
+    var sleepTimerDescription: String? {
+        sleepTimerRemaining.map { String(format: NSLocalizedString("Stop playback in %@", comment: ""), mediaTime(ceil($0))) }
+    }
     var chapters: [MediaChapter] { info?.chapters ?? [] }
     func chapter(at seconds: Double) -> MediaChapter? {
         guard seconds.isFinite else { return nil }
@@ -286,11 +291,43 @@ final class AppModel: ObservableObject {
     }
 
     func stop() {
+        setSleepTimer(nil)
         cancelPlayback()
         position = 0
         playlist.remember(position: 0, duration: duration)
         save()
         updateNowPlaying()
+    }
+
+    func setSleepTimer(_ seconds: Double?) {
+        if let seconds {
+            guard current != nil, seconds.isFinite, seconds > 0, seconds <= 2 * 60 * 60 else { return }
+        }
+        sleepTimerTask?.cancel()
+        sleepTimerTask = nil
+        sleepTimerRemaining = seconds
+        guard let seconds else { return }
+        // Continuous time includes system suspension and ignores wall-clock adjustments.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(seconds))
+        sleepTimerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard self != nil else { return }
+                let interval = ContinuousClock.now.duration(to: deadline).components
+                let remaining = Double(interval.seconds) + Double(interval.attoseconds) / 1e18
+                if remaining <= 0 {
+                    guard let self else { return }
+                    self.sleepTimerTask = nil
+                    self.sleepTimerRemaining = nil
+                    self.remember()
+                    self.cancelPlayback()
+                    self.updateNowPlaying()
+                    return
+                }
+                self?.sleepTimerRemaining = remaining
+                do { try await Task.sleep(for: .seconds(min(1, remaining)), clock: .continuous) }
+                catch { return }
+            }
+        }
     }
 
     func next() { if let id = playlist.next() { select(id) } }
@@ -357,6 +394,7 @@ final class AppModel: ObservableObject {
         let active = id == playlist.currentID
         if active { cancelPlayback() }
         playlist.remove(id)
+        if playlist.items.isEmpty { setSleepTimer(nil) }
         save()
         if active {
             position = playlist.current?.position ?? 0
@@ -371,6 +409,7 @@ final class AppModel: ObservableObject {
     }
 
     func clear() {
+        setSleepTimer(nil)
         cancelPlayback()
         playlist.items.removeAll()
         playlist.currentID = nil
@@ -770,6 +809,7 @@ final class AppModel: ObservableObject {
     }
 
     func shutdown() {
+        setSleepTimer(nil)
         previewTask?.cancel()
         seekPreviewCache.removeAllObjects()
         remember()

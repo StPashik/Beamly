@@ -44,6 +44,7 @@ struct BeamlyApp: App {
                 Button("Skip Forward 10 Seconds") { model.seek(model.position + 10) }.keyboardShortcut(.rightArrow, modifiers: [])
                 Button("Skip Back 10 Seconds") { model.seek(model.position - 10) }.keyboardShortcut(.leftArrow, modifiers: [])
                 ChapterMenu(model: model)
+                SleepTimerMenu(model: model)
                 Divider()
                 Toggle("Shuffle", isOn: Binding(get: { model.playlist.shuffle }, set: { _ in model.toggleShuffle() }))
                 Picker("Repeat", selection: Binding(get: { model.playlist.repeatMode }, set: model.setRepeat)) {

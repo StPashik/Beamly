@@ -56,6 +56,12 @@ Timeline hover and drag previews use still images from the original file through
 
 Video-only fMP4 streams use an explicit initialization filename: FFmpeg does not expand the variant placeholder for a single variant. Audio-bearing streams retain their existing per-variant initialization files.
 
+## Sleep timer
+
+The player and Playback menu offer a cancellable timer for the whole queue. The deadline uses Swift's ContinuousClock so changing the wall clock does not extend it, and system suspension counts toward the interval. Remaining time refreshes while the app runs; if execution is suspended beyond the deadline, expiry is applied on resume. A new duration replaces the old deadline, and timers are not persisted across launches.
+
+Expiry saves the current source position and uses the existing playback cancellation path to stop HLS work, revoke the stream, and reject stale preparation/end callbacks. It does not call the manual Stop action, which resets the position. Pausing, seeking, changing tracks, and selecting another queue entry preserve the timer. Manual Stop, an empty queue, and shutdown cancel it.
+
 ## Verification
 
 Automated checks use generated media, never personal movies:
@@ -68,6 +74,7 @@ Automated checks use generated media, never personal movies:
 - actual HTTP fetching of the master, media playlists, initialization segments, fragments, and captions;
 - cancellation, existing MP4 playback, and queue/file preservation.
 - generated MP4/MKV chapters, chapter seeks across HLS buffer rebuilds, still-frame timestamps, and thumbnail cancellation without moving the player.
+- timer replacement/cancellation, expiry during HLS playback and preparation, saved-position restoration, and rejection of late queue-advance callbacks.
 
 These checks do not certify physical AirPlay output, HDR display activation, every Dolby profile, Wi-Fi performance, or every receiver. Validate those on an Apple TV 4K and an HDR-capable display before describing hardware compatibility as confirmed.
 
@@ -75,6 +82,7 @@ The native 4K frame test uses HDR only when AVPlayer reports HDR eligibility, ot
 
 ## References
 
+- [Swift continuous clock](https://developer.apple.com/documentation/swift/clock/continuous): elapsed time that includes system suspension.
 - [Apple chapter metadata loading](https://developer.apple.com/documentation/avfoundation/avasset/loadchaptermetadatagroups(bestmatchingpreferredlanguages:completionhandler:)): chapter titles and source time ranges.
 - [Apple image generation](https://developer.apple.com/documentation/avfoundation/avassetimagegenerator/image(at:)): still frames without using the playback player.
 - [Apple AVPlayer waiting reasons](https://developer.apple.com/documentation/avfoundation/avplayer/reasonforwaitingtoplay): distinguishing buffer evaluation from waiting to avoid stalls.

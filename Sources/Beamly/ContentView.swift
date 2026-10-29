@@ -160,6 +160,8 @@ struct ContentView: View {
             subtitleMenu
             ChapterMenu(model: model).labelStyle(.iconOnly)
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            SleepTimerMenu(model: model).labelStyle(.iconOnly)
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         }
         .padding(.horizontal, 16).frame(height: 54)
         .modifier(GlassSurface(cornerRadius: 18))
@@ -303,6 +305,30 @@ struct ContentView: View {
             if !urls.isEmpty { model.add(urls) }
         }
         return true
+    }
+}
+
+struct SleepTimerMenu: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        Menu {
+            if let description = model.sleepTimerDescription {
+                Text(description)
+                Divider()
+            }
+            Button { model.setSleepTimer(nil) } label: {
+                Label("Off", systemImage: model.sleepTimerRemaining == nil ? "checkmark" : "")
+            }
+            ForEach([15, 30, 45, 60, 90, 120], id: \.self) { minutes in
+                Button(String(format: NSLocalizedString("%d min", comment: ""), minutes)) { model.setSleepTimer(Double(minutes) * 60) }
+            }
+        } label: {
+            Label("Sleep Timer", systemImage: "timer").foregroundStyle(model.sleepTimerRemaining == nil ? Color.secondary : mint)
+        }
+        .disabled(model.current == nil)
+        .help(model.sleepTimerDescription ?? NSLocalizedString("Sleep Timer", comment: ""))
+        .accessibilityLabel("Sleep Timer")
     }
 }
 
