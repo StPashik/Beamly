@@ -1,3 +1,22 @@
+# Beamly 1.0.7
+
+**4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**
+
+Beamly shows what is happening while a video prepares and plays, with clear quality and conversion explanations beside the preview.
+
+- Show preparation stages for reading video information, original-video streaming, system or software encoding, subtitles, and player loading. Show software-encoder retries when system conversion fails.
+- Distinguish starting playback from buffering reported by AVPlayer. Keep Pause available while playback waits, and show when an AirPlay device must be selected.
+- Identify video preserved without conversion and compatibility conversion up to 1080p SDR. Explain whether conversion is required by the format or the quality setting, and when software encoding is in use.
+- Clear outdated status when switching videos, stopping, or cancelling preparation. Keep full status and quality explanations available on hover, with translations in all five interface languages.
+
+**Update:** choose **Beamly → Check for Updates…** or **Settings → Updates**. Your queue, timing corrections, and preferences are preserved. FFmpeg and FFprobe remain included for Apple Silicon and Intel.
+
+These statuses describe the preparation path and AVPlayer state; they do not certify the receiver's actual resolution or HDR output. Dolby Vision remuxing is not supported. Bitmap subtitles require compatibility conversion; ASS styling is simplified. See [video quality and AirPlay](Docs/Media-Streaming.md) for supported profiles and verification limits.
+
+**This community build is ad-hoc signed and is not notarized by Apple.** Requires macOS 14 or later on Apple Silicon or Intel.
+
+---
+
 # Beamly 1.0.6
 
 **4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**
