@@ -1,17 +1,19 @@
 <p><strong>4K/HDR over AirPlay has not been tested on physical receivers.
 Playback may be unstable or incompatible with some devices or network configurations.</strong></p>
-<p><strong>Chapters and seek previews.</strong> Choose an embedded chapter from the chapter icon beside the timeline
-or <strong>Playback → Chapters</strong>. The menu shows the current chapter and source titles, with numbered labels for unnamed chapters.</p>
-<p>Hover over the timeline or drag its handle to inspect a small source frame, time, and chapter title. Hovering
-does not move playback or change your saved position. Dragging seeks when released and preserves paused or playing state.
-The main midpoint image stays static.</p>
-<p>Preview time follows the native slider's thumb bounds, including the ends of long videos. Frame requests use
-cancellation, debounce, and a small per-video cache. Chapter controls and preview messages are available in all five interface languages.</p>
-<p>Chapter seeks retain the original movie's clock through HLS buffer rebuilds. Native MP4/MOV chapter loading remains
-available if probing fails, including chapters without a language tag. This release also fixes the initialization filename for video-only HLS.</p>
-<p>Supported 4K HEVC/H.264 video keeps its original quality and supported HDR10/HLG metadata.
-Caption corrections remain aligned after seeking and track changes. Your queue, timing corrections, and preferences are preserved.
-Original video and subtitle files are never changed.</p>
-<p>FFmpeg and ffprobe remain included for Apple Silicon and Intel. No Homebrew media packages are required.</p>
-<p>Dolby Vision remuxing is not supported. Bitmap subtitles require compatibility conversion;
-ASS styling is simplified. See the full release notes for supported profiles and verification limits.</p>
+<p><strong>Watch history, audio timing, and menu bar remote.</strong> Open <strong>Watch history</strong> from the header's clock icon
+or the File menu to continue unfinished videos or restart watched ones. Keep up to 100 videos locally, including resume positions
+and timing corrections after queue removal. Existing positions migrate automatically; clearing history does not delete movies or change the active queue.</p>
+<p>Choose <strong>Audio timing…</strong> in the speaker menu to move sound earlier or later in 0.1-second steps, from −10 to +10 seconds.
+The correction is saved per video and survives seeking and track changes. Compatible video, resolution, and HDR metadata are preserved;
+AAC and supported surround copy paths remain available. Reset to zero to allow direct playback again. Audio outside the source's time range is silent.
+Physical testing of audio correction on an AirPlay receiver was not performed.</p>
+<p>The <strong>Beamly icon in the macOS menu bar</strong> opens a mini remote for playback, skips, previous/next, volume, Stop, and the sleep timer.
+Closing the main window now keeps Beamly and playback available. Choose <strong>Show Beamly</strong> to reopen it or <strong>Quit Beamly</strong> to exit.
+Play still requires an AirPlay receiver.</p>
+<p>Choose <strong>Playback → Sleep Timer</strong> for 15, 30, 45, 60, 90, or 120 minutes. The timer continues across pauses, seeks, track changes,
+and queue transitions. On expiry, playback/preparation stops and the resume position is saved. Stop, clearing the queue, removing its last entry,
+or quitting cancels the timer; it is not restored on relaunch.</p>
+<p>All new controls are available in five interface languages. Your queue, timing corrections, and preferences are preserved.
+Original videos and subtitle files are never changed. FFmpeg and ffprobe remain included for Apple Silicon and Intel.</p>
+<p>Moved or renamed videos must be added from their new location. Dolby Vision remuxing is not supported. Bitmap subtitles require compatibility conversion;
+ASS styling is simplified. This community build is ad-hoc signed and is not notarized by Apple. See the full release notes for verification limits.</p>
