@@ -523,7 +523,7 @@ public final class HLSJob {
     }
 
     public func start(input: URL, info: MediaInfo, audioTrack: Int?, subtitle: SubtitleChoice,
-                      startTime: Double, hardwareEncoding: Bool, preserveQuality: Bool = true, subtitleDelay: Double = 0,
+                      startTime: Double, hardwareEncoding: Bool, preserveQuality: Bool = true, subtitleDelay: Double = 0, audioDelay: Double = 0,
                       progress: @MainActor (PlaybackPreparationStage) -> Void = { _ in }) async throws -> URL {
         stop()
         diagnostic = nil
@@ -532,7 +532,7 @@ public final class HLSJob {
         if let audioTrack, !info.audioTracks.contains(where: { $0.id == audioTrack }) {
             throw MediaPipelineError.invalidMedia(NSLocalizedString("The selected audio track is missing from the file.", comment: ""))
         }
-        guard startTime.isFinite && startTime >= 0 && subtitleDelay.isFinite else {
+        guard startTime.isFinite && startTime >= 0 && subtitleDelay.isFinite && audioDelay.isFinite && abs(audioDelay) <= 10 else {
             throw MediaPipelineError.invalidMedia(NSLocalizedString("Invalid playback position.", comment: ""))
         }
         // Dolby Vision needs profile-specific sample entries and manifest signaling.
@@ -559,13 +559,15 @@ public final class HLSJob {
         }
         do {
             progress(isVideoCopied ? .originalStream : hardwareEncoding ? .systemEncoding : .softwareEncoding)
-            let audio = info.audioTracks.first { $0.id == audioTrack } ?? info.defaultAudioTrack
             let keyTime = isVideoCopied ? try await tools.firstVideoTimestamp(url: input, seek: startTime + info.startTime) : startTime
             try Task.checkCancellation()
             guard generation == currentGeneration else { throw CancellationError() }
             sourceOffset = isVideoCopied ? keyTime - info.startTime : startTime
-            let arguments = isVideoCopied ? Self.copyArguments(input: input, info: info, audio: audio, keyTime: keyTime) : Self.arguments(input: input, info: info, audioTrack: audioTrack,
-                                           subtitleRendering: rendering, startTime: startTime, hardwareEncoding: hardwareEncoding, subtitleDelay: subtitleDelay)
+            // Corrections can move all audio outside the remaining video, which must still play silently.
+            let audio = audioDelay != 0 && (audioDelay >= info.duration || sourceOffset >= info.duration + audioDelay) ? nil :
+                info.audioTracks.first { $0.id == audioTrack } ?? info.defaultAudioTrack
+            let arguments = isVideoCopied ? Self.copyArguments(input: input, info: info, audio: audio, keyTime: keyTime, audioDelay: audioDelay) : Self.arguments(input: input, info: info, audioTrack: audioTrack,
+                                           subtitleRendering: rendering, startTime: startTime, hardwareEncoding: hardwareEncoding, subtitleDelay: subtitleDelay, audioDelay: audioDelay)
             let execution = Task.detached(priority: .userInitiated) {
                 try await process.run(executable: ffmpeg, arguments: arguments, directory: cache)
             }
@@ -644,7 +646,7 @@ public final class HLSJob {
             if !copied && hardwareEncoding && !(error is CancellationError) {
                 progress(.softwareFallback)
                 return try await start(input: input, info: info, audioTrack: audioTrack, subtitle: subtitle,
-                                       startTime: startTime, hardwareEncoding: false, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay, progress: progress)
+                                       startTime: startTime, hardwareEncoding: false, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay, audioDelay: audioDelay, progress: progress)
             }
             throw error
         }
@@ -655,25 +657,31 @@ public final class HLSJob {
         return ["ac3", "eac3"].contains(audio.codec) && (audio.channels ?? 0) > 2
     }
 
-    private static func copyArguments(input: URL, info: MediaInfo, audio: MediaTrack?, keyTime: Double) -> [String] {
+    private static func copyArguments(input: URL, info: MediaInfo, audio: MediaTrack?, keyTime: Double, audioDelay: Double) -> [String] {
         // Read preroll with original timestamps, then discard packets before the selected random-access picture.
         var args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-copyts", "-ss", String(max(0, keyTime - 2)),
-                    "-seek_timestamp", "1", "-i", input.path, "-map", "0:V:0", "-c:v", "copy",
-                    "-bsf:v", "noise=amount=0:drop=lt(pts*tb\\,\(keyTime - 0.000001))"]
+                    "-seek_timestamp", "1", "-i", input.path]
+        // A second input shifts only audio, retaining copied video, HDR metadata, and surround packets.
+        if audio != nil, audioDelay != 0 {
+            args += ["-ss", String(max(0, keyTime - audioDelay - 2)), "-seek_timestamp", "1", "-itsoffset", String(audioDelay), "-i", input.path]
+        }
+        let audioInput = audioDelay == 0 ? 0 : 1
+        args += ["-map", "0:V:0", "-c:v", "copy", "-bsf:v", "noise=amount=0:drop=lt(pts*tb\\,\(keyTime - 0.000001))"]
         // hvc1 keeps HEVC parameter sets in the initialization segment, as Apple requires.
         args += ["-tag:v", info.videoCodec == "hevc" ? "hvc1" : "avc1"]
         var variants = "v:0"
         if let audio {
-            args += ["-map", "0:\(audio.id)"]
+            args += ["-map", "\(audioInput):\(audio.id)"]
             if audio.codec == "aac", audio.profile == "LC", (audio.channels ?? 0) <= 2 {
                 args += ["-c:a:0", "copy"]
             } else { args += ["-c:a:0", "aac", "-b:a:0", "192k", "-ac:a:0", "2", "-ar:a:0", "48000"] }
             variants += " a:0"
             if hasSurround(audio) {
-                args += ["-map", "0:\(audio.id)", "-c:a:1", "copy"]
+                args += ["-map", "\(audioInput):\(audio.id)", "-c:a:1", "copy"]
                 variants += " a:1"
             }
-            args += ["-bsf:a", "noise=amount=0:drop=lt(pts*tb\\,\(keyTime - 0.1))"]
+            let end = audioDelay == 0 ? "" : "+gte(pts*tb\\,\(info.startTime + info.duration))"
+            args += ["-bsf:a", "noise=amount=0:drop=lt(pts*tb\\,\(keyTime - 0.1))\(end)"]
         }
         // FFmpeg leaves %v literal in the initialization filename when there is only one variant.
         let initialization = audio == nil ? "init_0.mp4" : "init_%v.mp4"
@@ -815,12 +823,19 @@ public final class HLSJob {
     }
 
     static func arguments(input: URL, info: MediaInfo, audioTrack: Int?, subtitleRendering: SubtitleRendering?,
-                          startTime: Double, hardwareEncoding: Bool, subtitleDelay: Double = 0) -> [String] {
+                          startTime: Double, hardwareEncoding: Bool, subtitleDelay: Double = 0, audioDelay: Double = 0) -> [String] {
         var arguments = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
         var inputSeek = startTime
         if case .bitmap = subtitleRendering { inputSeek = max(0, startTime - max(0, subtitleDelay)) }
         if inputSeek > 0 { arguments += ["-ss", String(inputSeek)] }
         arguments += ["-i", input.path]
+        let audio = audioDelay != 0 && (audioDelay >= info.duration || startTime >= info.duration + audioDelay) ? nil : audioTrack ?? info.defaultAudioTrack?.id
+        if audio != nil, audioDelay != 0 {
+            let audioSeek = inputSeek - audioDelay
+            if audioSeek > 0 { arguments += ["-ss", String(audioSeek)] }
+            if audioSeek < 0 { arguments += ["-itsoffset", String(-audioSeek)] }
+            arguments += ["-i", input.path]
+        }
         let preroll = startTime - inputSeek
         // Trim both media streams after rendering any bitmap cue carried across the seek point.
         if preroll > 0 { arguments += ["-ss", String(preroll)] }
@@ -845,7 +860,8 @@ public final class HLSJob {
         } else {
             arguments += ["-map", "0:V:0", "-vf", filters.joined(separator: ",")]
         }
-        if let audio = audioTrack ?? info.defaultAudioTrack?.id { arguments += ["-map", "0:\(audio)"] }
+        if let audio { arguments += ["-map", "\(audioDelay == 0 ? 0 : 1):\(audio)"] }
+        if audioDelay != 0 { arguments += ["-t", String(max(0.01, info.duration - startTime))] }
         arguments += ["-pix_fmt", "yuv420p", "-c:v", hardwareEncoding ? "h264_videotoolbox" : "libx264"]
         if hardwareEncoding {
             arguments += ["-b:v", "6000k", "-allow_sw", "1"]

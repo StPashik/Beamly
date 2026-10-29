@@ -13,11 +13,13 @@ private let mint = Color(nsColor: beamlyAccent)
 struct ContentView: View {
     @ObservedObject var model: AppModel
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.openWindow) private var openWindow
     @State private var dropping = false
     @State private var scrubbing = false
     @State private var scrubPosition = 0.0
     @State private var window: NSWindow?
     @State private var showSubtitleTiming = false
+    @State private var showAudioTiming = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -61,6 +63,8 @@ struct ContentView: View {
                 Text("Beamly").font(.system(size: 12, weight: .semibold, design: .rounded))
             }
             Spacer()
+            Button { openWindow(id: "history") } label: { Image(systemName: "clock.arrow.circlepath").frame(width: 24, height: 25) }
+                .buttonStyle(.plain).help("Watch history").accessibilityLabel("Watch history")
             HStack(spacing: 7) {
                 if model.isExternal { Circle().fill(mint).frame(width: 5, height: 5).accessibilityHidden(true) }
                 Text("AirPlay").font(.system(size: 11, weight: .medium))
@@ -178,9 +182,11 @@ struct ContentView: View {
             Picker("Volume", selection: $model.volume) {
                 ForEach([0, 25, 50, 75, 100], id: \.self) { value in Text("\(value)%").tag(Double(value) / 100) }
             }
+            Button("Audio timing…") { showAudioTiming = true }.disabled(model.audioOptions.isEmpty)
         } label: { Image(systemName: model.volume == 0 ? "speaker.slash" : "speaker.wave.2").frame(width: 20) }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().disabled(model.isPreparing)
         .help("Audio and volume").accessibilityLabel("Audio and volume")
+        .popover(isPresented: $showAudioTiming) { AudioTimingView(model: model) }
     }
 
     private var subtitleMenu: some View {

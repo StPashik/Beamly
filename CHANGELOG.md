@@ -1,3 +1,13 @@
+# Unreleased
+
+- Add local watch history and Continue watching, retaining resume positions and timing corrections after queue removal.
+- Add per-video audio timing in 0.1-second steps, preserving original video/HDR during HLS remuxing and keeping seeks and subtitles on the source clock.
+- Add a native menu bar mini remote; closing the main window keeps playback available until Beamly is explicitly quit.
+- Add a sleep timer that stops playback and retains the resume position.
+- Translate the new controls into all five interface languages.
+
+---
+
 # Beamly 1.0.8
 
 **4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**

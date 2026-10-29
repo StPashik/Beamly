@@ -13,6 +13,8 @@ A native macOS player for sending local videos to Apple TV and other AirPlay rec
 - Native AirPlay device selection and a static thumbnail from the middle of the video.
 - Embedded chapter navigation and still-frame previews when hovering over or dragging the timeline.
 - A sleep timer that stops playback while keeping your resume position.
+- Local watch history and Continue watching, including videos removed from the queue.
+- Per-video audio timing correction and a mini remote in the macOS menu bar.
 - Direct playback of compatible MP4, M4V, and MOV files; quality-preserving 4K HEVC/H.264 remuxing from MKV, including supported HDR10/HLG streams.
 - Audio-track selection, embedded subtitles, and external SRT, ASS, SSA, and VTT files.
 - Saved audio and subtitle language preferences, applied to each video when opened.
@@ -104,7 +106,13 @@ Beamly finds SRT, ASS, SSA, and VTT files beside the video when their names matc
 
 In **Settings → Track preferences**, choose an audio language or **Original audio**, and a subtitle language or **Off**. These independent choices are saved across launches and applied when opening each video, including the next queue entry. Manual track changes affect the current video and survive seeking and subtitle timing changes. Missing preferred audio falls back to the file's default track; missing preferred subtitles stay off. **Original audio** requires an explicit original-track marker in the file; Beamly does not guess the original language. The initial **File default / Automatic** settings retain the adjacent-subtitle behavior above.
 
-Choose **Subtitles → Subtitle timing…** to move captions earlier or later in 0.5-second steps, or reset the correction. Positive values show subtitles later. Each movie's correction is saved with its queue entry and survives relaunches; removing that entry also removes its correction. Original video and subtitle files are never changed.
+Choose **Subtitles → Subtitle timing…** to move captions earlier or later in 0.5-second steps, or reset the correction. Positive values show subtitles later. Each movie's correction survives relaunches and is retained in watch history when its queue entry is removed. Original video and subtitle files are never changed.
+
+Choose **Audio → Audio timing…** from the speaker menu to move sound earlier or later in 0.1-second steps, up to ±10 seconds. Positive values delay audio. The correction is saved per video and survives seeks, track changes, queue removal, and relaunches while the movie remains in history. Nonzero corrections use HLS; compatible video keeps its original quality, resolution, and HDR metadata. Reset to zero to allow direct MP4 playback again. Audio outside the source's time range is silent; timing correction does not repair variable drift or guarantee receiver latency.
+
+Open **Watch history** from the clock icon in the header or the File menu. Choose a video under **Continue watching** to resume, or a completed video under **Watched** to restart. Adding a previously watched file also restores its saved position and timing. History retains up to 100 videos locally, independently of the queue, and migrates existing saved resume positions. **Clear** empties the queue; **Clear history** or **Remove from history** forgets history without deleting movies or changing the current queue. New playback or timing changes can add an active movie again. Missing or moved files must be added from their new location. Manual Stop resets the queue position while retaining the last history resume point.
+
+The **Beamly icon in the macOS menu bar** opens a mini remote with playback, skip, previous/next, volume, Stop, and sleep-timer controls. Closing the main window keeps Beamly and its current playback available there. Choose **Show Beamly** to reopen the window or **Quit Beamly** to exit. Play still requires an AirPlay receiver; without one, it opens the main window's device picker.
 
 Choose **Playback → Sleep Timer** or the timer icon beside the timeline to stop playback in 15, 30, 45, 60, 90, or 120 minutes. The active menu and icon tooltip show the remaining time; choose **Off** to cancel or another duration to restart the countdown. The timer continues while paused, seeking, changing tracks, or moving through the queue. On expiry, playback and preparation stop and your resume position is saved. Manual Stop, clearing the queue, removing its last entry, or quitting cancels the timer; timers are not restored on relaunch. If the app is suspended past the deadline, it applies the stop when it resumes.
 
