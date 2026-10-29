@@ -1,3 +1,11 @@
+# Unreleased
+
+- Check for signed updates at launch and periodically using Sparkle’s native install, remind-later, and skip-version window. Keep automatic checks quiet when no update is available or a connection fails.
+- Add an enabled-by-default automatic-check checkbox to Settings → Updates, backed by Sparkle’s persistent preference. Retain manual checks, explicit download/installation approval, and disabled system profiling.
+- Translate the new update setting and explanation into all five interface languages.
+
+---
+
 # Beamly 1.0.10
 
 **4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**

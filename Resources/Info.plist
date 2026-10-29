@@ -18,10 +18,10 @@
     <key>NSHighResolutionCapable</key><true/>
     <key>SUFeedURL</key><string>https://github.com/StPashik/Beamly/releases/latest/download/appcast.xml</string>
     <key>SUPublicEDKey</key><string>UcJ9MjrnF6NFPvE7mRfduLWSi+a4SQGcNWdJDOntyoc=</string>
-    <key>SUEnableAutomaticChecks</key><false/>
+    <key>SUEnableAutomaticChecks</key><true/>
     <key>SUAutomaticallyUpdate</key><false/>
     <key>SUAllowsAutomaticUpdates</key><false/>
-    <key>SUEnableSystemProfiling</key><false/>
+    <key>SUSendProfileInfo</key><false/>
     <key>SUVerifyUpdateBeforeExtraction</key><true/>
     <key>SURequireSignedFeed</key><true/>
     <key>NSLocalNetworkUsageDescription</key><string>Beamly sends the videos you choose to your Apple TV or TV via AirPlay.</string>
