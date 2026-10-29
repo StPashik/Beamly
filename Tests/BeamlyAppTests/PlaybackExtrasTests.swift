@@ -55,6 +55,9 @@ final class PlaybackExtrasTests: XCTestCase {
         XCTAssertTrue(model.isVideoCopied)
         XCTAssertEqual(model.audioID, 2)
         XCTAssertEqual(model.position, 7, accuracy: 0.15)
+        let correctedItem = player.currentItem
+        model.setAudioDelay(0.4000000000000001)
+        XCTAssertTrue(player.currentItem === correctedItem, "Rounding to the same correction must not rebuild playback")
         model.seek(1.5)
         try await ready(model)
         XCTAssertEqual(model.audioDelay, 0.4)
@@ -62,8 +65,10 @@ final class PlaybackExtrasTests: XCTestCase {
         try await ready(model)
         for value in [Double.nan, .infinity, 11, -11] { model.setAudioDelay(value) }
         XCTAssertEqual(model.audioDelay, -0.2)
-        model.setAudioDelay(0)
+        model.setAudioDelay(0.1 + 0.2 - 0.3)
         try await ready(model)
+        XCTAssertEqual(model.audioDelay, 0)
+        XCTAssertNil(model.current?.audioDelay, "Returning the native stepper to zero must remove the correction exactly")
         XCTAssertFalse(model.isUsingHLS, "Zero correction restores eligible direct playback")
         model.setAudioDelay(0.5)
         try await ready(model)

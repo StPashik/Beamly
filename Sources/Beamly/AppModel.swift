@@ -411,9 +411,12 @@ final class AppModel: ObservableObject {
     }
 
     func setAudioDelay(_ seconds: Double) {
-        guard seconds.isFinite, abs(seconds) <= 10, seconds != audioDelay,
+        guard seconds.isFinite, abs(seconds) <= 10 else { return }
+        // Quantize to the UI step so floating-point residue cannot leave a hidden correction.
+        let correction = (seconds * 10).rounded() / 10
+        guard correction != audioDelay,
               let index = playlist.items.firstIndex(where: { $0.id == playlist.currentID }) else { return }
-        playlist.items[index].audioDelay = seconds == 0 ? nil : seconds
+        playlist.items[index].audioDelay = correction == 0 ? nil : correction
         remember()
         if player.currentItem != nil || isPreparing { prepare(at: position, autoPlay: isPlaying || playRequested) }
     }
