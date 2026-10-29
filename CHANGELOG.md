@@ -1,10 +1,20 @@
-# Unreleased
+# Beamly 1.0.9
 
-- Add local watch history and Continue watching, retaining resume positions and timing corrections after queue removal.
-- Add per-video audio timing in 0.1-second steps, preserving original video/HDR during HLS remuxing and keeping seeks and subtitles on the source clock.
-- Add a native menu bar mini remote; closing the main window keeps playback available until Beamly is explicitly quit.
-- Add a sleep timer that stops playback and retains the resume position.
-- Translate the new controls into all five interface languages.
+**4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**
+
+Beamly adds watch history, per-video audio timing, a menu bar mini remote, and a sleep timer.
+
+- Open **Watch history** from the header's clock icon or the File menu. Continue unfinished videos or restart watched ones. Keep up to 100 videos locally, including resume positions and timing corrections after queue removal. Existing queue positions migrate automatically. History can be cleared independently without deleting movies or changing the active queue.
+- Choose **Audio timing…** in the speaker menu to move audio earlier or later in 0.1-second steps, from −10 to +10 seconds. Save the correction per video, retain it through seeks and track changes, and preserve compatible video packets, resolution, and HDR metadata. AAC and supported surround copy paths remain available. Resetting to zero restores eligible direct playback, including when the native stepper leaves floating-point residue.
+- Use the **Beamly icon in the macOS menu bar** for playback, skips, previous/next, volume, Stop, and the sleep timer. Closing the main window now keeps Beamly and playback available. Choose **Show Beamly** to reopen it, or **Quit Beamly** to exit. Play still requires an AirPlay receiver.
+- Set **Playback → Sleep Timer** for 15, 30, 45, 60, 90, or 120 minutes. The countdown spans pauses, seeks, track changes, and the queue. Expiry stops playback/preparation and keeps your resume point. Stop, clearing the queue, removing its last entry, or quitting cancels it; timers are not restored on relaunch.
+- Keep all new controls and help available in English, Russian, German, French, and Spanish.
+
+**Update:** choose **Beamly → Check for Updates…** or **Settings → Updates**. Your queue, timing corrections, and preferences are preserved. FFmpeg and FFprobe remain included for Apple Silicon and Intel.
+
+Audio timing applies a fixed offset; audio outside the source's time range is silent. Physical testing of the audio correction on an AirPlay receiver was not performed. Moved or renamed videos must be added from their new location. Dolby Vision remuxing is not supported. Bitmap subtitles require compatibility conversion; ASS styling is simplified. See [video quality and AirPlay](Docs/Media-Streaming.md) for supported profiles and verification limits.
+
+**This community build is ad-hoc signed and is not notarized by Apple.** Requires macOS 14 or later on Apple Silicon or Intel.
 
 ---
 
