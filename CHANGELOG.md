@@ -1,3 +1,23 @@
+# Beamly 1.0.8
+
+**4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**
+
+Beamly adds chapter navigation and still-frame previews above the playback timeline.
+
+- Choose embedded chapters from the chapter icon beside the timeline or **Playback → Chapters**. Show the current chapter, retain source titles, and number unnamed chapters. Files without chapters keep the menu disabled.
+- Hover over the timeline or drag its handle to see a source frame, time, and chapter title. Hovering keeps playback and saved positions unchanged; dragging seeks on release and preserves the paused or playing state. The main midpoint image stays static.
+- Match preview time to the native slider's thumb bounds, including the ends of long videos. Reuse native image generation and the bundled FFmpeg fallback, with cancellation, debounce, and a small per-video memory cache.
+- Keep chapter timestamps aligned with the original movie through direct playback and HLS buffer rebuilds. Retain native MP4/MOV chapter loading when probing fails, including chapters without a language tag. Ignore invalid chapter ranges and obsolete thumbnail results.
+- Fix the initialization filename for video-only HLS fragmented MP4. Translate chapter controls and preview messages into all five interface languages.
+
+**Update:** choose **Beamly → Check for Updates…** or **Settings → Updates**. Your queue, timing corrections, and preferences are preserved. FFmpeg and FFprobe remain included for Apple Silicon and Intel.
+
+Dolby Vision remuxing is not supported. Bitmap subtitles require compatibility conversion; ASS styling is simplified. See [video quality and AirPlay](Docs/Media-Streaming.md) for supported profiles and verification limits.
+
+**This community build is ad-hoc signed and is not notarized by Apple.** Requires macOS 14 or later on Apple Silicon or Intel.
+
+---
+
 # Beamly 1.0.7
 
 **4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**

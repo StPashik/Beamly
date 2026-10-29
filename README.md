@@ -11,6 +11,7 @@ A native macOS player for sending local videos to Apple TV and other AirPlay rec
 ## Features
 
 - Native AirPlay device selection and a static thumbnail from the middle of the video.
+- Embedded chapter navigation and still-frame previews when hovering over or dragging the timeline.
 - Direct playback of compatible MP4, M4V, and MOV files; quality-preserving 4K HEVC/H.264 remuxing from MKV, including supported HDR10/HLG streams.
 - Audio-track selection, embedded subtitles, and external SRT, ASS, SSA, and VTT files.
 - Saved audio and subtitle language preferences, applied to each video when opened.
@@ -46,17 +47,17 @@ When using Beamly 1.0.0, select the `ffmpeg-full` bin folder in Settings if it i
 
 ### Download
 
-1. Download `Beamly-1.0.7-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
+1. Download `Beamly-1.0.8-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
 2. Extract it and move **Beamly.app** to **Applications**, or to your personal `~/Applications` folder.
 3. See [First launch](#first-launch) before opening a downloaded build.
 
 To verify the app ZIP, download `SHA256SUMS` from the same release and run this in the download directory:
 
 ```sh
-awk '$2 == "Beamly-1.0.7-universal.zip"' SHA256SUMS | shasum -a 256 -c -
+awk '$2 == "Beamly-1.0.8-universal.zip"' SHA256SUMS | shasum -a 256 -c -
 ```
 
-The same checksum file also lists `Beamly-FFmpeg-Sources-1.0.7.tar.xz`, the complete corresponding source for the bundled media tools. If both archives are downloaded, `shasum -a 256 -c SHA256SUMS` verifies both.
+The same checksum file also lists `Beamly-FFmpeg-Sources-1.0.8.tar.xz`, the complete corresponding source for the bundled media tools. If both archives are downloaded, `shasum -a 256 -c SHA256SUMS` verifies both.
 
 ### Homebrew
 
@@ -74,7 +75,7 @@ The cask installs the universal app and verifies the archive's pinned SHA-256 ch
 With Node.js 18 or later and npm installed (omit `--allow-git=root` on npm 11 or earlier):
 
 ```sh
-npm install --global --allow-git=root github:StPashik/Beamly#v1.0.7
+npm install --global --allow-git=root github:StPashik/Beamly#v1.0.8
 beamly install
 beamly
 ```
@@ -116,6 +117,8 @@ Choose **Subtitles → Subtitle timing…** to move captions earlier or later in
 | ⌘, | Settings |
 
 The window stays 674 points wide. Resize its height or use the green button to zoom vertically. The preview shows a still frame from the middle of the source video; it does not play or follow the timeline.
+
+Hover over the timeline or drag its handle to see a small frame and source time. When the file contains chapters, the preview also shows the chapter title. Choose a chapter from the chapter icon beside the timeline or **Playback → Chapters**. Files without chapters keep that menu disabled; unnamed chapters use numbered labels. Hovering does not move playback or change your saved position. Dragging seeks when you release the handle and keeps the existing paused or playing state.
 
 The status beside the preview follows file inspection, stream preparation, subtitles, and loading. **Buffering…** appears when AVPlayer reports that it is waiting to avoid a playback stall; its brief initial buffer evaluation is shown as **Starting playback…**. Pause remains available while buffering. Without a connected receiver, the status asks you to choose an AirPlay device.
 
