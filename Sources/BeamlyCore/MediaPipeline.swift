@@ -30,6 +30,23 @@ public struct MediaTrack: Codable, Identifiable, Sendable, Equatable {
     }
 }
 
+public struct MediaChapter: Codable, Identifiable, Sendable, Equatable {
+    public let id: Int
+    public let start: Double
+    public let end: Double
+    public let title: String?
+
+    public init?(id: Int, start: Double, end: Double, title: String?, duration: Double) {
+        guard start.isFinite, end.isFinite, duration.isFinite, duration > 0,
+              start >= 0, start < duration, end > start else { return nil }
+        self.id = id
+        self.start = start
+        self.end = min(end, duration)
+        let title = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.title = title?.isEmpty == false ? title : nil
+    }
+}
+
 public struct MediaInfo: Codable, Sendable, Equatable {
     public let duration: Double
     public let width: Int
@@ -37,6 +54,8 @@ public struct MediaInfo: Codable, Sendable, Equatable {
     public let videoCodec: String?
     public let audioTracks: [MediaTrack]
     public let subtitleTracks: [MediaTrack]
+    // Optional so metadata encoded before chapter support still decodes.
+    public var chapters: [MediaChapter]?
     public var videoProfile: String?
     public var pixelFormat: String?
     public var videoLevel: Int?
@@ -63,13 +82,14 @@ public struct MediaInfo: Codable, Sendable, Equatable {
             (pixelFormat == nil || pixelFormat == "yuv420p") && (videoLevel ?? 0) <= 51
     }
 
-    public init(duration: Double, width: Int, height: Int, videoCodec: String?, audioTracks: [MediaTrack] = [], subtitleTracks: [MediaTrack] = []) {
+    public init(duration: Double, width: Int, height: Int, videoCodec: String?, audioTracks: [MediaTrack] = [], subtitleTracks: [MediaTrack] = [], chapters: [MediaChapter] = []) {
         self.duration = duration
         self.width = width
         self.height = height
         self.videoCodec = videoCodec
         self.audioTracks = audioTracks
         self.subtitleTracks = subtitleTracks
+        self.chapters = chapters
     }
 }
 
@@ -239,7 +259,7 @@ public struct FFmpegTools: Sendable {
         guard let executable = ffprobeURL else { throw MediaPipelineError.missingTool("ffprobe") }
         let output = try await ProcessRunner().run(executable: executable, arguments: [
             "-v", "error", "-show_entries",
-            "format=duration,start_time:stream=index,codec_type,codec_name,profile,pix_fmt,level,avg_frame_rate,color_transfer,color_primaries,color_space,width,height,channels,duration:stream_tags=language,title:stream_disposition=attached_pic,default,original,forced,comment:stream_side_data",
+            "format=duration,start_time:stream=index,codec_type,codec_name,profile,pix_fmt,level,avg_frame_rate,color_transfer,color_primaries,color_space,width,height,channels,duration:stream_tags=language,title:stream_disposition=attached_pic,default,original,forced,comment:stream_side_data:chapter=start_time,end_time:chapter_tags=title",
             "-of", "json", url.path
         ], outputLimit: 2 * 1024 * 1024)
         return try Self.decodeProbe(output.stdout)
@@ -303,8 +323,10 @@ public struct FFmpegTools: Sendable {
                 let side_data_list: [SideData]?
             }
             struct Format: Decodable { let duration: String?; let start_time: String? }
+            struct Chapter: Decodable { let start_time: String?; let end_time: String?; let tags: [String: String]? }
             let streams: [Stream]
             let format: Format?
+            let chapters: [Chapter]?
         }
         let probe = try JSONDecoder().decode(Probe.self, from: data)
         guard let video = probe.streams.first(where: { $0.codec_type == "video" && $0.disposition?["attached_pic"] != 1 }) else {
@@ -320,6 +342,10 @@ public struct FFmpegTools: Sendable {
         let duration = durations.first(where: { $0.isFinite && $0 > 0 }) ?? 0
         var info = MediaInfo(duration: duration, width: video.width ?? 0, height: video.height ?? 0,
                          videoCodec: video.codec_name, audioTracks: tracks("audio"), subtitleTracks: tracks("subtitle"))
+        info.chapters = (probe.chapters ?? []).enumerated().compactMap { index, chapter in
+            guard let start = chapter.start_time.flatMap(Double.init), let end = chapter.end_time.flatMap(Double.init) else { return nil }
+            return MediaChapter(id: index, start: start, end: end, title: chapter.tags?["title"], duration: duration)
+        }.sorted { $0.start == $1.start ? $0.id < $1.id : $0.start < $1.start }
         info.videoProfile = video.profile
         info.pixelFormat = video.pix_fmt
         info.videoLevel = video.level
@@ -649,9 +675,11 @@ public final class HLSJob {
             }
             args += ["-bsf:a", "noise=amount=0:drop=lt(pts*tb\\,\(keyTime - 0.1))"]
         }
+        // FFmpeg leaves %v literal in the initialization filename when there is only one variant.
+        let initialization = audio == nil ? "init_0.mp4" : "init_%v.mp4"
         args += ["-sn", "-dn", "-output_ts_offset", String(-keyTime), "-avoid_negative_ts", "make_zero", "-f", "hls", "-hls_segment_type", "fmp4",
                  "-hls_time", "6", "-hls_list_size", "0", "-hls_playlist_type", "event", "-hls_flags", "temp_file",
-                 "-hls_fmp4_init_filename", "init_%v.mp4", "-hls_segment_filename", "segment_%v_%06d.m4s",
+                 "-hls_fmp4_init_filename", initialization, "-hls_segment_filename", "segment_%v_%06d.m4s",
                  "-var_stream_map", variants, "stream_%v.m3u8"]
         return args
     }

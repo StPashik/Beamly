@@ -11,6 +11,7 @@ A native macOS player for sending local videos to Apple TV and other AirPlay rec
 ## Features
 
 - Native AirPlay device selection and a static thumbnail from the middle of the video.
+- Embedded chapter navigation and still-frame previews when hovering over or dragging the timeline.
 - Direct playback of compatible MP4, M4V, and MOV files; quality-preserving 4K HEVC/H.264 remuxing from MKV, including supported HDR10/HLG streams.
 - Audio-track selection, embedded subtitles, and external SRT, ASS, SSA, and VTT files.
 - Saved audio and subtitle language preferences, applied to each video when opened.
@@ -116,6 +117,8 @@ Choose **Subtitles → Subtitle timing…** to move captions earlier or later in
 | ⌘, | Settings |
 
 The window stays 674 points wide. Resize its height or use the green button to zoom vertically. The preview shows a still frame from the middle of the source video; it does not play or follow the timeline.
+
+Hover over the timeline or drag its handle to see a small frame and source time. When the file contains chapters, the preview also shows the chapter title. Choose a chapter from the chapter icon beside the timeline or **Playback → Chapters**. Files without chapters keep that menu disabled; unnamed chapters use numbered labels. Hovering does not move playback or change your saved position. Dragging seeks when you release the handle and keeps the existing paused or playing state.
 
 The status beside the preview follows file inspection, stream preparation, subtitles, and loading. **Buffering…** appears when AVPlayer reports that it is waiting to avoid a playback stall; its brief initial buffer evaluation is shown as **Starting playback…**. Pause remains available while buffering. Without a connected receiver, the status asks you to choose an AirPlay device.
 

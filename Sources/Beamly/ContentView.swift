@@ -153,16 +153,13 @@ struct ContentView: View {
             iconButton("forward.end.fill", title: "Next video", action: model.next)
                 .font(.system(size: 10))
             Text(mediaTime(scrubbing ? scrubPosition : model.position)).monospacedDigit().font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 43, alignment: .trailing)
-            Slider(value: Binding(get: { scrubbing ? scrubPosition : min(model.position, max(1, model.duration)) }, set: { scrubPosition = $0 }), in: 0...max(1, model.duration), onEditingChanged: { editing in
-                if editing { scrubPosition = model.position; scrubbing = true }
-                else { scrubbing = false; model.seek(scrubPosition) }
-            })
-            .controlSize(.mini).disabled(model.isPreparing || model.duration <= 0)
-            .accessibilityLabel("Playback position")
+            SeekTimeline(model: model, scrubbing: $scrubbing, position: $scrubPosition)
             Text("−" + mediaTime(max(0, model.duration - (scrubbing ? scrubPosition : model.position))))
                 .monospacedDigit().font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 48, alignment: .leading)
             audioMenu
             subtitleMenu
+            ChapterMenu(model: model).labelStyle(.iconOnly)
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         }
         .padding(.horizontal, 16).frame(height: 54)
         .modifier(GlassSurface(cornerRadius: 18))
@@ -306,6 +303,109 @@ struct ContentView: View {
             if !urls.isEmpty { model.add(urls) }
         }
         return true
+    }
+}
+
+struct ChapterMenu: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        Menu {
+            ForEach(model.chapters) { chapter in
+                Button { model.seekChapter(chapter.id) } label: {
+                    Label("\(mediaTime(chapter.start))  \(model.chapterTitle(chapter))",
+                          systemImage: model.chapter(at: model.position)?.id == chapter.id ? "checkmark" : "")
+                }
+            }
+        } label: { Label("Chapters", systemImage: "list.bullet.rectangle") }
+        .disabled(model.isPreparing || model.chapters.isEmpty)
+        .help("Chapters").accessibilityLabel("Chapters")
+    }
+}
+
+struct SeekTimeline: View {
+    @ObservedObject var model: AppModel
+    @Binding var scrubbing: Bool
+    @Binding var position: Double
+    @State private var hoveredPosition: Double?
+
+    private var previewPosition: Double? {
+        guard !model.isPreparing, model.duration > 0 else { return nil }
+        return scrubbing ? position : hoveredPosition
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            Slider(value: Binding(get: { scrubbing ? position : min(model.position, max(1, model.duration)) }, set: { position = $0 }),
+                   in: 0...max(1, model.duration), onEditingChanged: { editing in
+                if editing { position = model.position; scrubbing = true }
+                else {
+                    guard scrubbing else { return }
+                    if hoveredPosition != nil { hoveredPosition = position }
+                    scrubbing = false
+                    model.seek(position)
+                }
+            })
+            .controlSize(.mini)
+            .accessibilityLabel("Playback position")
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let point): hoveredPosition = Self.time(at: point.x, width: geometry.size.width, duration: model.duration)
+                case .ended: hoveredPosition = nil
+                }
+            }
+            .overlay(alignment: .bottomLeading) {
+                if previewPosition != nil, let seconds = model.seekPreviewTime {
+                    SeekPreview(model: model, seconds: seconds)
+                        .offset(x: Self.previewOrigin(at: seconds, width: geometry.size.width, duration: model.duration), y: -24)
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                }
+            }
+        }
+        .frame(height: 16)
+        .disabled(model.isPreparing || model.duration <= 0)
+        .onChange(of: previewPosition) { _, seconds in model.requestSeekPreview(seconds) }
+        .onChange(of: model.current?.id) { _, _ in hoveredPosition = nil; scrubbing = false }
+        .onChange(of: model.isPreparing) { _, preparing in
+            if preparing { hoveredPosition = nil; scrubbing = false }
+        }
+        .onDisappear { model.requestSeekPreview(nil) }
+    }
+
+    static func time(at x: CGFloat, width: CGFloat, duration: Double) -> Double? {
+        guard x.isFinite, width.isFinite, width > 0, duration.isFinite, duration > 0 else { return nil }
+        return min(1, max(0, x / width)) * duration
+    }
+
+    static func previewOrigin(at seconds: Double, width: CGFloat, duration: Double) -> CGFloat {
+        guard seconds.isFinite, width.isFinite, duration.isFinite, duration > 0 else { return 0 }
+        return min(max(0, width - 160), max(0, seconds / duration * width - 80))
+    }
+}
+
+struct SeekPreview: View {
+    @ObservedObject var model: AppModel
+    let seconds: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack {
+                if let image = model.seekPreviewImage { Image(nsImage: image).resizable().scaledToFit() }
+                else if model.isLoadingSeekPreview { ProgressView().controlSize(.small) }
+                else { Text("Preview unavailable").font(.system(size: 10)).foregroundStyle(Color(nsColor: .secondaryLabelColor)) }
+            }
+            .frame(width: 144, height: 81)
+            .background(.primary.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 7))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(mediaTime(seconds)).monospacedDigit().font(.system(size: 10, weight: .semibold)).foregroundStyle(Color(nsColor: .labelColor))
+                if let chapter = model.chapter(at: seconds) {
+                    Text(model.chapterTitle(chapter)).font(.system(size: 10)).foregroundStyle(Color(nsColor: .secondaryLabelColor)).lineLimit(1)
+                }
+            }
+        }
+        .padding(8).frame(width: 160, alignment: .leading)
+        .modifier(GlassSurface(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.15), radius: 10, y: 3)
     }
 }
 

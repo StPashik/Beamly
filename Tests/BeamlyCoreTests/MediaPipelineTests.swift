@@ -43,6 +43,20 @@ final class MediaPipelineTests: XCTestCase {
         XCTAssertEqual(info.duration, 0)
     }
 
+    func testChapterMetadataValidatesRangesAndKeepsOlderMetadataDecodable() throws {
+        let data = Data(#"{"streams":[{"index":0,"codec_type":"video"}],"format":{"duration":"10"},"chapters":[{"start_time":"5","end_time":"20","tags":{"title":"  Finale  "}},{"start_time":"0","end_time":"5","tags":{"title":"  "}},{"start_time":"-1","end_time":"2"},{"start_time":"NaN","end_time":"3"},{"start_time":"2","end_time":"Infinity"},{"start_time":"4","end_time":"3"},{"start_time":"10","end_time":"12"},{"end_time":"3"}]}"#.utf8)
+        let info = try FFmpegTools.decodeProbe(data)
+        let chapters = try XCTUnwrap(info.chapters)
+        XCTAssertEqual(chapters.count, 2)
+        XCTAssertEqual(chapters.map(\.start), [0, 5])
+        XCTAssertEqual(chapters.map(\.end), [5, 10])
+        XCTAssertNil(chapters[0].title)
+        XCTAssertEqual(chapters[1].title, "Finale")
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(info)) as? [String: Any])
+        legacy.removeValue(forKey: "chapters")
+        XCTAssertNil(try JSONDecoder().decode(MediaInfo.self, from: JSONSerialization.data(withJSONObject: legacy)).chapters)
+    }
+
     @MainActor
     func testAV1InputCanUseSoftwareH264CompatibilityConversion() async throws {
         let tools = mediaTestTools()
