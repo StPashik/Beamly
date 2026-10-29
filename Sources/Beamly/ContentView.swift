@@ -3,7 +3,7 @@ import BeamlyCore
 import SwiftUI
 import UniformTypeIdentifiers
 
-private let beamlyAccent = NSColor(name: "BeamlyAccent") { appearance in
+let beamlyAccent = NSColor(name: "BeamlyAccent") { appearance in
     appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         ? NSColor(red: 0.26, green: 0.78, blue: 0.62, alpha: 1)
         : NSColor(red: 0.02, green: 0.43, blue: 0.31, alpha: 1)
@@ -179,13 +179,10 @@ struct ContentView: View {
                 Button { model.setAudio(track.id) } label: { Label(track.title, systemImage: model.audioID == track.id ? "checkmark" : "") }
             }
             Divider()
-            Picker("Volume", selection: $model.volume) {
-                ForEach([0, 25, 50, 75, 100], id: \.self) { value in Text("\(value)%").tag(Double(value) / 100) }
-            }
             Button("Audio timing…") { showAudioTiming = true }.disabled(model.audioOptions.isEmpty)
-        } label: { Image(systemName: model.volume == 0 ? "speaker.slash" : "speaker.wave.2").frame(width: 20) }
+        } label: { Image(systemName: "waveform").frame(width: 20) }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().disabled(model.isPreparing)
-        .help("Audio and volume").accessibilityLabel("Audio and volume")
+        .help("Audio tracks").accessibilityLabel("Audio tracks")
         .popover(isPresented: $showAudioTiming) { AudioTimingView(model: model) }
     }
 

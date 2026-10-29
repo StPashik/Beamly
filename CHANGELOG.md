@@ -1,3 +1,12 @@
+# Unreleased
+
+- Preserve the selected AirPlay route and playback intent while replacing audio/subtitle streams and seeking; prepare a selected receiver before requesting device selection. Playback remains blocked without an active external route.
+- Remove volume controls throughout Beamly and Stop from the menu bar mini remote. Receiver volume is controlled on the receiver.
+- Match watch history to Beamly's compact window controls, translucent background, adaptive accent, and glass panels.
+- Add simulated route-handoff, disconnection, cancellation, and native-window regression checks. These are not physical receiver validation.
+
+---
+
 # Beamly 1.0.9
 
 **4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**

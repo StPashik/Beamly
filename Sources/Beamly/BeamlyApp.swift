@@ -61,7 +61,10 @@ struct BeamlyApp: App {
             WatchHistoryView(model: model)
                 .environment(\.locale, Locale(identifier: language.rawValue))
                 .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
-        }.defaultSize(width: 520, height: 400)
+        }
+        .defaultSize(width: 674, height: 460)
+        .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
         MenuBarExtra("Beamly", systemImage: "play.rectangle") {
             MenuBarRemote(model: model)
                 .environment(\.locale, Locale(identifier: language.rawValue))

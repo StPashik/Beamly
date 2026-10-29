@@ -48,6 +48,10 @@ The playback status reports actual preparation stages: inspecting the file, prep
 
 During playback, Beamly observes both AVPlayer's `timeControlStatus` and `reasonForWaitingToPlay`. It reports **Buffering…** only for `waitingToPlayAtSpecifiedRate` with `toMinimizeStalls`; the initial `evaluatingBufferingRate` phase is distinguished from a stall. This identifies the player's waiting state, without attributing it to Wi-Fi or conversion speed. Pause remains available while waiting, and disconnecting AirPlay still pauses playback. Cancellation and new-file selection clear preparation, quality, and retry messages; callbacks from an older load are ignored.
 
+During an item replacement, the retained AVPlayer keeps its paused current item and the old stream available until the new item is ready and its source position has been restored. This avoids clearing the selected AirPlay route between audio/subtitle changes, seeks, and queue transitions. Superseded preparation is cancelled; Stop and shutdown also revoke the retained stream.
+
+AVPlayer.isExternalPlaybackActive describes active external video playback, not a stored route choice. When Play is requested without that signal, Beamly primes the ready player with preroll(atRate:) at rate zero and waits up to three seconds for AirPlay activation before presenting the picker. It calls play() only with a confirmed external route. Genuine disconnection during established playback pauses and clears play intent; a temporary route transition during preparation does not discard that intent. Receiver reconnection timing still needs physical validation.
+
 ## Chapters and seek previews
 
 FFprobe reads chapter titles and start/end times from the original file. Invalid and nonfinite ranges are ignored, valid ends are limited to the movie duration, and chapters are shown in source-time order. Playable MP4/MOV files retain a native AVFoundation chapter-loading fallback when FFprobe cannot inspect them, including chapters without a language tag. Files without chapters are not given synthetic ones.
@@ -68,7 +72,9 @@ Expiry saves the current source position and uses the existing playback cancella
 
 Watch history is an optional, bounded list in the existing atomically written playlist JSON; old queues seed it from valid resume positions. It keeps source URLs, positions, durations, timing corrections, and last-viewed dates on this Mac. Queue removal and clearing preserve it. Re-adding a known URL restores its values without reusing the old queue UUID. Completed entries restart through the existing near-end resume rule. Clearing history preserves the current queue and is not undone by an unchanged paused session at shutdown; subsequent viewing or timing changes can record the movie again. The limit is 100 videos, keyed by standardized file URL; renamed or moved files need to be added again.
 
-The native SwiftUI `MenuBarExtra` shares the app's retained `AppModel` and `AVPlayer`. Closing the last window no longer quits; the mini remote can reopen the main window or explicitly quit. Play without an external route reopens the main window for its existing native AirPlay picker. No second player, global keyboard hooks, or local-network control API is introduced.
+History reuses the main window's compact custom controls, fixed width, translucent background, adaptive accent, and GlassSurface panels, including the reduced-transparency fallback.
+
+The native SwiftUI `MenuBarExtra` shares the app's retained `AppModel` and `AVPlayer`. Closing the last window no longer quits; the mini remote can reopen the main window or explicitly quit. Play without an external route reopens the main window for its existing native AirPlay picker. Volume is controlled on the receiver; the mini remote offers playback, skips, queue navigation, and the sleep timer. Manual Stop remains in the Playback menu. No second player, global keyboard hooks, or local-network control API is introduced.
 
 ## Verification
 
@@ -84,13 +90,16 @@ Automated checks use generated media, never personal movies:
 - generated MP4/MKV chapters, chapter seeks across HLS buffer rebuilds, still-frame timestamps, and thumbnail cancellation without moving the player.
 - timer replacement/cancellation, expiry during HLS playback and preparation, saved-position restoration, and rejection of late queue-advance callbacks.
 - signed audio corrections with AAC and surround, original 4K frame/HDR metadata preservation, caption clocks, conversion, source-duration bounds, and seeks beyond shifted audio.
-- history migration, completed-video restart, queue removal/re-addition, persisted history clearing, and shared mini-remote volume/window lifecycle.
+- history migration, completed-video restart, queue removal/re-addition, persisted history clearing, and shared mini-remote controls/window lifecycle.
 
 These checks do not certify physical AirPlay output, HDR display activation, every Dolby profile, Wi-Fi performance, or every receiver. Validate those on an Apple TV 4K and an HDR-capable display before describing hardware compatibility as confirmed.
 
 The native 4K frame test uses HDR only when AVPlayer reports HDR eligibility, otherwise 4K SDR. HDR10/HLG metadata and decoded-frame preservation are always checked by FFmpeg. `BEAMLY_TEST_TOOLS_DIRECTORY=/absolute/path/to/tools Scripts/test.sh` runs the 4K fixtures against an isolated FFmpeg/ffprobe installation without replacing system tools.
 
 ## References
+
+- [Apple external playback state](https://developer.apple.com/documentation/avfoundation/avplayer/isexternalplaybackactive): active playback rather than stored device selection.
+- [Apple player preroll](https://developer.apple.com/documentation/avfoundation/avplayer/preroll(atrate:completionhandler:)): preparing a ready player while its rate is zero.
 
 - [Apple menu bar extras](https://developer.apple.com/documentation/swiftui/menubarextra): native menu bar scenes sharing the app model.
 - [FFmpeg input options](https://ffmpeg.org/ffmpeg.html#Main-options): per-input seeking and timestamp offsets.
