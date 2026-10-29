@@ -23,7 +23,7 @@ A native macOS player for sending local videos to Apple TV and other AirPlay rec
 - A persistent queue with resume positions, drag reordering, shuffle, repeat, and keyboard controls.
 - Light and dark appearance, custom window controls, and Liquid Glass panels on macOS 26 or later. Earlier supported versions use standard translucent materials.
 - English, Russian, German, French, and Spanish interfaces, selectable in Settings. English is the default.
-- Manual update checks and installation through Sparkle, with signed update feeds and archives.
+- Automatic update checks at launch and periodically, with install/later/skip choices, a Settings toggle, and signed Sparkle feeds and archives.
 - No accounts, subscriptions, analytics, or bundled video content.
 
 Chromecast is not supported. See [video quality and AirPlay](Docs/Media-Streaming.md) for supported profiles, subtitles, audio, and verification limits.
@@ -50,17 +50,17 @@ When using Beamly 1.0.0, select the `ffmpeg-full` bin folder in Settings if it i
 
 ### Download
 
-1. Download `Beamly-1.0.10-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
+1. Download `Beamly-1.0.11-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
 2. Extract it and move **Beamly.app** to **Applications**, or to your personal `~/Applications` folder.
 3. See [First launch](#first-launch) before opening a downloaded build.
 
 To verify the app ZIP, download `SHA256SUMS` from the same release and run this in the download directory:
 
 ```sh
-awk '$2 == "Beamly-1.0.10-universal.zip"' SHA256SUMS | shasum -a 256 -c -
+awk '$2 == "Beamly-1.0.11-universal.zip"' SHA256SUMS | shasum -a 256 -c -
 ```
 
-The same checksum file also lists `Beamly-FFmpeg-Sources-1.0.10.tar.xz`, the complete corresponding source for the bundled media tools. If both archives are downloaded, `shasum -a 256 -c SHA256SUMS` verifies both.
+The same checksum file also lists `Beamly-FFmpeg-Sources-1.0.11.tar.xz`, the complete corresponding source for the bundled media tools. If both archives are downloaded, `shasum -a 256 -c SHA256SUMS` verifies both.
 
 ### Homebrew
 
@@ -78,7 +78,7 @@ The cask installs the universal app and verifies the archive's pinned SHA-256 ch
 With Node.js 18 or later and npm installed (omit `--allow-git=root` on npm 11 or earlier):
 
 ```sh
-npm install --global --allow-git=root github:StPashik/Beamly#v1.0.10
+npm install --global --allow-git=root github:StPashik/Beamly#v1.0.11
 beamly install
 beamly
 ```
@@ -141,7 +141,9 @@ The quality line distinguishes direct/original-quality delivery from **compatibi
 
 Open **Beamly → Settings → Language** to choose English, Russian, German, French, or Spanish. Restart Beamly to apply the selection to the interface and native dialogs. English is used on first launch, regardless of the system language. Your queue and preferences are preserved.
 
-Choose **Beamly → Check for Updates…** or use the same button in **Settings → Updates**. Sparkle checks the latest GitHub release, verifies the signed feed and archive, and offers to download, install, and relaunch. Checks and installations only start when you request them.
+Beamly checks for signed updates when it starts and periodically while it runs (normally once a day). If a newer version is available, Sparkle offers **Install Update**, **Remind Me Later**, and **Skip This Version**. Remind Me Later dismisses the window until the next check, including the next launch; Skip This Version suppresses that version in automatic checks. Automatic checks stay quiet when there is no update or the network is unavailable.
+
+**Settings → Updates → Check for updates automatically** is enabled by default. Turn it off to disable subsequent automatic checks; the choice survives relaunches. **Beamly → Check for Updates…** and the matching Settings button remain available and can find a previously skipped version. Downloads and installation require your choice to install. Feed/archive signatures and the existing trusted key are retained; system profiling and automatic downloading/installation are disabled.
 
 The updater is included starting with **1.0.1**. Users of 1.0.0 must install 1.0.1 or later through the ZIP, Homebrew, or npm first. Homebrew users can also run:
 

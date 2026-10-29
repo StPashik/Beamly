@@ -37,7 +37,9 @@ Beamly 1.0.1 embeds the public Ed25519 key in SUPublicEDKey. The private key was
 
 Do not generate a replacement key for each release. Future updates must use the same key trusted by installed apps. Losing it prevents existing ad-hoc builds from accepting further in-app updates. Key rotation requires a planned migration; changing only the public key in the next release does not update the trust held by older installs.
 
-The manual updater reads https://github.com/StPashik/Beamly/releases/latest/download/appcast.xml. Both the XML feed and ZIP are signed. Automatic checks, background installs, and system profiling are disabled. Version 1.0.0 has no updater and needs one manual upgrade to 1.0.1 or later.
+The updater reads https://github.com/StPashik/Beamly/releases/latest/download/appcast.xml. Both the XML feed and ZIP are signed. Automatic checks are enabled by default at launch and on Sparkle’s regular schedule; Settings → Updates can disable them, and manual checks remain available. Sparkle owns the persistent opt-out, skipped-version handling, scheduling, and native install/later/skip window. Downloads and installation require user confirmation; automatic downloads/installs and system profiling remain disabled. Remind Me Later defers to the next check, including a subsequent launch. Version 1.0.0 has no updater and needs one manual upgrade to 1.0.1 or later.
+
+When testing update discovery, use an isolated bundle identifier and application directory. Disable automatic checks in probe apps that explicitly initiate their own check to avoid overlapping Sparkle sessions; do not change the installed application or its preferences. See [Sparkle’s programmatic setup](https://sparkle-project.org/documentation/programmatic-setup/) for the startup-only background-check API and [update settings](https://sparkle-project.org/documentation/customization/) for persistent preferences.
 
 ## GitHub Actions
 

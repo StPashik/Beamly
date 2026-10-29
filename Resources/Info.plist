@@ -10,18 +10,18 @@
     <key>CFBundleExecutable</key><string>Beamly</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.0.10</string>
-    <key>CFBundleVersion</key><string>11</string>
+    <key>CFBundleShortVersionString</key><string>1.0.11</string>
+    <key>CFBundleVersion</key><string>12</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.video</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>SUFeedURL</key><string>https://github.com/StPashik/Beamly/releases/latest/download/appcast.xml</string>
     <key>SUPublicEDKey</key><string>UcJ9MjrnF6NFPvE7mRfduLWSi+a4SQGcNWdJDOntyoc=</string>
-    <key>SUEnableAutomaticChecks</key><false/>
+    <key>SUEnableAutomaticChecks</key><true/>
     <key>SUAutomaticallyUpdate</key><false/>
     <key>SUAllowsAutomaticUpdates</key><false/>
-    <key>SUEnableSystemProfiling</key><false/>
+    <key>SUSendProfileInfo</key><false/>
     <key>SUVerifyUpdateBeforeExtraction</key><true/>
     <key>SURequireSignedFeed</key><true/>
     <key>NSLocalNetworkUsageDescription</key><string>Beamly sends the videos you choose to your Apple TV or TV via AirPlay.</string>

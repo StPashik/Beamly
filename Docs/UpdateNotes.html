@@ -1,17 +1,16 @@
 <p><strong>4K/HDR over AirPlay has not been tested on physical receivers.
 Playback may be unstable or incompatible with some devices or network configurations.</strong></p>
-<p><strong>AirPlay reconnection and interface fixes.</strong> Keep the selected receiver while preparing a video or changing audio/subtitles.
-Retain the source position and request to continue playback across stream rebuilds and seeks. A genuine disconnection pauses playback.</p>
-<p>An already selected route is prepared before requesting device selection. If it does not become active within three seconds,
-a manual Play request opens the native AirPlay picker. Playback remains blocked without an active external route; Pause and Stop cancel pending preparation.
-Physical receiver retesting of these fixes is still required; reconnection is not guaranteed on every device or network.</p>
-<p>Volume controls have been removed throughout Beamly; use your TV, receiver, or its remote.
-The menu bar mini remote no longer includes Stop, while playback, skips, previous/next, and the sleep timer remain.
-Choose audio tracks and per-video timing in the audio menu; manual Stop remains in the Playback menu.</p>
-<p><strong>Watch history</strong> now matches Beamly's compact custom window controls, fixed width, translucent background, adaptive accent, and glass panels.
-Continue watching, watched videos, and history management remain available. Reduced transparency and earlier macOS material fallbacks are retained.</p>
-<p>All five interface languages are complete. Your queue, history, resume positions, timing corrections, and preferences are preserved.
-Original videos and subtitle files are never changed. FFmpeg and ffprobe remain included for Apple Silicon and Intel.</p>
-<p>Physical testing of audio timing correction was not performed. Dolby Vision remuxing is not supported.
-Bitmap subtitles require compatibility conversion; ASS styling is simplified. This community build is ad-hoc signed and is not notarized by Apple.
-See the full release notes for verification limits.</p>
+<p><strong>Automatic update checks and a Settings checkbox.</strong> Beamly checks for signed updates at startup and periodically while it runs, normally once a day.
+Automatic checks stay quiet when no newer version is available or the network is unavailable.</p>
+<p>The native update window offers <strong>Install Update</strong>, <strong>Remind Me Later</strong>, and <strong>Skip This Version</strong>.
+Remind Me Later dismisses the window until the next check, including the next launch. Skip This Version suppresses that version in automatic checks;
+a manual check can still find it.</p>
+<p><strong>Settings → Updates → Check for updates automatically</strong> is enabled by default. Turning it off disables subsequent automatic checks,
+and the choice survives relaunches. Manual checks remain available. Downloads and installation require your explicit choice to install;
+automatic downloads/installs and system profiling remain disabled. Signed feeds, archive verification, and the existing trusted key are retained.</p>
+<p>The new setting and explanation are available in all five interface languages. Your queue, history, resume positions, timing corrections,
+and preferences are preserved. Original videos and subtitles are never changed. FFmpeg and ffprobe remain included for Apple Silicon and Intel.</p>
+<p>Startup checking becomes available after upgrading to 1.0.11. Update choices and preference persistence were checked in isolated applications;
+this does not certify physical AirPlay output. Receiver retesting of the existing reconnection fixes and audio timing correction is still required.
+Dolby Vision remuxing is not supported. Bitmap subtitles require compatibility conversion; ASS styling is simplified.
+This community build is ad-hoc signed and is not notarized by Apple. See the full release notes for verification limits.</p>

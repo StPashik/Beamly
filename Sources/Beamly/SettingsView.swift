@@ -85,9 +85,10 @@ struct SettingsView: View {
                 LabeledContent("Version") {
                     Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
                 }
+                Toggle("Check for updates automatically", isOn: Binding(get: { updater.automaticallyChecksForUpdates }, set: updater.setAutomaticallyChecksForUpdates))
                 Button("Check for Updates…", action: updater.checkForUpdates)
                     .disabled(!updater.canCheckForUpdates)
-                Text("New versions are downloaded from GitHub and installed after your confirmation.")
+                Text("Checks at launch and periodically. Updates are downloaded and installed only after you choose Install.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

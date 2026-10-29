@@ -2279,40 +2279,6 @@
         }
       }
     },
-    "New versions are downloaded from GitHub and installed after your confirmation.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "New versions are downloaded from GitHub and installed after your confirmation."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Новые версии загружаются с GitHub и устанавливаются после подтверждения."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Neue Versionen werden von GitHub geladen und nach Ihrer Bestätigung installiert."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Les nouvelles versions sont téléchargées depuis GitHub et installées après votre confirmation."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Las nuevas versiones se descargan de GitHub y se instalan tras tu confirmación."
-          }
-        }
-      }
-    },
     "Folder containing ffmpeg and ffprobe": {
       "localizations": {
         "en": {
@@ -5199,6 +5165,74 @@
           "stringUnit": {
             "state": "translated",
             "value": "Pistas de audio"
+          }
+        }
+      }
+    },
+    "Check for updates automatically": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check for updates automatically"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверять обновления автоматически"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatisch nach Updates suchen"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rechercher automatiquement les mises à jour"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Buscar actualizaciones automáticamente"
+          }
+        }
+      }
+    },
+    "Checks at launch and periodically. Updates are downloaded and installed only after you choose Install.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checks at launch and periodically. Updates are downloaded and installed only after you choose Install."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверка при запуске и периодически во время работы. Скачивание и установка начинаются только после нажатия «Установить»."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prüft beim Start und regelmäßig. Updates werden erst heruntergeladen und installiert, wenn du „Installieren“ wählst."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vérification au démarrage, puis régulièrement. Le téléchargement et l’installation commencent uniquement après avoir choisi « Installer »."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se comprueba al iniciar y periódicamente. Las actualizaciones solo se descargan e instalan cuando eliges «Instalar»."
           }
         }
       }
