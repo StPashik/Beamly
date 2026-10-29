@@ -2,6 +2,46 @@ import XCTest
 @testable import BeamlyCore
 
 final class PlaylistTests: XCTestCase {
+    func testWatchHistorySurvivesQueueRemovalAndKeepsPerVideoCorrections() throws {
+        var playlist = Playlist()
+        let movie = URL(fileURLWithPath: "/tmp/Movie.mkv")
+        playlist.append([movie])
+        playlist.remember(position: 42, duration: 120)
+        playlist.items[0].audioDelay = -0.4
+        playlist.items[0].subtitleDelay = 1.5
+        let date = Date(timeIntervalSince1970: 1_000)
+        playlist.recordHistory(try XCTUnwrap(playlist.current), at: date)
+        playlist.remove(try XCTUnwrap(playlist.currentID))
+        playlist = try JSONDecoder().decode(Playlist.self, from: JSONEncoder().encode(playlist))
+        XCTAssertTrue(playlist.items.isEmpty)
+        XCTAssertEqual(playlist.history?.first?.watchedAt, date)
+        XCTAssertFalse(try XCTUnwrap(playlist.history?.first).isFinished)
+        playlist.append([URL(fileURLWithPath: "/tmp/./Movie.mkv")])
+        XCTAssertEqual(playlist.current?.position, 42)
+        XCTAssertEqual(playlist.current?.audioDelay, -0.4)
+        XCTAssertEqual(playlist.current?.subtitleDelay, 1.5)
+        playlist.remember(position: 120, duration: 120)
+        playlist.recordHistory(try XCTUnwrap(playlist.current))
+        XCTAssertEqual(playlist.history?.count, 1)
+        XCTAssertTrue(try XCTUnwrap(playlist.history?.first).isFinished)
+        for index in 0..<105 {
+            var item = PlaylistItem(url: URL(fileURLWithPath: "/tmp/\(index).mp4"))
+            item.position = 5; item.duration = 100
+            playlist.recordHistory(item)
+        }
+        XCTAssertEqual(playlist.history?.count, 100)
+        XCTAssertEqual(playlist.history?.first?.video.title, "104")
+        let history = playlist.history
+        var invalid = PlaylistItem(url: movie)
+        for value in [Double.nan, .infinity, -1] {
+            invalid.position = value; invalid.duration = 100
+            playlist.recordHistory(invalid)
+        }
+        XCTAssertEqual(playlist.history, history)
+        playlist.history = []
+        XCTAssertEqual(playlist.current?.position, 120, "Clearing history must preserve the active queue")
+    }
+
     func testSubtitleFilesMatchOnlyReadableNeighboursAndPreferExactBasename() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-subtitles-\(UUID())")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

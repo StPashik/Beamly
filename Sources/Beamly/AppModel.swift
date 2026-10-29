@@ -33,6 +33,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var seekPreviewImage: NSImage?
     @Published private(set) var seekPreviewTime: Double?
     @Published private(set) var isLoadingSeekPreview = false
+    @Published private(set) var sleepTimerRemaining: Double?
     @Published private(set) var audioOptions: [TrackOption] = []
     @Published private(set) var subtitleOptions: [TrackOption] = []
     @Published private(set) var audioID: Int?
@@ -51,6 +52,7 @@ final class AppModel: ObservableObject {
     private var preparation: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
     private var seekPreviewTask: Task<Void, Never>?
+    private var sleepTimerTask: Task<Void, Never>?
     private let seekPreviewCache = NSCache<NSNumber, NSImage>()
     private var playRequested = false
     private var loadID = UUID()
@@ -62,6 +64,7 @@ final class AppModel: ObservableObject {
     // HLS starts at local time zero; the UI still shows the position in the original movie.
     private var sourceOffset = 0.0
     private var lastSavedSecond = -1
+    private var lastHistoryItem: PlaylistItem?
     private var activity: NSObjectProtocol?
     private var directAudioGroup: AVMediaSelectionGroup?
     private var subtitleGroup: AVMediaSelectionGroup?
@@ -86,6 +89,7 @@ final class AppModel: ObservableObject {
         restore()
         duration = playlist.current?.duration ?? 0
         position = playlist.current?.position ?? 0
+        lastHistoryItem = playlist.current
         player.allowsExternalPlayback = true
         routeDetector.isRouteDetectionEnabled = true
         observations = [
@@ -128,6 +132,7 @@ final class AppModel: ObservableObject {
                 let second = Int(self.position)
                 if second % 5 == 0 && second != self.lastSavedSecond {
                     self.lastSavedSecond = second
+                    if self.isPlaying { self.rememberHistory() }
                     self.save()
                     self.updateNowPlaying()
                 }
@@ -138,6 +143,9 @@ final class AppModel: ObservableObject {
     }
 
     var current: PlaylistItem? { playlist.current }
+    var sleepTimerDescription: String? {
+        sleepTimerRemaining.map { String(format: NSLocalizedString("Stop playback in %@", comment: ""), mediaTime(ceil($0))) }
+    }
     var chapters: [MediaChapter] { info?.chapters ?? [] }
     func chapter(at seconds: Double) -> MediaChapter? {
         guard seconds.isFinite else { return nil }
@@ -151,6 +159,32 @@ final class AppModel: ObservableObject {
         seek(chapter.start)
     }
     var subtitleDelay: Double { current?.subtitleDelay ?? 0 }
+    var audioDelay: Double { current?.audioDelay ?? 0 }
+    var watchHistory: [WatchHistoryEntry] { playlist.history ?? [] }
+
+    func resumeHistory(_ url: URL) {
+        remember()
+        guard let saved = watchHistory.first(where: { $0.id == url }),
+              url.isFileURL, FileManager.default.isReadableFile(atPath: url.path) else {
+            errorMessage = String(format: NSLocalizedString("File not found or inaccessible: %@", comment: ""), url.lastPathComponent)
+            return
+        }
+        let wasEmpty = playlist.items.isEmpty
+        playlist.append([url])
+        if wasEmpty {
+            position = playlist.current?.position ?? 0
+            duration = playlist.current?.duration ?? 0
+        }
+        guard let index = playlist.items.firstIndex(where: { $0.url == url }) else { return }
+        select(playlist.items[index].id, resumeAt: saved.video.position)
+    }
+
+    func removeHistory(_ url: URL) {
+        if current?.url == url { lastHistoryItem = current }
+        playlist.history?.removeAll { $0.id == url }
+        save()
+    }
+    func clearHistory() { lastHistoryItem = current; playlist.history = []; save() }
     var networkAddress: String { server.host }
     // Waiting playback still needs a Pause action, even though media is not advancing yet.
     var isPlaying: Bool { playbackControlStatus != .paused }
@@ -214,6 +248,10 @@ final class AppModel: ObservableObject {
             }.value
             let wasEmpty = playlist.items.isEmpty
             playlist.append(videos)
+            if wasEmpty {
+                position = playlist.current?.position ?? 0
+                duration = playlist.current?.duration ?? 0
+            }
             save()
             if wasEmpty, let id = playlist.currentID { select(id, autoPlay: defaults.bool(forKey: "autoPlay")) }
             if videos.isEmpty, let subtitle = urls.first(where: { ["srt", "ass", "ssa", "vtt"].contains($0.pathExtension.lowercased()) }) {
@@ -222,7 +260,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func select(_ id: UUID, autoPlay: Bool = true) {
+    func select(_ id: UUID, autoPlay: Bool = true, resumeAt: Double? = nil) {
         guard playlist.items.contains(where: { $0.id == id }) else { return }
         remember()
         cancelPlayback()
@@ -234,7 +272,7 @@ final class AppModel: ObservableObject {
         externalSubtitleOptions = []
         audioOptions = []
         subtitleOptions = []
-        position = playlist.current?.position ?? 0
+        position = resumeAt ?? playlist.current?.position ?? 0
         duration = playlist.current?.duration ?? 0
         loadPreview()
         save()
@@ -286,11 +324,45 @@ final class AppModel: ObservableObject {
     }
 
     func stop() {
+        setSleepTimer(nil)
+        remember()
         cancelPlayback()
         position = 0
         playlist.remember(position: 0, duration: duration)
+        lastHistoryItem = current
         save()
         updateNowPlaying()
+    }
+
+    func setSleepTimer(_ seconds: Double?) {
+        if let seconds {
+            guard current != nil, seconds.isFinite, seconds > 0, seconds <= 2 * 60 * 60 else { return }
+        }
+        sleepTimerTask?.cancel()
+        sleepTimerTask = nil
+        sleepTimerRemaining = seconds
+        guard let seconds else { return }
+        // Continuous time includes system suspension and ignores wall-clock adjustments.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(seconds))
+        sleepTimerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard self != nil else { return }
+                let interval = ContinuousClock.now.duration(to: deadline).components
+                let remaining = Double(interval.seconds) + Double(interval.attoseconds) / 1e18
+                if remaining <= 0 {
+                    guard let self else { return }
+                    self.sleepTimerTask = nil
+                    self.sleepTimerRemaining = nil
+                    self.remember()
+                    self.cancelPlayback()
+                    self.updateNowPlaying()
+                    return
+                }
+                self?.sleepTimerRemaining = remaining
+                do { try await Task.sleep(for: .seconds(min(1, remaining)), clock: .continuous) }
+                catch { return }
+            }
+        }
     }
 
     func next() { if let id = playlist.next() { select(id) } }
@@ -338,6 +410,17 @@ final class AppModel: ObservableObject {
         if subtitleID != nil || externalSubtitle != nil { prepare(at: position, autoPlay: isPlaying) }
     }
 
+    func setAudioDelay(_ seconds: Double) {
+        guard seconds.isFinite, abs(seconds) <= 10 else { return }
+        // Quantize to the UI step so floating-point residue cannot leave a hidden correction.
+        let correction = (seconds * 10).rounded() / 10
+        guard correction != audioDelay,
+              let index = playlist.items.firstIndex(where: { $0.id == playlist.currentID }) else { return }
+        playlist.items[index].audioDelay = correction == 0 ? nil : correction
+        remember()
+        if player.currentItem != nil || isPreparing { prepare(at: position, autoPlay: isPlaying || playRequested) }
+    }
+
     func chooseSubtitle() {
         let panel = NSOpenPanel()
         panel.title = NSLocalizedString("Choose subtitles", comment: "")
@@ -355,8 +438,9 @@ final class AppModel: ObservableObject {
     func remove(_ id: UUID) {
         // Removing a queue entry never removes the movie from disk.
         let active = id == playlist.currentID
-        if active { cancelPlayback() }
+        if active { remember(); cancelPlayback() }
         playlist.remove(id)
+        if playlist.items.isEmpty { setSleepTimer(nil) }
         save()
         if active {
             position = playlist.current?.position ?? 0
@@ -371,6 +455,8 @@ final class AppModel: ObservableObject {
     }
 
     func clear() {
+        setSleepTimer(nil)
+        remember()
         cancelPlayback()
         playlist.items.removeAll()
         playlist.currentID = nil
@@ -527,7 +613,7 @@ final class AppModel: ObservableObject {
                 }
                 var canPlayDirect = false
                 if ["mp4", "m4v", "mov"].contains(movie.url.pathExtension.lowercased()), externalSubtitle == nil,
-                   subtitleID == nil || subtitleDelay == 0, preserveQuality {
+                   subtitleID == nil || subtitleDelay == 0, audioDelay == 0, preserveQuality {
                     canPlayDirect = (try? await asset.load(.isPlayable)) == true
                 }
                 try Task.checkCancellation()
@@ -548,7 +634,7 @@ final class AppModel: ObservableObject {
                     job = newJob
                     compatibilityReason = NSLocalizedString(preserveQuality ? "This video format requires compatibility conversion." : "Preserve video quality is off.", comment: "")
                     let choice: SubtitleChoice = externalSubtitle.map { .external($0) } ?? subtitleID.map { .embedded($0) } ?? .none
-                    let playlistURL = try await newJob.start(input: movie.url, info: metadata, audioTrack: audioID, subtitle: choice, startTime: start, hardwareEncoding: hardwareEncoding, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay) { [weak self] stage in
+                    let playlistURL = try await newJob.start(input: movie.url, info: metadata, audioTrack: audioID, subtitle: choice, startTime: start, hardwareEncoding: hardwareEncoding, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay, audioDelay: audioDelay) { [weak self] stage in
                         guard let self, self.loadID == generation else { return }
                         self.preparationStage = stage
                         switch stage {
@@ -670,10 +756,13 @@ final class AppModel: ObservableObject {
 
     private func finished(generation: UUID) {
         guard loadID == generation else { return }
+        playlist.remember(position: duration, duration: duration)
+        rememberHistory()
         playlist.remember(position: 0, duration: duration)
         if let id = playlist.next(finishing: true) {
             // The finished item's saved position is zero before selecting the next one.
             position = 0
+            lastHistoryItem = current
             select(id)
         } else {
             cancelPlayback()
@@ -719,10 +808,25 @@ final class AppModel: ObservableObject {
         [track.title, track.language?.uppercased(), track.codec.uppercased(), track.channels.map { "\($0) ch" }].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
-    private func remember() { playlist.remember(position: position, duration: duration); save() }
+    private func remember() {
+        playlist.remember(position: position, duration: duration)
+        rememberHistory()
+        save()
+    }
+    private func rememberHistory() {
+        guard let current, current != lastHistoryItem else { return }
+        playlist.recordHistory(current)
+        lastHistoryItem = current
+    }
     private func restore() {
         guard FileManager.default.fileExists(atPath: stateURL.path) else { return }
-        do { playlist = try JSONDecoder().decode(Playlist.self, from: Data(contentsOf: stateURL)) }
+        do {
+            playlist = try JSONDecoder().decode(Playlist.self, from: Data(contentsOf: stateURL))
+            if playlist.history == nil {
+                playlist.history = []
+                for item in playlist.items { playlist.recordHistory(item) }
+            }
+        }
         catch {
             let backup = stateURL.deletingPathExtension().appendingPathExtension("unreadable-\(UUID().uuidString).json")
             do { try FileManager.default.moveItem(at: stateURL, to: backup) }
@@ -770,6 +874,7 @@ final class AppModel: ObservableObject {
     }
 
     func shutdown() {
+        setSleepTimer(nil)
         previewTask?.cancel()
         seekPreviewCache.removeAllObjects()
         remember()

@@ -24,8 +24,9 @@ final class SubtitleTimingTests: XCTestCase {
             for choice in [SubtitleChoice.external(subtitle), .embedded(bitmapID)] {
                 var referenceClock: (container: Double, video: Double)?
                 for delay in [0.0, -1.0, 1.0] {
+                    let audioDelay = start == 1.5 ? delay / 2 : 0
                     let playlist = try await job.start(input: input, info: info, audioTrack: nil, subtitle: choice,
-                        startTime: start, hardwareEncoding: false, preserveQuality: false, subtitleDelay: delay)
+                        startTime: start, hardwareEncoding: false, preserveQuality: false, subtitleDelay: delay, audioDelay: audioDelay)
                     let deadline = Date().addingTimeInterval(15)
                     while !(try String(contentsOf: playlist, encoding: .utf8).contains("#EXT-X-ENDLIST")), Date() < deadline {
                         try await Task.sleep(nanoseconds: 100_000_000)
@@ -47,9 +48,9 @@ final class SubtitleTimingTests: XCTestCase {
                     let samples = audio.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
                     // AAC re-encoding can change samples; test the transient and tone against the source clock.
                     let onset = Double(try XCTUnwrap(samples.firstIndex { abs($0) > 0.01 })) / 8000
-                    XCTAssertEqual(onset, 4 - start, accuracy: 0.06, "start=\(start), delay=\(delay), choice=\(choice)")
-                    XCTAssertEqual(Double(samples.count) / 8000, info.duration - start, accuracy: 0.1)
-                    let tone = Array(samples.dropFirst(Int((4 - start + 0.2) * 8000)).prefix(4000))
+                    XCTAssertEqual(onset, 4 - start + audioDelay, accuracy: 0.06, "start=\(start), delay=\(delay), choice=\(choice)")
+                    XCTAssertEqual(Double(samples.count) / 8000, info.duration - start + min(0, audioDelay), accuracy: 0.1)
+                    let tone = Array(samples.dropFirst(Int((4 - start + audioDelay + 0.2) * 8000)).prefix(4000))
                     let crossings = zip(tone, tone.dropFirst()).filter { ($0.0 >= 0) != ($0.1 >= 0) }.count
                     XCTAssertEqual(Double(crossings) * 8000 / Double(tone.count) / 2, 880, accuracy: 15)
                     let output = try await tools.probe(url: playlist)

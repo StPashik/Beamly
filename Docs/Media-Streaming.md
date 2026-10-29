@@ -22,6 +22,8 @@ Changing the source audio track rebuilds the HLS publication at the current movi
 
 **Settings → Track preferences** stores independent audio and subtitle choices. Language codes from stream metadata are normalized using Foundation, including two- and three-letter ISO codes and regional tags. A matching non-commentary audio track is preferred, with the default track winning ties. **Original audio** uses FFmpeg's `original` disposition or AVFoundation's `isOriginalContent` characteristic; without that marker, or if a requested language is absent, Beamly uses the file's default audio. Settings apply only when a video is opened, so manual choices survive seeks and stream rebuilds. Queue transitions and relaunches use the saved preferences.
 
+**Audio timing…** in the speaker menu stores a per-video correction from −10 to +10 seconds in 0.1-second steps. Positive values delay audio. A corrected MP4 uses HLS instead of direct playback. The original-quality path reads audio from a second input with FFmpeg's `-itsoffset`, leaving video packets and HDR metadata unchanged; audio preroll and packet trimming use the shifted timestamps. Stereo AAC and AC-3/E-AC-3 surround retain their existing copy paths. Compatibility conversion seeks the audio input independently, retaining the movie and subtitle clocks. Hardware-to-software retry forwards the correction. Seeking beyond the shifted audio's end publishes the remaining video without an audio rendition. This controls a fixed offset; actual receiver latency still needs physical calibration.
+
 ## Subtitles
 
 Selected embedded text subtitles and external SRT/ASS/SSA/WebVTT are converted to a separate WebVTT rendition. Each WebVTT file includes `X-TIMESTAMP-MAP`; cues spanning a seek point are retained and clipped at the new stream origin. Subtitles do not force video encoding. ASS animation, fonts, and complex positioning are simplified by WebVTT conversion. Bitmap formats such as PGS/VobSub require the explicit compatibility conversion and burn-in.
@@ -34,7 +36,7 @@ That behavior is the default **Automatic** subtitle preference. **Off** prevents
 
 AVFoundation can expose both full and forced-only views of the same MOV/MP4 text track. The source-track menu uses full views when available, retaining the source's forced/default flags and stream IDs, so these generated views do not become nonexistent FFmpeg streams when timing changes require HLS.
 
-**Subtitle timing…** adjusts the selected captions in 0.5-second steps. Positive values show captions later, negative values earlier. WebVTT cue times are shifted relative to the measured HLS origin; compatibility rendering changes only the subtitle clock and restores the video clock afterward. Embedded captions requiring a correction use HLS instead of direct MP4 playback and retain the same profile restrictions. Bitmap caption shifts use FFmpeg's subtitle-video timestamp adjustment before overlay. Corrections survive seeking and track changes and are stored with the movie's queue entry. Existing queues without a correction retain zero offset; removing an entry removes its correction. Source files are never modified.
+**Subtitle timing…** adjusts the selected captions in 0.5-second steps. Positive values show captions later, negative values earlier. WebVTT cue times are shifted relative to the measured HLS origin; compatibility rendering changes only the subtitle clock and restores the video clock afterward. Embedded captions requiring a correction use HLS instead of direct MP4 playback and retain the same profile restrictions. Bitmap caption shifts use FFmpeg's subtitle-video timestamp adjustment before overlay. Corrections survive seeking and track changes and are stored with the movie's queue entry. Existing queues without a correction retain zero offset. Removing an entry keeps its correction in local watch history until that history entry is forgotten or evicted. Source files are never modified.
 
 ## Seeking and buffering
 
@@ -56,6 +58,18 @@ Timeline hover and drag previews use still images from the original file through
 
 Video-only fMP4 streams use an explicit initialization filename: FFmpeg does not expand the variant placeholder for a single variant. Audio-bearing streams retain their existing per-variant initialization files.
 
+## Sleep timer
+
+The player and Playback menu offer a cancellable timer for the whole queue. The deadline uses Swift's ContinuousClock so changing the wall clock does not extend it, and system suspension counts toward the interval. Remaining time refreshes while the app runs; if execution is suspended beyond the deadline, expiry is applied on resume. A new duration replaces the old deadline, and timers are not persisted across launches.
+
+Expiry saves the current source position and uses the existing playback cancellation path to stop HLS work, revoke the stream, and reject stale preparation/end callbacks. It does not call the manual Stop action, which resets the position. Pausing, seeking, changing tracks, and selecting another queue entry preserve the timer. Manual Stop, an empty queue, and shutdown cancel it.
+
+## Watch history and menu bar remote
+
+Watch history is an optional, bounded list in the existing atomically written playlist JSON; old queues seed it from valid resume positions. It keeps source URLs, positions, durations, timing corrections, and last-viewed dates on this Mac. Queue removal and clearing preserve it. Re-adding a known URL restores its values without reusing the old queue UUID. Completed entries restart through the existing near-end resume rule. Clearing history preserves the current queue and is not undone by an unchanged paused session at shutdown; subsequent viewing or timing changes can record the movie again. The limit is 100 videos, keyed by standardized file URL; renamed or moved files need to be added again.
+
+The native SwiftUI `MenuBarExtra` shares the app's retained `AppModel` and `AVPlayer`. Closing the last window no longer quits; the mini remote can reopen the main window or explicitly quit. Play without an external route reopens the main window for its existing native AirPlay picker. No second player, global keyboard hooks, or local-network control API is introduced.
+
 ## Verification
 
 Automated checks use generated media, never personal movies:
@@ -68,6 +82,9 @@ Automated checks use generated media, never personal movies:
 - actual HTTP fetching of the master, media playlists, initialization segments, fragments, and captions;
 - cancellation, existing MP4 playback, and queue/file preservation.
 - generated MP4/MKV chapters, chapter seeks across HLS buffer rebuilds, still-frame timestamps, and thumbnail cancellation without moving the player.
+- timer replacement/cancellation, expiry during HLS playback and preparation, saved-position restoration, and rejection of late queue-advance callbacks.
+- signed audio corrections with AAC and surround, original 4K frame/HDR metadata preservation, caption clocks, conversion, source-duration bounds, and seeks beyond shifted audio.
+- history migration, completed-video restart, queue removal/re-addition, persisted history clearing, and shared mini-remote volume/window lifecycle.
 
 These checks do not certify physical AirPlay output, HDR display activation, every Dolby profile, Wi-Fi performance, or every receiver. Validate those on an Apple TV 4K and an HDR-capable display before describing hardware compatibility as confirmed.
 
@@ -75,6 +92,10 @@ The native 4K frame test uses HDR only when AVPlayer reports HDR eligibility, ot
 
 ## References
 
+- [Apple menu bar extras](https://developer.apple.com/documentation/swiftui/menubarextra): native menu bar scenes sharing the app model.
+- [FFmpeg input options](https://ffmpeg.org/ffmpeg.html#Main-options): per-input seeking and timestamp offsets.
+
+- [Swift continuous clock](https://developer.apple.com/documentation/swift/clock/continuous): elapsed time that includes system suspension.
 - [Apple chapter metadata loading](https://developer.apple.com/documentation/avfoundation/avasset/loadchaptermetadatagroups(bestmatchingpreferredlanguages:completionhandler:)): chapter titles and source time ranges.
 - [Apple image generation](https://developer.apple.com/documentation/avfoundation/avassetimagegenerator/image(at:)): still frames without using the playback player.
 - [Apple AVPlayer waiting reasons](https://developer.apple.com/documentation/avfoundation/avplayer/reasonforwaitingtoplay): distinguishing buffer evaluation from waiting to avoid stalls.

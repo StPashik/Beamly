@@ -72,7 +72,7 @@ final class HEVCStreamingTests: XCTestCase {
         XCTAssertEqual(info.width, 3840)
         XCTAssertEqual(info.pixelFormat, "yuv420p10le")
         XCTAssertTrue(info.canCopyVideo)
-        let master = try await job.start(input: input, info: info, audioTrack: 2, subtitle: .embedded(3), startTime: 0, hardwareEncoding: false)
+        let master = try await job.start(input: input, info: info, audioTrack: 2, subtitle: .embedded(3), startTime: 0, hardwareEncoding: false, audioDelay: 0.5)
         XCTAssertTrue(job.isVideoCopied)
         let directory = master.deletingLastPathComponent()
         try await waitForEnd(directory.appendingPathComponent("stream_0.m3u8"))
@@ -132,8 +132,8 @@ final class HEVCStreamingTests: XCTestCase {
             return pts + Double(sample) / 8000
         }
         let surroundOnset = try onset(input, stream: "2")
-        XCTAssertEqual(try onset(directory.appendingPathComponent("stream_2.m3u8"), stream: "a:0"), surroundOnset - job.sourceOffset, accuracy: 0.06)
-        XCTAssertEqual(try onset(directory.appendingPathComponent("stream_1.m3u8"), stream: "a:0"), surroundOnset - job.sourceOffset, accuracy: 0.06)
+        XCTAssertEqual(try onset(directory.appendingPathComponent("stream_2.m3u8"), stream: "a:0"), surroundOnset + 0.5 - job.sourceOffset, accuracy: 0.06)
+        XCTAssertEqual(try onset(directory.appendingPathComponent("stream_1.m3u8"), stream: "a:0"), surroundOnset + 0.5 - job.sourceOffset, accuracy: 0.06)
         try await server.start()
         let url = try server.publish(directory: directory, playlist: "master.m3u8")
         for name in ["master.m3u8", "stream_0.m3u8", "init_0.mp4", "segment_0_000000.m4s", "captions.m3u8", "captions.vtt"] {
@@ -156,8 +156,9 @@ final class HEVCStreamingTests: XCTestCase {
         XCTAssertEqual(try onset(seeked.deletingLastPathComponent().appendingPathComponent("stream_1.m3u8"), stream: "a:0"), try onset(input, stream: "1") - job.sourceOffset, accuracy: 0.06)
 
         for (choice, delay) in [(SubtitleChoice.external(captions), -1.5), (.embedded(3), 1.5)] {
+            let audioDelay = delay > 0 ? 0.5 : -0.5
             let shifted = try await job.start(input: input, info: info, audioTrack: 1, subtitle: choice,
-                startTime: 3.5, hardwareEncoding: false, subtitleDelay: delay)
+                startTime: 3.5, hardwareEncoding: false, subtitleDelay: delay, audioDelay: audioDelay)
             let folder = shifted.deletingLastPathComponent()
             let lines = try String(contentsOf: folder.appendingPathComponent("captions.vtt"), encoding: .utf8).components(separatedBy: .newlines)
             let cue = try XCTUnwrap(lines.firstIndex(of: "Later cue"))
@@ -168,7 +169,7 @@ final class HEVCStreamingTests: XCTestCase {
             XCTAssertEqual(times[1] + job.sourceOffset, min(info.duration, 7 + delay), accuracy: 0.03)
             XCTAssertTrue(job.isVideoCopied)
             XCTAssertEqual(try frameHashes(folder.appendingPathComponent("stream_0.m3u8"), ffmpeg: ffmpeg), seekFrames)
-            XCTAssertEqual(try onset(folder.appendingPathComponent("stream_1.m3u8"), stream: "a:0"), try onset(input, stream: "1") - job.sourceOffset, accuracy: 0.06)
+            XCTAssertEqual(try onset(folder.appendingPathComponent("stream_1.m3u8"), stream: "a:0"), try onset(input, stream: "1") + audioDelay - job.sourceOffset, accuracy: 0.06)
         }
 
         let hlg = folder.appendingPathComponent("HLG.mkv")
