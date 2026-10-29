@@ -79,6 +79,16 @@ public enum SubtitleChoice: Equatable, Sendable {
     case external(URL)
 }
 
+public enum PlaybackPreparationStage: String, CaseIterable, Sendable {
+    case readingFile = "Reading video information…"
+    case originalStream = "Preparing video without conversion…"
+    case systemEncoding = "Preparing video with the system encoder…"
+    case softwareEncoding = "Preparing video with the software encoder…"
+    case subtitles = "Preparing subtitles…"
+    case loadingPlayer = "Loading video…"
+    case softwareFallback = "Retrying with the software encoder…"
+}
+
 public let videoFileExtensions: Set<String> = ["mp4", "m4v", "mov", "mkv", "avi", "webm", "mpeg", "mpg", "m2ts", "mts", "ts", "m2t", "vob", "flv", "wmv", "ogm", "ogg", "rmvb", "divx", "3gp"]
 
 public func findSubtitleFiles(for video: URL) -> [URL] {
@@ -487,7 +497,8 @@ public final class HLSJob {
     }
 
     public func start(input: URL, info: MediaInfo, audioTrack: Int?, subtitle: SubtitleChoice,
-                      startTime: Double, hardwareEncoding: Bool, preserveQuality: Bool = true, subtitleDelay: Double = 0) async throws -> URL {
+                      startTime: Double, hardwareEncoding: Bool, preserveQuality: Bool = true, subtitleDelay: Double = 0,
+                      progress: @MainActor (PlaybackPreparationStage) -> Void = { _ in }) async throws -> URL {
         stop()
         diagnostic = nil
         try validateLocalFile(input)
@@ -513,6 +524,7 @@ public final class HLSJob {
         let process = ProcessRunner()
         runner = process
         let rendering: SubtitleRendering?
+        if !isVideoCopied, subtitle != .none { progress(.subtitles) }
         do { rendering = isVideoCopied ? nil : try subtitleRendering(subtitle, input: input, info: info, directory: cache) }
         catch {
             diagnostic = error.localizedDescription
@@ -520,6 +532,7 @@ public final class HLSJob {
             throw error
         }
         do {
+            progress(isVideoCopied ? .originalStream : hardwareEncoding ? .systemEncoding : .softwareEncoding)
             let audio = info.audioTracks.first { $0.id == audioTrack } ?? info.defaultAudioTrack
             let keyTime = isVideoCopied ? try await tools.firstVideoTimestamp(url: input, seek: startTime + info.startTime) : startTime
             try Task.checkCancellation()
@@ -587,6 +600,7 @@ public final class HLSJob {
                 try Task.checkCancellation()
                 guard generation == currentGeneration else { throw CancellationError() }
                 sourceOffset -= firstPTS
+                if subtitle != .none { progress(.subtitles) }
                 try await prepareCaptions(subtitle, input: input, info: info, cache: cache, subtitleDelay: subtitleDelay)
                 let codec = try await HLSCodec.identifier(at: cache.appendingPathComponent("init_0.mp4"))
                 try Task.checkCancellation()
@@ -602,8 +616,9 @@ public final class HLSJob {
             diagnostic = error.localizedDescription
             stop()
             if !copied && hardwareEncoding && !(error is CancellationError) {
+                progress(.softwareFallback)
                 return try await start(input: input, info: info, audioTrack: audioTrack, subtitle: subtitle,
-                                       startTime: startTime, hardwareEncoding: false, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay)
+                                       startTime: startTime, hardwareEncoding: false, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay, progress: progress)
             }
             throw error
         }

@@ -66,8 +66,10 @@ final class MediaPipelineTests: XCTestCase {
         XCTAssertEqual(process.terminationStatus, 0, String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
         let info = try await tools.probe(url: input)
         XCTAssertEqual(info.videoCodec, "av1")
+        var stages: [PlaybackPreparationStage] = []
         let output = try await job.start(input: input, info: info, audioTrack: nil, subtitle: .none,
-                                         startTime: 0, hardwareEncoding: false, preserveQuality: false)
+                                         startTime: 0, hardwareEncoding: false, preserveQuality: false) { stages.append($0) }
+        XCTAssertEqual(stages, [.softwareEncoding])
         let converted = try await tools.probe(url: output)
         XCTAssertEqual(converted.videoCodec, "h264")
         XCTAssertEqual(converted.width, 160)

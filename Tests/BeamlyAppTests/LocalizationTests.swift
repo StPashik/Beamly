@@ -1,4 +1,5 @@
 import Foundation
+import BeamlyCore
 import XCTest
 @testable import Beamly
 
@@ -32,6 +33,9 @@ final class LocalizationTests: XCTestCase {
             XCTAssertEqual(catalog["sourceLanguage"] as? String, "en")
             let strings = try XCTUnwrap(catalog["strings"] as? [String: [String: Any]])
             XCTAssertFalse(strings.isEmpty)
+            if name == "Localizable" {
+                for stage in PlaybackPreparationStage.allCases { XCTAssertNotNil(strings[stage.rawValue], stage.rawValue) }
+            }
             for (key, entry) in strings {
                 let localizations = try XCTUnwrap(entry["localizations"] as? [String: [String: Any]], key)
                 XCTAssertEqual(Set(localizations.keys), Set(AppLanguage.allCases.map(\.rawValue)), key)
