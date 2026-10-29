@@ -1,6 +1,6 @@
 cask "beamly" do
-  version "1.0.6"
-  sha256 "d4fc7f55eb1ccd41d3baa359b4a55c693111fee392ea70e0f7bd1816c9746c0b"
+  version "1.0.7"
+  sha256 "85a5bb1942330fc8a9c6185627ea34342e39b8c01e3e50e73aae2f12b41d833d"
 
   url "https://github.com/StPashik/Beamly/releases/download/v#{version}/Beamly-#{version}-universal.zip"
   name "Beamly"

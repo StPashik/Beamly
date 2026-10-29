@@ -14,6 +14,7 @@ A native macOS player for sending local videos to Apple TV and other AirPlay rec
 - Direct playback of compatible MP4, M4V, and MOV files; quality-preserving 4K HEVC/H.264 remuxing from MKV, including supported HDR10/HLG streams.
 - Audio-track selection, embedded subtitles, and external SRT, ASS, SSA, and VTT files.
 - Saved audio and subtitle language preferences, applied to each video when opened.
+- Playback preparation and buffering status, with explanations for original-quality streaming, compatibility conversion, and software-encoder retries.
 - Standalone FFmpeg and FFprobe included with the app; see [bundled media tools](Docs/Bundled-media.md).
 - A persistent queue with resume positions, drag reordering, shuffle, repeat, and keyboard controls.
 - Light and dark appearance, custom window controls, and Liquid Glass panels on macOS 26 or later. Earlier supported versions use standard translucent materials.
@@ -45,17 +46,17 @@ When using Beamly 1.0.0, select the `ffmpeg-full` bin folder in Settings if it i
 
 ### Download
 
-1. Download `Beamly-1.0.6-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
+1. Download `Beamly-1.0.7-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
 2. Extract it and move **Beamly.app** to **Applications**, or to your personal `~/Applications` folder.
 3. See [First launch](#first-launch) before opening a downloaded build.
 
 To verify the app ZIP, download `SHA256SUMS` from the same release and run this in the download directory:
 
 ```sh
-awk '$2 == "Beamly-1.0.6-universal.zip"' SHA256SUMS | shasum -a 256 -c -
+awk '$2 == "Beamly-1.0.7-universal.zip"' SHA256SUMS | shasum -a 256 -c -
 ```
 
-The same checksum file also lists `Beamly-FFmpeg-Sources-1.0.6.tar.xz`, the complete corresponding source for the bundled media tools. If both archives are downloaded, `shasum -a 256 -c SHA256SUMS` verifies both.
+The same checksum file also lists `Beamly-FFmpeg-Sources-1.0.7.tar.xz`, the complete corresponding source for the bundled media tools. If both archives are downloaded, `shasum -a 256 -c SHA256SUMS` verifies both.
 
 ### Homebrew
 
@@ -73,7 +74,7 @@ The cask installs the universal app and verifies the archive's pinned SHA-256 ch
 With Node.js 18 or later and npm installed (omit `--allow-git=root` on npm 11 or earlier):
 
 ```sh
-npm install --global --allow-git=root github:StPashik/Beamly#v1.0.6
+npm install --global --allow-git=root github:StPashik/Beamly#v1.0.7
 beamly install
 beamly
 ```
@@ -115,6 +116,10 @@ Choose **Subtitles → Subtitle timing…** to move captions earlier or later in
 | ⌘, | Settings |
 
 The window stays 674 points wide. Resize its height or use the green button to zoom vertically. The preview shows a still frame from the middle of the source video; it does not play or follow the timeline.
+
+The status beside the preview follows file inspection, stream preparation, subtitles, and loading. **Buffering…** appears when AVPlayer reports that it is waiting to avoid a playback stall; its brief initial buffer evaluation is shown as **Starting playback…**. Pause remains available while buffering. Without a connected receiver, the status asks you to choose an AirPlay device.
+
+The quality line distinguishes direct/original-quality delivery from **compatibility conversion up to 1080p SDR**; small videos are not enlarged to 1080p. The explanation below identifies the quality setting, a video format requiring conversion, or a retry with the software encoder. Hover over a long explanation to read it in full. These states do not estimate a completion percentage, diagnose Wi-Fi quality, or certify physical receiver output.
 
 ## Language and updates
 

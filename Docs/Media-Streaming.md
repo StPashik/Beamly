@@ -42,6 +42,10 @@ Remuxing starts at a preceding demuxer keyframe. FFmpeg reads preroll with origi
 
 Generated media uses growing EVENT playlists and becomes complete when FFmpeg finishes. The master advertises measured segment bitrates and is refreshed after generation completes. This is a local on-demand stream with one source video quality, not an adaptive internet streaming ladder. Native Apple TV scrubbing is limited to the currently published timeline; dedicated I-frame trick-play renditions are not supplied. Generated media remains on disk until playback stops, with the existing free-space guard.
 
+The playback status reports actual preparation stages: inspecting the file, preparing original-quality segments or compatibility video, preparing captions, and loading the AVPlayer item. A failed system-encoder attempt reports its retry with the software encoder; the quality explanation retains that reason after loading. VideoToolbox is described as the system encoder because its current `allow_sw` setting permits an internal software implementation. No hardware-use guarantee, percentage, or ETA is inferred from the selected setting.
+
+During playback, Beamly observes both AVPlayer's `timeControlStatus` and `reasonForWaitingToPlay`. It reports **Buffering…** only for `waitingToPlayAtSpecifiedRate` with `toMinimizeStalls`; the initial `evaluatingBufferingRate` phase is distinguished from a stall. This identifies the player's waiting state, without attributing it to Wi-Fi or conversion speed. Pause remains available while waiting, and disconnecting AirPlay still pauses playback. Cancellation and new-file selection clear preparation, quality, and retry messages; callbacks from an older load are ignored.
+
 ## Verification
 
 Automated checks use generated media, never personal movies:
@@ -60,6 +64,7 @@ The native 4K frame test uses HDR only when AVPlayer reports HDR eligibility, ot
 
 ## References
 
+- [Apple AVPlayer waiting reasons](https://developer.apple.com/documentation/avfoundation/avplayer/reasonforwaitingtoplay): distinguishing buffer evaluation from waiting to avoid stalls.
 - [Apple HLS authoring specification](https://developer.apple.com/streaming/hls-authoring-specification-for-apple-devices.html): video 1.5–1.10, HDR frame rate amendment for tvOS, audio groups, WebVTT timestamp mapping, manifests, and validation tools.
 - [FFmpeg streamcopy](https://ffmpeg.org/ffmpeg.html#Streamcopy): copying compressed packets without decoding or encoding.
 - [FFmpeg HLS muxer](https://ffmpeg.org/ffmpeg-formats.html#hls-2): fragmented MP4, variant playlists, and event playlists.
