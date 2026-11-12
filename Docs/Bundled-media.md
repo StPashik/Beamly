@@ -36,7 +36,7 @@ Build prerequisites: Xcode command-line tools, Python 3.12 or later, CMake, pkg-
 ```sh
 python3 Scripts/build-media.py
 Scripts/build.sh
-BEAMLY_TEST_APP_BUNDLE="$PWD/build/Beamly.app" Scripts/test.sh
+Scripts/test.sh  # uses build/Beamly.app and its bundled helpers
 ```
 
 The media build produces arm64 and x86_64 tools, combines them with lipo, checks system-only linkage, and signs them. Apple Silicon validation runs both CPU slices using Rosetta 2 for Intel; install Rosetta before running the full release checks on that host. Intel hosts inspect both slices but execute only x86_64. Both the command-line app builder and Xcode's embed phase copy and sign the same helpers. Run the media build before opening the Xcode project, and rerun it after changing its recipe or source manifest. Private compiler work is retained after a failure for diagnosis/retry and removed on success. `--rebuild` executes the build recipe again; a matching completed recipe is reused.

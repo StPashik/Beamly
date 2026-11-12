@@ -168,13 +168,13 @@ The script builds and verifies both `arm64` and `x86_64` slices, assembles the a
 For development, run `python3 Scripts/build-media.py` first, then open **Beamly.xcodeproj**, select your development team in **Signing & Capabilities**, then select the **Beamly** scheme and **My Mac**, and run. Xcode uses Apple Development signing with hardened runtime; its embedded Sparkle framework and media helpers use the same identity. Use the script above for a local ad-hoc build without a development signing identity. The Xcode project and Swift package share the same core library.
 
 ```sh
-BEAMLY_TEST_APP_BUNDLE="$PWD/build/Beamly.app" Scripts/test.sh # Test the bundled media pipeline
+Scripts/test.sh                # Test the bundled media pipeline (uses build/Beamly.app)
 Scripts/release.sh             # Universal ZIP, SHA256SUMS, and updated Homebrew cask
 npm test                      # Installer integrity, existing-app protection, and real ZIP installation
 npm pack --dry-run            # Inspect the files included in the npm package
 ```
 
-Run `Scripts/release.sh` before `npm test`; the installation test uses the actual release ZIP and verifies both bundled helpers. Install `ffmpeg-full` on the developer/CI machine for the HEVC fixture generator; runtime playback tests use the bundled helpers when `BEAMLY_TEST_APP_BUNDLE` is set. Tests generate their own small videos and use isolated playlists, settings, and installation directories. Apple Silicon builds run both helper CPU slices without Homebrew in PATH, using Rosetta 2 for Intel; Intel hosts inspect ARM linkage but execute only x86_64.
+Run `Scripts/release.sh` before `npm test`; the installation test uses the actual release ZIP and verifies both bundled helpers. Install `ffmpeg-full` on the developer/CI machine for the HEVC fixture generator; runtime playback tests use the bundled helpers when `build/Beamly.app` exists or `BEAMLY_TEST_APP_BUNDLE` is set. Tests generate their own small videos and use isolated playlists, settings, and installation directories. Apple Silicon builds run both helper CPU slices without Homebrew in PATH, using Rosetta 2 for Intel; Intel hosts inspect ARM linkage but execute only x86_64.
 
 [GitHub Actions](.github/workflows/ci.yml) runs these checks for pull requests targeting `develop` or `main`, and for pushes to both branches. CI builds and verifies the application; publishing a release remains a separate maintainer action.
 
