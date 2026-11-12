@@ -1,6 +1,7 @@
 # Unreleased
 
 - Prepare eligible H.264 MKV files faster by building embedded captions and scrub previews alongside the main stream.
+- Reopen the AirPlay picker immediately on Play after dismissing it without an active receiver.
 
 # Beamly 1.0.12
 

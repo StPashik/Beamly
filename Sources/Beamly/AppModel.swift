@@ -55,7 +55,8 @@ final class AppModel: ObservableObject {
     private var routePreparation: Task<Void, Never>?
     private var shouldShowAirPlayPicker = false
     private var isAirPlayPickerPresented = false
-    private var mayHaveSelectedAirPlayRoute = false
+    private enum AirPlayRouteHint { case none, pickerSelection, confirmed }
+    private var airPlayRouteHint = AirPlayRouteHint.none
     private var previewTask: Task<Void, Never>?
     private var seekPreviewTask: Task<Void, Never>?
     private var sleepTimerTask: Task<Void, Never>?
@@ -108,11 +109,11 @@ final class AppModel: ObservableObject {
                     let wasExternal = self.isExternal
                     self.isExternal = player.isExternalPlaybackActive
                     if self.isExternal {
-                        self.mayHaveSelectedAirPlayRoute = true
+                        self.airPlayRouteHint = .confirmed
                         self.isAirPlayPickerRequested = false
                         if self.playRequested, !self.isPreparing { self.playIfConnected() }
                     } else if wasExternal, !self.isPreparing, !self.isConnectingAirPlay {
-                        if self.playRequested { self.mayHaveSelectedAirPlayRoute = false }
+                        if self.playRequested { self.airPlayRouteHint = .none }
                         self.pausePlayback()
                     }
                 }
@@ -194,8 +195,8 @@ final class AppModel: ObservableObject {
     }
     func clearHistory() { lastHistoryItem = current; playlist.history = []; save() }
     var networkAddress: String { server.host }
-    // Waiting playback still needs a Pause action, even though media is not advancing yet.
-    var isPlaying: Bool { playbackControlStatus != .paused || isConnectingAirPlay }
+    // Leave Play available while a dismissed picker has yet to yield a confirmed receiver.
+    var isPlaying: Bool { playbackControlStatus != .paused || (isConnectingAirPlay && airPlayRouteHint == .confirmed) }
     var isBuffering: Bool {
         !isPreparing && isExternal && player.currentItem != nil &&
             playbackControlStatus == .waitingToPlayAtSpecifiedRate && waitingReason == .toMinimizeStalls
@@ -316,7 +317,7 @@ final class AppModel: ObservableObject {
         isAirPlayPickerPresented = isPresented
         if isPresented {
             // AVKit reports presentation without saying whether the user selected a route.
-            mayHaveSelectedAirPlayRoute = true
+            airPlayRouteHint = .pickerSelection
             shouldShowAirPlayPicker = false
             if routePreparation != nil { cancelRoutePreparation() }
         } else if playRequested {
@@ -333,12 +334,16 @@ final class AppModel: ObservableObject {
     private func playIfConnected(showPicker: Bool = false) {
         playRequested = true
         shouldShowAirPlayPicker = shouldShowAirPlayPicker || showPicker
-        if !player.isExternalPlaybackActive, !mayHaveSelectedAirPlayRoute || isAirPlayPickerPresented {
-            requestAirPlayPicker()
+        if !player.isExternalPlaybackActive {
+            if showPicker, !isAirPlayPickerPresented, airPlayRouteHint == .pickerSelection {
+                cancelRoutePreparation()
+                airPlayRouteHint = .none
+            }
+            if airPlayRouteHint == .none || isAirPlayPickerPresented { requestAirPlayPicker() }
         }
         guard !isPreparing, player.status == .readyToPlay, player.currentItem?.status == .readyToPlay else { return }
         guard player.isExternalPlaybackActive else {
-            guard mayHaveSelectedAirPlayRoute, !isAirPlayPickerPresented, routePreparation == nil else { return }
+            guard airPlayRouteHint != .none, !isAirPlayPickerPresented, routePreparation == nil else { return }
             // Preroll primes an already selected route at rate zero; discovery never authorizes local playback.
             isConnectingAirPlay = true
             let generation = loadID
@@ -351,7 +356,7 @@ final class AppModel: ObservableObject {
                 self.isConnectingAirPlay = false
                 if self.player.isExternalPlaybackActive { self.playIfConnected() }
                 else {
-                    self.mayHaveSelectedAirPlayRoute = false
+                    self.airPlayRouteHint = .none
                     self.requestAirPlayPicker()
                 }
             }
@@ -359,7 +364,7 @@ final class AppModel: ObservableObject {
             return
         }
         cancelRoutePreparation()
-        mayHaveSelectedAirPlayRoute = true
+        airPlayRouteHint = .confirmed
         isAirPlayPickerRequested = false
         shouldShowAirPlayPicker = false
         player.play()

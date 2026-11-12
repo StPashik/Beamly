@@ -398,6 +398,17 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(player.prerollCalls, 0)
         model.airPlayPickerPresentationChanged(false)
         XCTAssertEqual(player.prerollCalls, 1, "Prime the player after a possible receiver selection")
+        XCTAssertFalse(model.isPlaying, "Play must remain available until the receiver is confirmed")
+        let preparedItem = try XCTUnwrap(player.currentItem)
+        model.togglePlay()
+        XCTAssertTrue(model.isAirPlayPickerRequested, "Pressing Play again after dismissal must open the picker immediately")
+        XCTAssertFalse(model.isConnectingAirPlay)
+        XCTAssertTrue(player.currentItem === preparedItem)
+        XCTAssertEqual(player.prerollCalls, 1)
+        XCTAssertEqual(player.playCalls, 0)
+        model.isAirPlayPickerRequested = false
+        model.airPlayPickerPresentationChanged(true)
+        model.airPlayPickerPresentationChanged(false)
         try await Task.sleep(for: .seconds(3.1))
         XCTAssertFalse(model.isAirPlayPickerRequested, "Dismissing the picker must not reopen it for the same Play request")
         XCTAssertEqual(player.currentTime().seconds, pausedTime, accuracy: 0.1, "Preroll must not advance the movie without a receiver")
@@ -406,6 +417,8 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(player.playCalls, 0)
         player.setExternalPlaybackActive(true)
         try await wait { model.isPlaying }
+        model.togglePlay()
+        try await wait { !model.isPlaying }
         model.airPlayPickerPresentationChanged(true)
         player.setExternalPlaybackActive(false)
         try await wait { !model.isPlaying && !model.isExternal }
@@ -415,7 +428,7 @@ final class PlaybackTests: XCTestCase {
         model.togglePlay()
         XCTAssertEqual(player.playCalls, callsAfterDisconnect)
         XCTAssertNil(model.errorMessage)
-        XCTAssertTrue(model.isAirPlayPickerRequested)
+        XCTAssertTrue(model.isAirPlayPickerRequested, "Deselecting a paused receiver must also allow an immediate retry")
         player.setExternalPlaybackActive(true)
         try await wait { model.isExternal && model.isPlaying }
         model.togglePlay()
