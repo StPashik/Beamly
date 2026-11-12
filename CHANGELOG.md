@@ -1,4 +1,6 @@
-# Unreleased
+# Beamly 1.0.12
+
+**4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**
 
 - Keep the full AirPlay timeline when resuming HLS video, including MKV. The saved position is a seek within the completed stream, so the beginning remains available to the receiver. Full preparation can take longer, especially for compatibility conversion.
 - Show progress during HLS preparation.
