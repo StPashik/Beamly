@@ -2,6 +2,55 @@ import XCTest
 @testable import BeamlyCore
 
 final class MediaPipelineTests: XCTestCase {
+    func testMediaCacheRemovesOnlyAbandonedWorkspaces() throws {
+        let files = FileManager.default
+        let root = files.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? files.removeItem(at: root) }
+        let abandoned = root.appendingPathComponent("\(Int32.max)-\(UUID())")
+        let active = root.appendingPathComponent("\(ProcessInfo.processInfo.processIdentifier)-\(UUID())")
+        let unrelated = root.appendingPathComponent("unrelated")
+        let symlink = root.appendingPathComponent("\(Int32.max)-\(UUID())")
+        for directory in [abandoned, active, unrelated] {
+            try files.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        try files.createSymbolicLink(at: symlink, withDestinationURL: unrelated)
+
+        MediaCache.removeAbandoned(in: root)
+
+        XCTAssertFalse(files.fileExists(atPath: abandoned.path))
+        for directory in [active, unrelated, symlink] {
+            XCTAssertTrue(files.fileExists(atPath: directory.path))
+        }
+    }
+
+    @MainActor
+    func testDiskFullFromFFmpegDoesNotRetryEncoding() async throws {
+        let files = FileManager.default
+        let root = files.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try files.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? files.removeItem(at: root) }
+        let input = root.appendingPathComponent("source.mkv")
+        try Data().write(to: input)
+        let shim = root.appendingPathComponent("ffmpeg")
+        try #"""
+            #!/bin/sh
+            printf x >> "$(dirname "$0")/attempts"
+            printf '%s\n' 'Failed to open progress URL ".progress": No space left on device' >&2
+            exit 1
+            """#.write(to: shim, atomically: true, encoding: .utf8)
+        try files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shim.path)
+        let job = HLSJob(tools: FFmpegTools(customDirectory: root))
+        defer { job.stop() }
+        let info = MediaInfo(duration: 10, width: 160, height: 90, videoCodec: "vp9")
+        do {
+            _ = try await job.start(input: input, info: info, audioTrack: nil, subtitle: .none, hardwareEncoding: true)
+            XCTFail("Expected an insufficient space error")
+        } catch MediaPipelineError.insufficientSpace {
+            XCTAssertNil(job.directory)
+        }
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("attempts"), encoding: .utf8), "x")
+    }
+
     func testBundledToolsTakePriorityOverHomebrewAndRetainCustomOverride() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-tools-\(UUID())")
         let app = root.appendingPathComponent("Fixture.app")

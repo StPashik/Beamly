@@ -772,7 +772,11 @@ final class AppModel: ObservableObject {
                     if allowEarlyHLS, preserveQuality, allowDolbyAudio, choice == .none, audioDelay == 0 {
                         earlyPlaylist = try await newJob.prepareEarlyHLS(input: movie.url, info: metadata, audioTrack: audioID,
                             startTime: start, subtitleDelay: captionDelay, onFailure: { [weak self] error in
-                                self?.playbackFailed(error.localizedDescription, generation: generation, retry: .completeHLS)
+                                if MediaPipelineError.isInsufficientSpace(error) {
+                                    self?.playbackFailed(MediaPipelineError.insufficientSpace.localizedDescription, generation: generation, retry: nil)
+                                } else {
+                                    self?.playbackFailed(error.localizedDescription, generation: generation, retry: .completeHLS)
+                                }
                             }, progress: reportStage)
                     } else {
                         earlyPlaylist = nil
@@ -905,6 +909,8 @@ final class AppModel: ObservableObject {
                 playlist.remember(position: start, duration: duration)
                 save()
             } catch is CancellationError {
+            } catch where MediaPipelineError.isInsufficientSpace(error) {
+                playbackFailed(MediaPipelineError.insufficientSpace.localizedDescription, generation: generation, retry: nil)
             } catch {
                 let retry: PlaybackRetry?
                 if job?.pendingHLSFiles.isEmpty == false { retry = .completeHLS }

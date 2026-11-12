@@ -237,7 +237,20 @@ public enum MediaPipelineError: LocalizedError {
     case missingTool(String)
     case invalidMedia(String)
     case processFailed(String, String)
+    case insufficientSpace
     case timedOut
+
+    public static func isInsufficientSpace(_ error: Error) -> Bool {
+        if case .insufficientSpace? = error as? Self { return true }
+        var cause = error as NSError
+        for _ in 0..<4 {
+            if (cause.domain == NSPOSIXErrorDomain && cause.code == Int(ENOSPC))
+                || (cause.domain == NSCocoaErrorDomain && cause.code == CocoaError.fileWriteOutOfSpace.rawValue) { return true }
+            guard let underlying = cause.userInfo[NSUnderlyingErrorKey] as? NSError else { return false }
+            cause = underlying
+        }
+        return false
+    }
 
     public var errorDescription: String? {
         switch self {
@@ -245,6 +258,7 @@ public enum MediaPipelineError: LocalizedError {
             return String(format: NSLocalizedString("%@ is missing. Reinstall Beamly or choose a custom FFmpeg folder in Settings.", comment: ""), name)
         case .invalidMedia(let message): return message
         case .processFailed(let name, let message): return "\(name): \(message)"
+        case .insufficientSpace: return NSLocalizedString("Not enough space for the video buffer. Free up disk space and try again.", comment: "")
         case .timedOut: return NSLocalizedString("Video preparation made no progress for 90 seconds. Try software encoding.", comment: "")
         }
     }
@@ -573,6 +587,7 @@ final class ProcessRunner: @unchecked Sendable {
         if wasCancelled { throw CancellationError() }
         guard process.terminationStatus == 0 else {
             let message = String(decoding: errors.value, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            if message.localizedCaseInsensitiveContains("No space left on device") { throw MediaPipelineError.insufficientSpace }
             throw MediaPipelineError.processFailed(executable.lastPathComponent, message.isEmpty ? String(format: NSLocalizedString("The process exited with code %d.", comment: ""), process.terminationStatus) : message)
         }
         return ProcessOutput(stdout: output.value, stderr: errors.value)
@@ -625,11 +640,9 @@ public final class HLSJob {
         stop()
         diagnostic = nil
         let currentGeneration = generation
-        let cache = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-MP4-\(UUID().uuidString)", isDirectory: true)
-        let file = cache.appendingPathComponent("movie.mp4")
         do {
-            try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
-            directory = cache
+            let cache = try await createBuffer("MP4", generation: currentGeneration)
+            let file = cache.appendingPathComponent("movie.mp4")
             progress(.originalStream)
             // A front index lets AVPlayer seek anywhere through the existing HTTP range server.
             let arguments = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", input.path,
@@ -650,7 +663,7 @@ public final class HLSJob {
             guard generation == currentGeneration else { throw CancellationError() }
             stop()
             try Task.checkCancellation()
-            if error is InsufficientSpace { throw error }
+            if MediaPipelineError.isInsufficientSpace(error) { throw MediaPipelineError.insufficientSpace }
             return nil
         }
     }
@@ -677,11 +690,9 @@ public final class HLSJob {
         if preserveQuality, (info.isHDR || info.videoCodec == "hevc"), !info.canCopyVideo {
             throw MediaPipelineError.invalidMedia(NSLocalizedString("This video profile cannot be preserved for Apple TV. Use a supported HEVC Main/Main 10 file, or turn off Preserve video quality for SDR conversion.", comment: ""))
         }
-        isVideoCopied = preserveQuality && info.canCopyVideo
-        let cache = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-HLS-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
-        directory = cache
         let currentGeneration = generation
+        let cache = try await createBuffer("HLS", generation: currentGeneration)
+        isVideoCopied = preserveQuality && info.canCopyVideo
         let rendering: SubtitleRendering?
         if !isVideoCopied, subtitle != .none { progress(.subtitles) }
         do { rendering = isVideoCopied ? nil : try subtitleRendering(subtitle, input: input, info: info, directory: cache) }
@@ -792,7 +803,8 @@ public final class HLSJob {
             guard generation == currentGeneration else { throw error }
             diagnostic = error.localizedDescription
             stop()
-            if !isVideoCopied, hardwareEncoding, !(error is CancellationError), !(error is InsufficientSpace) {
+            if MediaPipelineError.isInsufficientSpace(error) { throw MediaPipelineError.insufficientSpace }
+            if !isVideoCopied, hardwareEncoding, !(error is CancellationError) {
                 progress(.softwareFallback)
                 return try await start(input: input, info: info, audioTrack: audioTrack, subtitle: subtitle,
                                        startTime: startTime, hardwareEncoding: false, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay,
@@ -827,7 +839,7 @@ public final class HLSJob {
             guard self.generation == generation else { throw CancellationError() }
             stop()
             try Task.checkCancellation()
-            if error is InsufficientSpace { throw error }
+            if MediaPipelineError.isInsufficientSpace(error) { throw MediaPipelineError.insufficientSpace }
             return nil
         }
     }
@@ -868,11 +880,10 @@ public final class HLSJob {
             return nil
         }
 
-        let cache = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-EarlyHLS-\(UUID().uuidString)", isDirectory: true)
+        let cache = try await createBuffer("EarlyHLS", generation: generation)
         let inputs = cache.appendingPathComponent(".inputs", isDirectory: true)
         let generated = cache.appendingPathComponent(".generated", isDirectory: true)
-        directory = cache
-        try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: false)
         try FileManager.default.createDirectory(at: generated, withIntermediateDirectories: false)
         isVideoCopied = true
         usesOriginalDolby = Self.hasSurround(audio)
@@ -1001,9 +1012,21 @@ public final class HLSJob {
         return cache.appendingPathComponent("master.m3u8")
     }
 
-    private struct InsufficientSpace: LocalizedError {
-        var errorDescription: String? {
-            NSLocalizedString("Not enough space for the video buffer. Free up disk space and try again.", comment: "")
+    private func createBuffer(_ prefix: String, generation currentGeneration: UUID) async throws -> URL {
+        let workspace = try await MediaCache.workspace()
+        try Task.checkCancellation()
+        guard generation == currentGeneration else { throw CancellationError() }
+        try Self.checkDiskSpace(in: workspace)
+        let cache = workspace.appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: false)
+        directory = cache
+        return cache
+    }
+
+    private static func checkDiskSpace(in directory: URL) throws {
+        if let available = (try? directory.resourceValues(forKeys: [.volumeAvailableCapacityKey]))?.volumeAvailableCapacity,
+           available < 256 * 1024 * 1024 {
+            throw MediaPipelineError.insufficientSpace
         }
     }
 
@@ -1011,6 +1034,7 @@ public final class HLSJob {
                      duration: Double, frameRate: Double, onFraction: (@MainActor (Double) -> Void)?) async throws {
         try Task.checkCancellation()
         guard generation == currentGeneration else { throw CancellationError() }
+        try Self.checkDiskSpace(in: cache)
         let process = ProcessRunner()
         runner = process
         let execution = Task.detached(priority: .userInitiated) {
@@ -1020,16 +1044,14 @@ public final class HLSJob {
         let progressFile = cache.appendingPathComponent(".progress")
         let clock = SuspendingClock()
         var deadline = clock.now.advanced(by: .seconds(90))
-        var diskCheck = clock.now
+        var diskCheck = clock.now.advanced(by: .seconds(2))
         var progressSize = 0
         while !process.isFinished {
             try Task.checkCancellation()
             guard generation == currentGeneration else { throw CancellationError() }
             let now = clock.now
             if now >= diskCheck {
-                let capacity = try? cache.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
-                let available = max(capacity?.volumeAvailableCapacityForImportantUsage ?? 0, Int64(capacity?.volumeAvailableCapacity ?? 0))
-                if capacity != nil && available < 256 * 1024 * 1024 { throw InsufficientSpace() }
+                try Self.checkDiskSpace(in: cache)
                 diskCheck = now.advanced(by: .seconds(2))
             }
             if let size = (try? progressFile.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size > progressSize {
@@ -1087,7 +1109,9 @@ public final class HLSJob {
             args += ["-ss", String(max(0, keyTime - audioDelay - 2)), "-seek_timestamp", "1", "-itsoffset", String(audioDelay), "-i", input.path]
         }
         let audioInput = audioDelay == 0 ? 0 : 1
-        args += ["-map", "0:V:0", "-c:v", "copy", "-bsf:v", "noise=amount=0:drop=lt(pts*tb\\,\(keyTime - 0.000001))"]
+        // Annex B lets the MP4 muxer build hvcC from in-band VPS/SPS/PPS when the MKV header lacks them.
+        let annexB = info.videoCodec == "hevc" ? "hevc_mp4toannexb," : ""
+        args += ["-map", "0:V:0", "-c:v", "copy", "-bsf:v", annexB + "noise=amount=0:drop=lt(pts*tb\\,\(keyTime - 0.000001))"]
         // hvc1 keeps HEVC parameter sets in the initialization segment, as Apple requires.
         args += ["-tag:v", info.videoCodec == "hevc" ? "hvc1" : "avc1"]
         var variants = "v:0"
@@ -1176,7 +1200,7 @@ public final class HLSJob {
         }
         if !alreadyExtracted {
             do { try await extract(from: input, outputs: renditions) }
-            catch {
+            catch where !MediaPipelineError.isInsufficientSpace(error) {
                 try Task.checkCancellation()
                 // A broken optional track must not stop the movie or its selected captions.
                 renditions = renditions.filter { $0.choice == selected }
