@@ -11,6 +11,15 @@ final class HEVCStreamingTests: XCTestCase {
         XCTAssertThrowsError(try HLSCodec.hevc(Data()))
     }
 
+    func testDolbyAtmosChannelSignalingReadsTheEC3Extension() {
+        let box = Data([0, 0, 0, 15, 0x64, 0x65, 0x63, 0x33, 0x18, 0, 0x20, 0x0f, 0, 1, 16])
+        XCTAssertEqual(HLSCodec.jocComplexity(in: box), 16)
+        XCTAssertNil(HLSCodec.jocComplexity(in: box.dropLast()))
+        var ordinaryDolby = box
+        ordinaryDolby[13] = 0
+        XCTAssertNil(HLSCodec.jocComplexity(in: ordinaryDolby))
+    }
+
     func testHDRProfilesAndDolbyVisionAreNotSilentlyDowngraded() throws {
         let json = #"{"streams":[{"index":0,"codec_type":"video","codec_name":"hevc","profile":"Main 10","pix_fmt":"yuv420p10le","level":153,"width":3840,"height":2160,"avg_frame_rate":"24000/1001","color_transfer":"smpte2084","color_primaries":"bt2020","color_space":"bt2020nc"}],"format":{"duration":"120","start_time":"0.021"}}"#
         var info = try FFmpegTools.decodeProbe(Data(json.utf8))

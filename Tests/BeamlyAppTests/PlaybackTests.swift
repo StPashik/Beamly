@@ -14,14 +14,17 @@ final class PlaybackTests: XCTestCase {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let movie = folder.appendingPathComponent("Movie.mkv")
         let movieWithoutCaptions = folder.appendingPathComponent("Movie without captions.mkv")
+        let movieWithAlternateAudio = folder.appendingPathComponent("Movie with alternate audio.mkv")
         let captions = folder.appendingPathComponent("captions.srt")
         try "1\n00:00:00,500 --> 00:00:29,000\nRoute handoff caption\n".write(to: captions, atomically: true, encoding: .utf8)
         let generator = Process()
         generator.executableURL = ffmpeg
         generator.arguments = ["-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "color=c=blue:size=160x90:rate=10:duration=30",
             "-f", "lavfi", "-i", "sine=frequency=440:duration=30", "-f", "lavfi", "-i", "sine=frequency=880:duration=30", "-i", captions.path,
-            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s", "-map", "3:s", "-c:v", "libx264", "-g", "10", "-bf", "0",
-            "-c:a:0", "eac3", "-ac:a:0", "6", "-c:a:1", "aac", "-c:s", "srt",
+            "-f", "lavfi", "-i", "sine=frequency=660:duration=30",
+            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s", "-map", "3:s", "-map", "4:a", "-c:v", "libx264", "-g", "10", "-bf", "0",
+            "-c:a:0", "eac3", "-ac:a:0", "6", "-c:a:1", "aac", "-c:a:2", "eac3", "-ac:a:2", "6", "-c:s", "srt",
+            "-metadata:s:a:0", "language=rus", "-metadata:s:a:2", "language=eng",
             "-metadata:s:s:0", "language=rus", "-metadata:s:s:1", "language=rus",
             "-metadata:s:s:0", "title=Russian \"Captions\"", "-metadata:s:s:1", "title=Russian \"Captions\"", movie.path]
         generator.standardInput = FileHandle.nullDevice
@@ -31,7 +34,9 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(generator.terminationStatus, 0)
         let remux = Process()
         remux.executableURL = ffmpeg
-        remux.arguments = ["-v", "error", "-nostdin", "-i", movie.path, "-map", "0:v", "-map", "0:a", "-c", "copy", movieWithoutCaptions.path]
+        remux.arguments = ["-v", "error", "-nostdin", "-i", movie.path,
+            "-map", "0:v", "-map", "0:a:0", "-map", "0:a:1", "-c", "copy", movieWithoutCaptions.path,
+            "-map", "0:v", "-map", "0:a:0", "-map", "0:a:2", "-c", "copy", movieWithAlternateAudio.path]
         remux.standardOutput = FileHandle.nullDevice
         remux.standardError = FileHandle.nullDevice
         try remux.run(); remux.waitUntilExit()
@@ -41,7 +46,7 @@ final class PlaybackTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defaults.set(ffmpeg.deletingLastPathComponent().path, forKey: "toolsDirectory")
         var playlist = Playlist()
-        playlist.append([movieWithoutCaptions, movie]); playlist.items[0].position = 8; playlist.items[0].duration = 30
+        playlist.append([movieWithoutCaptions, movie, movieWithAlternateAudio]); playlist.items[0].position = 8; playlist.items[0].duration = 30
         let state = folder.appendingPathComponent("queue.json")
         try JSONEncoder().encode(playlist).write(to: state)
         let player = AirPlayTestPlayer()
@@ -98,7 +103,23 @@ final class PlaybackTests: XCTestCase {
         let dolbyMaster = String(decoding: try await session.data(from: dolbyURL).0, as: UTF8.self)
         XCTAssertTrue(dolbyMaster.contains(",ec-3\""))
         XCTAssertFalse(dolbyMaster.contains("mp4a"))
-        XCTAssertEqual(dolbyMaster.split(separator: "\n").filter { $0.hasPrefix("#EXT-X-MEDIA:TYPE=AUDIO,") }.count, 1)
+        XCTAssertEqual(dolbyMaster.split(separator: "\n").filter { $0.hasPrefix("#EXT-X-MEDIA:TYPE=AUDIO,") }.count, 2)
+        XCTAssertEqual(model.audioOptions.map(\.id), [1, 2, 5])
+        let loadedAudioGroup = try await captionedItem.asset.loadMediaSelectionGroup(for: .audible)
+        let audioGroup = try XCTUnwrap(loadedAudioGroup)
+        func activeLanguage() -> String? {
+            MediaLanguages.normalized(captionedItem.currentMediaSelection.selectedMediaOption(in: audioGroup)?.extendedLanguageTag)
+        }
+        XCTAssertEqual(activeLanguage(), "ru")
+        model.setAudio(5)
+        try await wait { activeLanguage() == "en" }
+        XCTAssertTrue(player.currentItem === captionedItem)
+        model.setAudio(nil)
+        try await wait { activeLanguage() == "ru" }
+        let receiverChoice = try XCTUnwrap(audioGroup.options.first { MediaLanguages.normalized($0.extendedLanguageTag) == "en" })
+        captionedItem.select(receiverChoice, in: audioGroup)
+        try await wait { model.audioID == 5 }
+        XCTAssertTrue(player.currentItem === captionedItem)
         let loadedCaptionGroup = try await captionedItem.asset.loadMediaSelectionGroup(for: .legible)
         let group = try XCTUnwrap(loadedCaptionGroup)
         XCTAssertEqual(group.options.count, 2)
@@ -126,6 +147,7 @@ final class PlaybackTests: XCTestCase {
         XCTAssertFalse(stereoMaster.contains("ec-3"))
         XCTAssertTrue(model.isVideoCopied)
         XCTAssertEqual(model.position, dolbyPosition, accuracy: 1.5)
+        XCTAssertEqual(model.audioID, 5)
         XCTAssertEqual(model.subtitleID, 4)
         let stereoCaptions = try await stereoItem.asset.loadMediaSelectionGroup(for: .legible)
         XCTAssertNotNil(stereoItem.currentMediaSelection.selectedMediaOption(in: try XCTUnwrap(stereoCaptions)))
@@ -178,7 +200,12 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(player.playCalls, calls, "A real disconnection cancels play intent")
         model.togglePlay()
         try await wait { readyAndPlaying() }
-        model.setAudio(2)
+        model.select(playlist.items[2].id)
+        try await wait { readyAndPlaying() }
+        XCTAssertTrue(model.isUsingHLS, "An MKV with alternate audio needs HLS even when it has no captions")
+        let audioOnlyGroup = try await player.currentItem?.asset.loadMediaSelectionGroup(for: .audible)
+        XCTAssertEqual(audioOnlyGroup?.options.count, 2)
+        model.setAudioDelay(0.5)
         model.stop()
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertNil(player.currentItem)

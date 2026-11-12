@@ -8,7 +8,7 @@ Beamly uses AVPlayer and the system AirPlay picker. The quality-preserving path 
 
 With **Preserve video quality** enabled (the default), compatible MP4/M4V/MOV files are published unchanged. For supported HEVC or H.264 files that use HLS, FFmpeg copies the compressed video into fragmented MP4 segments. No video encoder, resizing, color conversion, or subtitle filter runs in this path. The interface reports **Original video quality**; the metadata row describes the source file.
 
-For supported H.264 MKV files with a selected Dolby Digital or Dolby Digital Plus surround track, Beamly can prepare a temporary MP4 when the file has no embedded text captions, subtitles are off, and audio timing is unadjusted. FFmpeg copies the video and selected audio. The MP4 index gives AVPlayer the full movie and the saved position is applied as a seek. If the MP4 cannot be prepared or played, Beamly uses HLS.
+For supported H.264 MKV files with a selected Dolby Digital or Dolby Digital Plus surround track, Beamly can prepare a temporary MP4 when the file has no embedded text captions or compatible alternate audio, subtitles are off, and audio timing is unadjusted. FFmpeg copies the video and selected audio. The MP4 index gives AVPlayer the full movie and the saved position is applied as a seek. If the MP4 cannot be prepared or played, Beamly uses HLS.
 
 The remux path accepts HEVC Main/Main 10, 4:2:0, up to Level 5.1, 4096 × 2160, and 60 fps for SDR / 30 fps for HDR. HDR10 (PQ) and HLG retain their original bit depth, color characteristics, and in-bitstream metadata. The multivariant playlist declares `hvc1`, resolution, frame rate, and `VIDEO-RANGE`. HDR10+ dynamic metadata and Dolby Vision are not certified by this implementation. Dolby Vision remuxing is rejected explicitly rather than silently losing or mislabeling its metadata; compatible Dolby Vision MP4 files can still use direct playback.
 
@@ -18,11 +18,11 @@ Turning off **Preserve video quality** explicitly selects H.264 up to 1080p and 
 
 ## Audio
 
-The app's audio menu chooses the source track by its global stream index. Original-quality HLS copies multichannel AC-3/E-AC-3 into a single Dolby rendition for compatible receivers. If AVPlayer reports a playback error, Beamly retries once with stereo AAC at the same movie position and keeps the selected captions. Apple specifies stereo AAC for general HLS delivery. The fast path targets receivers that support Dolby audio.
+The app's audio menu chooses the source track by its global stream index. Original-quality HLS copies multichannel AC-3/E-AC-3 and publishes compatible alternate tracks in the same audio group. Tracks in the group have matching codecs, channel counts, and durations. Beamly reads the E-AC-3 initialization segment to signal Dolby Atmos when its JOC extension is present. If AVPlayer reports a Dolby playback error, Beamly retries once with the selected track in stereo AAC at the same movie position and keeps the selected captions. Apple specifies stereo AAC for general HLS delivery. The fast path targets receivers that support Dolby audio.
 
 Beamly copies compatible AAC-LC and converts other formats to stereo AAC. When conversion is needed in original-quality HLS, FFmpeg tries AudioToolbox first and then its built-in AAC encoder if AudioToolbox fails. DTS/TrueHD/Atmos conversion or passthrough is not promised. Audio conversion is independent of video and preserves its resolution.
 
-Changing the source audio track prepares the stream with the selected track, then restores the movie position and paused/playing state. Original video and audio files are never modified.
+Apple TV and Beamly can switch tracks in the current HLS audio group during playback. Choose a track with a different format in Beamly's audio menu to prepare a new stream at the current position. Source files are read in place.
 
 **Settings → Track preferences** stores independent audio and subtitle choices. Language codes from stream metadata are normalized using Foundation, including two- and three-letter ISO codes and regional tags. A matching non-commentary audio track is preferred, with the default track winning ties. **Original audio** uses FFmpeg's `original` disposition or AVFoundation's `isOriginalContent` characteristic; without that marker, or if a requested language is absent, Beamly uses the file's default audio. Settings apply only when a video is opened, so manual choices survive seeks and stream rebuilds. Queue transitions and relaunches use the saved preferences.
 
@@ -86,7 +86,7 @@ Automated checks use generated media, never personal movies:
 
 - 3840 × 2160, 10-bit HEVC with PQ, BT.2020, mastering-display metadata, and content-light metadata;
 - exact hashes of every decoded frame before and after remuxing;
-- original surround audio, stereo retry, and source-track selection;
+- original surround audio, stereo retry, and audio selection within the same stream;
 - native AVPlayer loading, decoding, resume with the full duration, receiver-style seeks back to the beginning, and caption selection;
 - embedded/external text subtitles, overlapping cues, and timeline offsets;
 - actual HTTP fetching of the master, media playlists, initialization segments, fragments, and captions;
@@ -96,7 +96,7 @@ Automated checks use generated media, never personal movies:
 - signed audio corrections with AAC and surround, original 4K frame/HDR metadata preservation, caption clocks, conversion, source-duration bounds, and seeks beyond shifted audio.
 - history migration, completed-video restart, queue removal/re-addition, persisted history clearing, and shared mini-remote controls/window lifecycle.
 
-Physical Apple TV 4K trials used a 1080p MKV with Dolby Digital Plus. They verified opening the AirPlay picker during preparation, resuming with sound, and seeking back to the beginning with the receiver remote. A Dolby-only HLS trial verified sound and changing or turning off subtitles with the remote. Hardware validation of 4K/HDR remains pending.
+Physical Apple TV 4K trials used a 1080p MKV with Dolby Digital Plus. They verified opening the AirPlay picker during preparation, resuming with sound, and seeking back to the beginning with the receiver remote. Dolby HLS trials verified switching audio languages and changing or turning off subtitles with the remote. Hardware validation of 4K/HDR and Atmos speaker output remains pending.
 
 The native 4K frame test uses HDR only when AVPlayer reports HDR eligibility, otherwise 4K SDR. HDR10/HLG metadata and decoded-frame preservation are always checked by FFmpeg. `BEAMLY_TEST_TOOLS_DIRECTORY=/absolute/path/to/tools Scripts/test.sh` runs the 4K fixtures against an isolated FFmpeg/ffprobe installation without replacing system tools.
 
