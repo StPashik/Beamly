@@ -9,6 +9,7 @@
 - Switch between compatible audio tracks on Apple TV or in Beamly while the current HLS stream plays.
 - Reflect audio and subtitle selections made on Apple TV in Beamly's menus.
 - Show timeline thumbnails when scrubbing with the Apple TV remote during original-quality H.264 HLS playback.
+- Fix dragging the seek slider on the Mac so it seeks the video without moving the window.
 - Open the AirPlay device picker as soon as Play is pressed when no receiver is known, so device selection and video preparation can happen together.
 
 # Beamly 1.0.11
