@@ -14,9 +14,10 @@ Every URL has `/launch-token/publication-id/filename`, with independent random U
 | Unsupported method | `405`, `Allow: GET, HEAD`, empty body |
 | Malformed request / headers | `400`, empty body |
 | Headers above 16 KiB | `431`, empty body |
+| An early HLS segment stays pending for 12 seconds | `503`, `Retry-After: 1`, empty body |
 
 Connections close after one response. File reads use at most 256 KiB at a time and wait for each network send before reading the next chunk. Clients that make no progress for 15 seconds are closed. Generated directory publications expose only root-level `.m3u8`, `.ts`, `.m4s`, `.mp4`, `.m4v`, `.mov`, `.vtt` and `.aac` regular files. The transcoder's `.inputs` directory and diagnostics are never served.
 
-The quality-preserving HLS path reuses this contract for multivariant/audio/subtitle playlists, fMP4 initialization segments, `.m4s` fragments, and timestamp-mapped WebVTT. It adds no new endpoints or upload behavior. See [video quality and AirPlay](Media-Streaming.md).
+The quality-preserving HLS path uses this contract for multivariant/audio/subtitle playlists, fMP4 initialization segments, `.m4s` fragments, and timestamp-mapped WebVTT. With early HLS, requests for explicitly listed pending files can wait for FFmpeg's atomic rename while the server continues to serve ready files. See [video quality and AirPlay](Media-Streaming.md).
 
 `MediaHTTPServerTests` exercises the actual listener via loopback URLSession requests: full files larger than one chunk, HEAD, explicit/open/suffix ranges, range failures, capability revocation, HLS MIME, confinement (including percent-encoded traversal), symlinks and empty files. These checks establish the local HTTP contract; they do not establish successful playback on physical Apple TV hardware.

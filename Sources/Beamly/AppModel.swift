@@ -677,7 +677,7 @@ final class AppModel: ObservableObject {
     }
 
     private func prepare(at start: Double, autoPlay: Bool, applyTrackPreferences: Bool = false,
-                         allowMP4Remux: Bool = true, allowDolbyAudio: Bool = true) {
+                         allowMP4Remux: Bool = true, allowDolbyAudio: Bool = true, allowEarlyHLS: Bool = true) {
         guard let movie = current else { return }
         let showPicker = shouldShowAirPlayPicker
         cancelPlayback(keepingItem: true)
@@ -768,14 +768,27 @@ final class AppModel: ObservableObject {
                         default: break
                         }
                     }
-                    let mp4: URL?
-                    if allowMP4Remux, preserveQuality, choice == .none, audioDelay == 0 {
-                        mp4 = try await newJob.prepareNativeMP4(input: movie.url, info: metadata, audioTrack: audioID,
-                                                              onFraction: reportFraction, progress: reportStage)
+                    let earlyPlaylist: URL?
+                    if allowEarlyHLS, start == 0, preserveQuality, allowDolbyAudio, choice == .none, audioDelay == 0 {
+                        earlyPlaylist = try await newJob.prepareEarlyHLS(input: movie.url, info: metadata, audioTrack: audioID,
+                            subtitleDelay: captionDelay, onFailure: { [weak self] error in
+                                self?.playbackFailed(error.localizedDescription, generation: generation, retry: .completeHLS)
+                            }, progress: reportStage)
                     } else {
-                        mp4 = nil
+                        earlyPlaylist = nil
                     }
-                    if let mp4 {
+                    if let earlyPlaylist {
+                        try Task.checkCancellation()
+                        guard loadID == generation else { return }
+                        duration = newJob.earlyHLSVideoDuration ?? duration
+                        retry = .completeHLS
+                        playbackURL = try server.publish(directory: earlyPlaylist.deletingLastPathComponent(),
+                            playlist: earlyPlaylist.lastPathComponent, pendingFiles: newJob.pendingHLSFiles) { [weak self] in
+                                Task { @MainActor in self?.playbackFailed(generation: generation, retry: .completeHLS) }
+                            }
+                    } else if allowMP4Remux, preserveQuality, choice == .none, audioDelay == 0,
+                              let mp4 = try await newJob.prepareNativeMP4(input: movie.url, info: metadata, audioTrack: audioID,
+                                                                        onFraction: reportFraction, progress: reportStage) {
                         try Task.checkCancellation()
                         guard loadID == generation else { return }
                         retry = .hls
@@ -886,21 +899,24 @@ final class AppModel: ObservableObject {
                 save()
             } catch is CancellationError {
             } catch {
-                playbackFailed(error.localizedDescription, generation: generation, retry: job?.usesOriginalDolby == true ? .stereo : nil)
+                let retry: PlaybackRetry?
+                if job?.pendingHLSFiles.isEmpty == false { retry = .completeHLS }
+                else { retry = job?.usesOriginalDolby == true ? .stereo : nil }
+                playbackFailed(error.localizedDescription, generation: generation, retry: retry)
             }
         }
     }
 
     private enum PlaybackRetry {
-        case hls, stereo
+        case hls, completeHLS, stereo
     }
 
-    private func playbackFailed(_ reason: String, generation: UUID, retry: PlaybackRetry?) {
+    private func playbackFailed(_ reason: String? = nil, generation: UUID, retry: PlaybackRetry?) {
         guard loadID == generation else { return }
         if let retry {
-            prepare(at: position, autoPlay: playRequested, allowMP4Remux: false, allowDolbyAudio: retry == .hls)
+            prepare(at: position, autoPlay: playRequested, allowMP4Remux: false, allowDolbyAudio: retry != .stereo, allowEarlyHLS: false)
         } else {
-            errorMessage = reason
+            errorMessage = reason ?? NSLocalizedString("The video stream was interrupted.", comment: "")
             cancelPlayback()
         }
     }
@@ -980,6 +996,7 @@ final class AppModel: ObservableObject {
             // Keep the old item and its URLs alive until replacement is ready so AVKit retains the route.
             if previousPlayback?.item !== item {
                 releasePreviousPlayback()
+                job?.cancelPendingPreparation()
                 previousPlayback = (item, server, job)
             }
             else { job?.stop(); server.stop() }

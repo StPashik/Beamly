@@ -8,7 +8,13 @@ public final class MediaHTTPServer: @unchecked Sendable {
     // All mutable state is confined to queue, including Network.framework callbacks.
     private enum Publication {
         case file(URL, name: String)
-        case directory(URL)
+        case directory(URL, pendingFiles: Set<String>, onPendingTimeout: (@Sendable () -> Void)?)
+    }
+
+    private struct PublishedFile {
+        let url: URL
+        var canWait = false
+        var onPendingTimeout: (@Sendable () -> Void)?
     }
 
     private final class Client {
@@ -81,14 +87,15 @@ public final class MediaHTTPServer: @unchecked Sendable {
         }
     }
 
-    public func publish(directory: URL, playlist: String = "stream.m3u8") throws -> URL {
+    public func publish(directory: URL, playlist: String = "stream.m3u8", pendingFiles: Set<String> = [],
+                        onPendingTimeout: (@Sendable () -> Void)? = nil) throws -> URL {
         try queue.sync {
             let directory = directory.standardizedFileURL.resolvingSymlinksInPath()
             let values = try directory.resourceValues(forKeys: [.isDirectoryKey])
             guard values.isDirectory == true, Self.isMediaName(playlist) else {
                 throw ServerError("The HLS directory or playlist name is invalid.")
             }
-            return try register(.directory(directory), name: playlist)
+            return try register(.directory(directory, pendingFiles: pendingFiles, onPendingTimeout: onPendingTimeout), name: playlist)
         }
     }
 
@@ -181,7 +188,31 @@ public final class MediaHTTPServer: @unchecked Sendable {
             guard headers[key] == nil else { respond(client, status: 400); return }
             headers[key] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         }
-        guard let file = resolve(String(request[1])) else { respond(client, status: 404); return }
+        serveFile(client, target: String(request[1]), method: method, range: headers["range"])
+    }
+
+    private func serveFile(_ client: Client, target: String, method: String, range: String?, waitUntil: DispatchTime? = nil) {
+        guard clients[client.id] != nil else { return }
+        guard let published = resolve(target) else { respond(client, status: 404); return }
+        let file = published.url
+        let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard values?.isSymbolicLink != true else { respond(client, status: 404); return }
+        guard values?.isRegularFile == true else {
+            guard published.canWait, values == nil else { respond(client, status: 404); return }
+            // shortcut: a distant seek can wait for sequential remuxing. Generate the requested range independently if this becomes a bottleneck.
+            let deadline = waitUntil ?? .now() + .seconds(12)
+            guard DispatchTime.now() < deadline else {
+                respond(client, status: 503, fields: ["Retry-After": "1"])
+                published.onPendingTimeout?()
+                return
+            }
+            // FFmpeg publishes segments by rename. Keep serving other connections while this one waits.
+            queue.asyncAfter(deadline: .now() + .milliseconds(35)) { [weak self, weak client] in
+                guard let self, let client else { return }
+                self.serveFile(client, target: target, method: method, range: range, waitUntil: deadline)
+            }
+            return
+        }
         do {
             let handle = try FileHandle(forReadingFrom: file)
             client.file = handle
@@ -190,7 +221,7 @@ public final class MediaHTTPServer: @unchecked Sendable {
             var length = size
             var status = 200
             var fields = ["Accept-Ranges": "bytes", "Content-Type": Self.mimeType(file), "Cache-Control": "no-store"]
-            if let range = headers["range"] {
+            if let range {
                 guard let bytes = Self.byteRange(range, size: size) else {
                     respond(client, status: 416, fields: ["Content-Range": "bytes */\(size)"]); return
                 }
@@ -209,7 +240,7 @@ public final class MediaHTTPServer: @unchecked Sendable {
         } catch { respond(client, status: 404) }
     }
 
-    private func resolve(_ target: String) -> URL? {
+    private func resolve(_ target: String) -> PublishedFile? {
         guard target.hasPrefix("/"),
               let path = target.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first.flatMap({ String($0).removingPercentEncoding }),
               !path.contains("\\"), !path.contains("\0") else { return nil }
@@ -218,20 +249,17 @@ public final class MediaHTTPServer: @unchecked Sendable {
               !parts[3].hasPrefix("."), !parts[3].hasSuffix(".tmp"),
               let publication = publications[String(parts[2])] else { return nil }
         let name = String(parts[3])
-        let file: URL
         switch publication {
         case .file(let published, let expected):
             guard name == expected else { return nil }
-            file = published
-        case .directory(let directory):
+            return PublishedFile(url: published)
+        case .directory(let directory, let pendingFiles, let onPendingTimeout):
             guard Self.isMediaName(name) else { return nil }
-            file = directory.appendingPathComponent(name)
+            let file = directory.appendingPathComponent(name)
             // Resolve symlinks before confinement checks; .inputs must never be served.
             guard file.resolvingSymlinksInPath().deletingLastPathComponent().path == directory.path else { return nil }
+            return PublishedFile(url: file, canWait: pendingFiles.contains(name), onPendingTimeout: onPendingTimeout)
         }
-        guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
-              values.isRegularFile == true, values.isSymbolicLink != true else { return nil }
-        return file
     }
 
     static func byteRange(_ value: String, size: UInt64) -> ClosedRange<UInt64>? {
@@ -263,7 +291,8 @@ public final class MediaHTTPServer: @unchecked Sendable {
     }
 
     private func sendHeader(_ client: Client, status: Int, fields: [String: String], completion: @escaping () -> Void) {
-        let reason = [200: "OK", 206: "Partial Content", 400: "Bad Request", 404: "Not Found", 405: "Method Not Allowed", 416: "Range Not Satisfiable", 431: "Request Header Fields Too Large"][status] ?? "Error"
+        let reason = [200: "OK", 206: "Partial Content", 400: "Bad Request", 404: "Not Found", 405: "Method Not Allowed",
+                      416: "Range Not Satisfiable", 431: "Request Header Fields Too Large", 503: "Service Unavailable"][status] ?? "Error"
         var text = "HTTP/1.1 \(status) \(reason)\r\nConnection: close\r\n"
         for (name, value) in fields { text += "\(name): \(value)\r\n" }
         text += "\r\n"

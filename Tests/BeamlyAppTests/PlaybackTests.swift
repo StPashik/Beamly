@@ -7,6 +7,107 @@ import SwiftUI
 
 final class PlaybackTests: XCTestCase {
     @MainActor
+    func testEarlyHLSStartsWithLongGOPsAndRetriesWithTheCompleteStream() async throws {
+        let tools = mediaTestTools()
+        let ffmpeg = try XCTUnwrap(tools.ffmpegURL)
+        let ffprobe = try XCTUnwrap(tools.ffprobeURL)
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-early-hls-test-\(UUID())")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let movie = folder.appendingPathComponent("Movie.mkv")
+        let captions = folder.appendingPathComponent("captions.srt")
+        try "1\n00:00:01,000 --> 00:01:03,000\nEarly HLS caption\n".write(to: captions, atomically: true, encoding: .utf8)
+        let generator = Process()
+        generator.executableURL = ffmpeg
+        generator.arguments = ["-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=c=blue:size=160x90:rate=10:duration=60",
+            "-f", "lavfi", "-i", "anullsrc=r=48000:cl=5.1:d=60", "-i", captions.path,
+            "-map", "0:v", "-map", "1:a", "-map", "2:s", "-c:v", "libx264", "-g", "104",
+            "-sc_threshold", "0", "-bf", "0", "-c:a", "ac3", "-af", "asetpts=PTS+256/SR/TB", "-c:s", "srt", movie.path]
+        generator.standardInput = FileHandle.nullDevice
+        try generator.run()
+        generator.waitUntilExit()
+        XCTAssertEqual(generator.terminationStatus, 0)
+        let metadata = try await tools.probe(url: movie)
+        XCTAssertGreaterThan(metadata.duration, 62)
+
+        try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("real-ffmpeg"), withDestinationURL: ffmpeg)
+        try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("ffprobe"), withDestinationURL: ffprobe)
+        let shim = folder.appendingPathComponent("ffmpeg")
+        try """
+            #!/bin/sh
+            set -e
+            tools_dir="$(dirname "$0")"
+            case " $* " in
+              *" .rendered.m3u8 "*)
+                pwd > "$tools_dir/early-cache"
+                mkdir .staged
+                (cd .staged && "$tools_dir/real-ffmpeg" "$@")
+                mv .staged/init_0.mp4 .staged/iframe-init.mp4 .staged/iframe-000000.m4s \\
+                   .staged/segment_0_000000.m4s .staged/segment_0_000001.m4s .
+                attempts=0
+                until [ -f "$tools_dir/finish-early" ]; do
+                    attempts=$((attempts + 1))
+                    [ "$attempts" -lt 200 ] || exit 1
+                    sleep 0.05
+                done
+                mv .staged/*.m4s .staged/.rendered.m3u8 .staged/.rendered-iframe.m3u8 .
+                exit 0 ;;
+            esac
+            exec "$tools_dir/real-ffmpeg" "$@"
+            """.write(to: shim, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shim.path)
+        let suite = "app.beamly.early-hls-test.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(folder.path, forKey: "toolsDirectory")
+        defaults.set("off", forKey: "preferredSubtitleLanguage")
+        var queue = Playlist()
+        queue.append([movie])
+        let state = folder.appendingPathComponent("queue.json")
+        try JSONEncoder().encode(queue).write(to: state)
+        let player = AirPlayTestPlayer()
+        player.isMuted = true
+        player.setExternalPlaybackActive(true)
+        let model = AppModel(stateURL: state, defaults: defaults, player: player)
+        defer { model.shutdown() }
+
+        model.togglePlay()
+        try await wait(diagnostic: model.errorMessage ?? model.playbackStatus) {
+            player.timeControlStatus == .playing && !model.isPreparing
+        }
+        let earlyItem = try XCTUnwrap(player.currentItem)
+        let cachePath = try String(contentsOf: folder.appendingPathComponent("early-cache"), encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let cache = URL(fileURLWithPath: cachePath, isDirectory: true)
+        let manifest = try String(contentsOf: cache.appendingPathComponent("stream_0.m3u8"), encoding: .utf8)
+        let last = try XCTUnwrap(manifest.split(separator: "\n").last { $0.hasSuffix(".m4s") })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cache.appendingPathComponent(String(last)).path))
+        XCTAssertTrue(manifest.contains("#EXT-X-ENDLIST"))
+        XCTAssertEqual(earlyItem.duration.seconds, 60, accuracy: 0.1)
+        XCTAssertEqual(model.duration, 60, accuracy: 0.1)
+        let seekable = earlyItem.seekableTimeRanges.map { $0.timeRangeValue.end.seconds }.max() ?? 0
+        XCTAssertEqual(seekable, 60, accuracy: 0.1)
+        let captionsGroup = try await earlyItem.asset.loadMediaSelectionGroup(for: .legible)
+        XCTAssertEqual(captionsGroup?.options.count, 1)
+
+        model.seek(58)
+        try Data().write(to: folder.appendingPathComponent("finish-early"))
+        try await wait { player.currentTime().seconds >= 57.9 && player.timeControlStatus == .playing }
+        XCTAssertTrue(player.currentItem === earlyItem)
+        model.seek(0)
+        try await wait { player.currentTime().seconds < 1 && player.timeControlStatus == .playing }
+
+        NotificationCenter.default.post(name: .AVPlayerItemFailedToPlayToEndTime, object: earlyItem)
+        try await wait(diagnostic: model.errorMessage ?? "") {
+            player.currentItem !== earlyItem && player.timeControlStatus == .playing && !model.isPreparing
+        }
+        XCTAssertTrue(model.isUsingHLS)
+        XCTAssertTrue(model.isVideoCopied)
+        XCTAssertEqual(player.emptyReplacements, 0)
+        XCTAssertNil(model.errorMessage)
+    }
+
+    @MainActor
     func testSelectedAirPlayRouteSurvivesStartTrackChangesAndReconnection() async throws {
         let tools = mediaTestTools()
         let ffmpeg = try XCTUnwrap(tools.ffmpegURL)
