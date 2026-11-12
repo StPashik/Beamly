@@ -134,7 +134,7 @@ final class AppModel: ObservableObject {
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor in
                 guard let self, !self.isPreparing, self.player.currentItem != nil, time.seconds.isFinite else { return }
-                if self.isExternal, self.isUsingHLS { self.refreshTrackChoices() }
+                if self.isExternal { self.refreshTrackChoices() }
                 self.position = min(self.duration, max(0, self.sourceOffset + time.seconds))
                 self.playlist.remember(position: self.position, duration: self.duration)
                 let second = Int(self.position)
@@ -484,11 +484,15 @@ final class AppModel: ObservableObject {
 
     private func refreshTrackChoices() {
         guard let item = player.currentItem else { return }
-        if isUsingHLS, let group = audioGroup,
+        if let group = audioGroup,
            let option = item.currentMediaSelection.selectedMediaOption(in: group),
            let id = audioChoices.first(where: { $0.value == option })?.key {
-            let defaultID = info?.defaultAudioTrack?.id
-            if id != (audioID ?? defaultID) { audioID = id == defaultID ? nil : id }
+            let nativeDefault = isUsingHLS ? nil : group.defaultOption.flatMap { option in
+                audioChoices.first(where: { $0.value == option })?.key
+            }
+            let defaultID = nativeDefault ?? info?.defaultAudioTrack?.id
+            // Keep the Default menu choice until the receiver actually switches tracks.
+            if id != (audioID ?? defaultID) { audioID = id }
         }
         guard let group = subtitleGroup else { return }
         guard let option = item.currentMediaSelection.selectedMediaOption(in: group) else {
@@ -864,7 +868,7 @@ final class AppModel: ObservableObject {
                                              generation: generation, retry: retry)
                     }
                 }
-                if subtitleGroup != nil || (isUsingHLS && audioGroup != nil) {
+                if audioGroup != nil || subtitleGroup != nil {
                     trackSelectionObserver = NotificationCenter.default.addObserver(forName: AVPlayerItem.mediaSelectionDidChangeNotification, object: item, queue: .main) { [weak self] _ in
                         Task { @MainActor in
                             guard let self, self.loadID == generation, !self.isPreparing else { return }

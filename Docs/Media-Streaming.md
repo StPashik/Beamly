@@ -24,6 +24,8 @@ Beamly copies compatible AAC-LC and converts other formats to stereo AAC. When c
 
 Apple TV and Beamly can switch tracks in the current HLS audio group during playback. Choose a track with a different format in Beamly's audio menu to prepare a new stream at the current position. Source files are read in place.
 
+Beamly updates its audio and subtitle menus when AVPlayer reports a selection made on the receiver. This also applies to files played directly through AVPlayer.
+
 **Settings → Track preferences** stores independent audio and subtitle choices. Language codes from stream metadata are normalized using Foundation, including two- and three-letter ISO codes and regional tags. A matching non-commentary audio track is preferred, with the default track winning ties. **Original audio** uses FFmpeg's `original` disposition or AVFoundation's `isOriginalContent` characteristic; without that marker, or if a requested language is absent, Beamly uses the file's default audio. Settings apply only when a video is opened, so manual choices survive seeks and stream rebuilds. Queue transitions and relaunches use the saved preferences.
 
 **Audio timing…** in the speaker menu stores a per-video correction from −10 to +10 seconds in 0.1-second steps. Positive values delay audio. A corrected MP4 uses HLS instead of direct playback. The original-quality path reads audio from a second input with FFmpeg's `-itsoffset`, leaving video packets and HDR metadata unchanged; audio preroll and packet trimming use the shifted timestamps. Stereo AAC and AC-3/E-AC-3 surround retain their existing copy paths. Compatibility conversion seeks the audio input independently, retaining the movie and subtitle clocks. Hardware-to-software retry forwards the correction. This controls a fixed offset; actual receiver latency still needs physical calibration.
@@ -86,7 +88,7 @@ Automated checks use generated media, never personal movies:
 
 - 3840 × 2160, 10-bit HEVC with PQ, BT.2020, mastering-display metadata, and content-light metadata;
 - exact hashes of every decoded frame before and after remuxing;
-- original surround audio, stereo retry, and audio selection within the same stream;
+- original surround audio, stereo retry, and receiver selection reflected in Beamly during playback and on pause;
 - native AVPlayer loading, decoding, resume with the full duration, receiver-style seeks back to the beginning, and caption selection;
 - embedded/external text subtitles, overlapping cues, and timeline offsets;
 - actual HTTP fetching of the master, media playlists, initialization segments, fragments, and captions;
@@ -96,7 +98,7 @@ Automated checks use generated media, never personal movies:
 - signed audio corrections with AAC and surround, original 4K frame/HDR metadata preservation, caption clocks, conversion, source-duration bounds, and seeks beyond shifted audio.
 - history migration, completed-video restart, queue removal/re-addition, persisted history clearing, and shared mini-remote controls/window lifecycle.
 
-Physical Apple TV 4K trials used a 1080p MKV with Dolby Digital Plus. They verified opening the AirPlay picker during preparation, resuming with sound, and seeking back to the beginning with the receiver remote. Dolby HLS trials verified switching audio languages and changing or turning off subtitles with the remote. Hardware validation of 4K/HDR and Atmos speaker output remains pending.
+Physical Apple TV 4K trials used a 1080p MKV with Dolby Digital Plus. They verified opening the AirPlay picker during preparation, resuming with sound, and seeking back to the beginning with the receiver remote. Dolby HLS trials verified audio and subtitle changes from the remote, including updates to Beamly's selection while paused. Hardware validation of 4K/HDR and Atmos speaker output remains pending.
 
 The native 4K frame test uses HDR only when AVPlayer reports HDR eligibility, otherwise 4K SDR. HDR10/HLG metadata and decoded-frame preservation are always checked by FFmpeg. `BEAMLY_TEST_TOOLS_DIRECTORY=/absolute/path/to/tools Scripts/test.sh` runs the 4K fixtures against an isolated FFmpeg/ffprobe installation without replacing system tools.
 

@@ -7,6 +7,7 @@
 - Publish embedded text subtitles as separate HLS tracks so Apple TV can switch or turn them off during playback.
 - Copy multichannel Dolby Digital or Dolby Digital Plus into compatible HLS streams. If AVPlayer reports a playback error, retry with stereo AAC at the same position and retain the selected captions.
 - Switch between compatible audio tracks on Apple TV or in Beamly while the current HLS stream plays.
+- Reflect audio and subtitle selections made on Apple TV in Beamly's menus.
 - Open the AirPlay device picker as soon as Play is pressed when no receiver is known, so device selection and video preparation can happen together.
 
 # Beamly 1.0.11

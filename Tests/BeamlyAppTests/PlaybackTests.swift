@@ -116,7 +116,15 @@ final class PlaybackTests: XCTestCase {
         XCTAssertTrue(player.currentItem === captionedItem)
         model.setAudio(nil)
         try await wait { activeLanguage() == "ru" }
+        XCTAssertNil(model.audioID)
+        model.togglePlay()
+        try await wait { !model.isPlaying }
         let receiverChoice = try XCTUnwrap(audioGroup.options.first { MediaLanguages.normalized($0.extendedLanguageTag) == "en" })
+        captionedItem.select(receiverChoice, in: audioGroup)
+        try await wait { model.audioID == 5 }
+        let fileDefault = try XCTUnwrap(audioGroup.defaultOption)
+        captionedItem.select(fileDefault, in: audioGroup)
+        try await wait { model.audioID == 1 }
         captionedItem.select(receiverChoice, in: audioGroup)
         try await wait { model.audioID == 5 }
         XCTAssertTrue(player.currentItem === captionedItem)
@@ -134,8 +142,15 @@ final class PlaybackTests: XCTestCase {
         let alternate = try XCTUnwrap(group.options.first { $0 != first })
         captionedItem.select(alternate, in: group)
         try await wait { model.subtitleID == 4 }
+        captionedItem.select(nil, in: group)
+        try await wait { model.subtitleID == nil }
+        captionedItem.select(alternate, in: group)
+        try await wait { model.subtitleID == 4 }
         XCTAssertTrue(player.currentItem === captionedItem)
         XCTAssertFalse(model.isPreparing)
+        XCTAssertEqual(player.rate, 0)
+        model.togglePlay()
+        try await wait { readyAndPlaying() }
 
         let dolbyPosition = model.position
         NotificationCenter.default.post(name: .AVPlayerItemFailedToPlayToEndTime, object: captionedItem)
@@ -418,7 +433,25 @@ final class PlaybackTests: XCTestCase {
         let audioGroup = try XCTUnwrap(loadedAudio)
         XCTAssertEqual(nativeItem.currentMediaSelection.selectedMediaOption(in: audioGroup)?.displayName, secondAudio.title)
         model.setAudio(nil)
-        XCTAssertNotNil(nativeItem.currentMediaSelection.selectedMediaOption(in: audioGroup))
+        let defaultAudio = try XCTUnwrap(nativeItem.currentMediaSelection.selectedMediaOption(in: audioGroup))
+        let defaultTrack = try XCTUnwrap(model.audioOptions.first { $0.title == defaultAudio.displayName })
+        let otherAudio = try XCTUnwrap(audioGroup.options.first { $0.displayName == secondAudio.title })
+        nativeItem.select(otherAudio, in: audioGroup)
+        try await wait { model.audioID == secondAudio.id }
+        nativeItem.select(defaultAudio, in: audioGroup)
+        try await wait { model.audioID == defaultTrack.id }
+
+        let nativeCaptionGroup = try await nativeItem.asset.loadMediaSelectionGroup(for: .legible)
+        let nativeCaptions = try XCTUnwrap(nativeCaptionGroup)
+        let caption = try XCTUnwrap(nativeCaptions.options.first { !$0.hasMediaCharacteristic(.containsOnlyForcedSubtitles) })
+        let captionTrack = try XCTUnwrap(model.subtitleOptions.first)
+        nativeItem.select(caption, in: nativeCaptions)
+        try await wait { model.subtitleID == captionTrack.id }
+        nativeItem.select(nil, in: nativeCaptions)
+        try await wait { model.subtitleID == nil }
+        XCTAssertTrue(player.currentItem === nativeItem)
+        XCTAssertFalse(model.isPreparing)
+        XCTAssertEqual(player.rate, 0)
 
         model.add([subtitle])
         try await wait(diagnostic: model.errorMessage ?? "no player error") { model.isUsingHLS && !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
