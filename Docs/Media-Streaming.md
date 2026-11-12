@@ -66,6 +66,8 @@ The chapter menu uses the same seek path as the timeline. Chapter names and the 
 
 Timeline hover and drag previews use still images from the original file through AVAssetImageGenerator, with the bundled FFmpeg fallback. Frames are limited to 288 × 162 pixels, requested at one-second intervals after a short debounce, and held in a small transient per-video cache. Leaving the timeline, cancelling preparation, switching files, or stopping cancels obsolete requests. A failed preview does not interrupt playback. The midpoint image remains static; hovering does not seek, start playback, or change the saved resume position.
 
+For original-quality H.264 HLS playback, Apple TV can show thumbnails above its timeline while scrubbing with the remote. Beamly copies the existing keyframes into a separate HLS I-frame rendition on the same timeline as the movie. The spacing depends on the source keyframes. If the rendition cannot be prepared, the movie still plays and seeks normally. [Apple AirPlay guidance](https://developer.apple.com/videos/play/wwdc2019/501/)
+
 Video-only fMP4 streams use an explicit initialization filename: FFmpeg does not expand the variant placeholder for a single variant. Audio-bearing streams retain their existing per-variant initialization files.
 
 ## Sleep timer
@@ -98,7 +100,7 @@ Automated checks use generated media, never personal movies:
 - signed audio corrections with AAC and surround, original 4K frame/HDR metadata preservation, caption clocks, conversion, source-duration bounds, and seeks beyond shifted audio.
 - history migration, completed-video restart, queue removal/re-addition, persisted history clearing, and shared mini-remote controls/window lifecycle.
 
-Physical Apple TV 4K trials used a 1080p MKV with Dolby Digital Plus. They verified opening the AirPlay picker during preparation, resuming with sound, and seeking back to the beginning with the receiver remote. Dolby HLS trials verified audio and subtitle changes from the remote, including updates to Beamly's selection while paused. Hardware validation of 4K/HDR and Atmos speaker output remains pending.
+Physical Apple TV 4K trials used a 1080p H.264 MKV with Dolby Digital Plus. They verified opening the AirPlay picker during preparation, resuming with sound, and seeking back to the beginning with the receiver remote. Dolby HLS trials verified audio and subtitle changes from the remote, including updates to Beamly's selection while paused. The I-frame test build showed thumbnails that changed as the viewer scrubbed with the remote. Hardware validation of 4K/HDR and Atmos speaker output remains pending.
 
 The native 4K frame test uses HDR only when AVPlayer reports HDR eligibility, otherwise 4K SDR. HDR10/HLG metadata and decoded-frame preservation are always checked by FFmpeg. `BEAMLY_TEST_TOOLS_DIRECTORY=/absolute/path/to/tools Scripts/test.sh` runs the 4K fixtures against an isolated FFmpeg/ffprobe installation without replacing system tools.
 
