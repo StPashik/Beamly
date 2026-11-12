@@ -58,6 +58,84 @@ final class MediaPipelineTests: XCTestCase {
     }
 
     @MainActor
+    func testH264AirPlayPreviewsCopyKeyframesOnTheVideoTimeline() async throws {
+        let tools = mediaTestTools()
+        guard let ffmpeg = tools.ffmpegURL, let ffprobe = tools.ffprobeURL else { throw XCTSkip("FFmpeg is required") }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-iframes-\(UUID())")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let input = folder.appendingPathComponent("source.mkv")
+        let job = HLSJob(tools: tools)
+        defer { job.stop(); try? FileManager.default.removeItem(at: folder) }
+
+        func run(_ executable: URL, _ arguments: [String]) throws -> Data {
+            let process = Process()
+            let output = Pipe()
+            process.executableURL = executable
+            process.arguments = arguments
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = output
+            try process.run()
+            try? output.fileHandleForWriting.close()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0)
+            return data
+        }
+
+        _ = try run(ffmpeg, ["-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=12:duration=5.4",
+                             "-c:v", "libx264", "-g", "12", "-sc_threshold", "0", input.path])
+        let info = try await tools.probe(url: input)
+        let master = try await job.start(input: input, info: info, audioTrack: nil, subtitle: .none,
+                                         startTime: 1.5, hardwareEncoding: false)
+        let cache = master.deletingLastPathComponent()
+        let video = cache.appendingPathComponent("stream_0.m3u8")
+        let previews = cache.appendingPathComponent("iframe.m3u8")
+        let multivariant = try String(contentsOf: master, encoding: .utf8)
+        let variant = try XCTUnwrap(multivariant.split(separator: "\n").first { $0.hasPrefix("#EXT-X-I-FRAME-STREAM-INF:") })
+        XCTAssertTrue(variant.contains("CODECS=\"avc1."))
+        XCTAssertTrue(variant.contains("VIDEO-RANGE=SDR,URI=\"iframe.m3u8\""))
+        let playlist = try String(contentsOf: previews, encoding: .utf8)
+        XCTAssertTrue(playlist.contains("#EXT-X-I-FRAMES-ONLY"))
+        XCTAssertTrue(playlist.contains("#EXT-X-MAP:URI=\"iframe-init.mp4\""))
+        XCTAssertTrue(playlist.contains("#EXT-X-ENDLIST"))
+        func duration(_ text: String) -> Double {
+            text.split(separator: "\n").filter { $0.hasPrefix("#EXTINF:") }
+                .compactMap { Double($0.dropFirst(8).dropLast()) }.reduce(0, +)
+        }
+        XCTAssertEqual(duration(playlist), try duration(String(contentsOf: video, encoding: .utf8)), accuracy: 0.000001)
+
+        struct Packets: Decodable {
+            struct Packet: Decodable {
+                let pts_time: String
+                let flags: String
+                let data_hash: String
+            }
+            let packets: [Packet]
+        }
+        func packets(_ file: URL) throws -> [Packets.Packet] {
+            let data = try run(ffprobe, ["-v", "error", "-select_streams", "v:0", "-show_packets", "-show_data_hash", "SHA256",
+                                         "-show_entries", "packet=pts_time,flags,data_hash", "-of", "json", file.path])
+            let result = try JSONDecoder().decode(Packets.self, from: data)
+            return result.packets
+        }
+        let keys = try packets(video).filter { $0.flags.contains("K") }
+        let frames = try packets(previews)
+        XCTAssertGreaterThan(frames.count, 1)
+        XCTAssertTrue(frames.allSatisfy { $0.flags.contains("K") })
+        XCTAssertEqual(frames.map(\.data_hash), keys.map(\.data_hash))
+        let firstPTS = try XCTUnwrap(keys.first.flatMap { Double($0.pts_time) })
+        for (frame, key) in zip(frames, keys) {
+            XCTAssertEqual(try XCTUnwrap(Double(frame.pts_time)), try XCTUnwrap(Double(key.pts_time)) - firstPTS, accuracy: 0.001)
+        }
+
+        // A stream with one remaining keyframe still plays, with no incomplete preview rendition.
+        let tail = try await job.start(input: input, info: info, audioTrack: nil, subtitle: .none,
+                                       startTime: 5.1, hardwareEncoding: false)
+        XCTAssertFalse(try String(contentsOf: tail, encoding: .utf8).contains("#EXT-X-I-FRAME-STREAM-INF:"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tail.deletingLastPathComponent().appendingPathComponent("iframe-init.mp4").path))
+    }
+
+    @MainActor
     func testAV1InputCanUseSoftwareH264CompatibilityConversion() async throws {
         let tools = mediaTestTools()
         guard let generator = FFmpegTools().ffmpegURL, tools.ffmpegURL != nil else { throw XCTSkip("FFmpeg is required") }
@@ -159,6 +237,7 @@ final class MediaPipelineTests: XCTestCase {
                                           subtitle: .external(subtitle), startTime: 2, hardwareEncoding: false, preserveQuality: false)
         let text = try String(contentsOf: playlist, encoding: .utf8)
         XCTAssertTrue(text.contains("#EXT-X-INDEPENDENT-SEGMENTS"))
+        XCTAssertTrue(text.contains("#EXT-X-ENDLIST"), "Compatibility playlists must be complete before publication")
         XCTAssertGreaterThanOrEqual(text.components(separatedBy: "#EXTINF:").count - 1, 2)
         let segment = playlist.deletingLastPathComponent().appendingPathComponent("segment000000.ts")
         let segmentInfo = try await tools.probe(url: segment)

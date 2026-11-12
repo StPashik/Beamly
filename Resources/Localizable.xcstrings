@@ -2517,36 +2517,36 @@
         }
       }
     },
-    "The video could not be prepared within 90 seconds. Try software encoding.": {
+    "Video preparation made no progress for 90 seconds. Try software encoding.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The video could not be prepared within 90 seconds. Try software encoding."
+            "value": "Video preparation made no progress for 90 seconds. Try software encoding."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Видео не удалось подготовить за 90 секунд. Попробуйте программное кодирование."
+            "value": "Подготовка видео остановилась на 90 секунд. Попробуйте программное кодирование."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Das Video konnte nicht innerhalb von 90 Sekunden vorbereitet werden. Versuchen Sie es mit Softwarekodierung."
+            "value": "Bei der Videovorbereitung gab es 90 Sekunden lang keinen Fortschritt. Versuchen Sie es mit Softwarekodierung."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "La vidéo n’a pas pu être préparée en 90 secondes. Essayez l’encodage logiciel."
+            "value": "La préparation de la vidéo n’a pas avancé pendant 90 secondes. Essayez l’encodage logiciel."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "No se pudo preparar el vídeo en 90 segundos. Prueba la codificación por software."
+            "value": "La preparación del vídeo no ha avanzado en 90 segundos. Prueba la codificación por software."
           }
         }
       }

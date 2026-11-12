@@ -1,3 +1,17 @@
+# Unreleased
+
+- Keep the full AirPlay timeline when resuming HLS video, including MKV. The saved position is a seek within the completed stream, so the beginning remains available to the receiver. Full preparation can take longer, especially for compatibility conversion.
+- Show progress during HLS preparation.
+- Keep the resume position when preparation is cancelled.
+- Start compatible H.264 MKV files with Dolby surround audio faster by copying the selected tracks to a seekable MP4. Use HLS when the MP4 cannot play or when subtitles or timing corrections require it.
+- Publish embedded text subtitles as separate HLS tracks so Apple TV can switch or turn them off during playback.
+- Copy multichannel Dolby Digital or Dolby Digital Plus into compatible HLS streams. If AVPlayer reports a playback error, retry with stereo AAC at the same position and retain the selected captions.
+- Switch between compatible audio tracks on Apple TV or in Beamly while the current HLS stream plays.
+- Reflect audio and subtitle selections made on Apple TV in Beamly's menus.
+- Show timeline thumbnails when scrubbing with the Apple TV remote during original-quality H.264 HLS playback.
+- Fix dragging the seek slider on the Mac so it seeks the video without moving the window.
+- Open the AirPlay device picker as soon as Play is pressed when no receiver is known, so device selection and video preparation can happen together.
+
 # Beamly 1.0.11
 
 **4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**

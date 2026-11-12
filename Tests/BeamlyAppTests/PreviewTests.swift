@@ -180,7 +180,7 @@ final class PreviewTests: XCTestCase {
     }
 
     @MainActor
-    func testNativeTimelineKeyboardSeeksWithoutStartingPlayback() async throws {
+    func testMainWindowKeepsTimelineInputSeparateFromTitleDrag() async throws {
         _ = NSApplication.shared
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-keyboard-seek-\(UUID())")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -193,21 +193,26 @@ final class PreviewTests: XCTestCase {
         try JSONEncoder().encode(playlist).write(to: state)
         let model = AppModel(stateURL: state, defaults: defaults)
         defer { model.shutdown(); defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: folder) }
-        var scrubbing = false
-        var position = 0.0
-        let host = NSHostingView(rootView: SeekTimeline(model: model, scrubbing: Binding(get: { scrubbing }, set: { scrubbing = $0 }),
-                                                       position: Binding(get: { position }, set: { position = $0 })).frame(width: 300, height: 24))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 24), styleMask: [.titled], backing: .buffered, defer: false)
+        let host = NSHostingView(rootView: ContentView(model: model))
+        let window = DragRecordingWindow(contentRect: NSRect(x: 0, y: 0, width: 674, height: 390),
+                                         styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        window.isMovableByWindowBackground = true
         window.contentView = host
         window.orderBack(nil)
         defer { window.close() }
         try await Task.sleep(nanoseconds: 50_000_000)
-        func findSlider(_ view: NSView) -> NSSlider? {
-            if let slider = view as? NSSlider { return slider }
-            return view.subviews.lazy.compactMap { findSlider($0) }.first
+        XCTAssertFalse(window.isMovableByWindowBackground, "Content must keep mouse drags for its controls")
+
+        func find<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
+            if let match = view as? T { return match }
+            return view.subviews.lazy.compactMap { find(type, in: $0) }.first
         }
-        let slider = try XCTUnwrap(findSlider(host))
+        let slider = try XCTUnwrap(find(NSSlider.self, in: host))
+        let parent = try XCTUnwrap(host.superview)
+        let timelinePoint = slider.convert(NSPoint(x: slider.bounds.midX, y: slider.bounds.midY), to: parent)
+        XCTAssertTrue(host.hitTest(timelinePoint) === slider, "The timeline's hit target must be the slider")
+
         XCTAssertTrue(window.makeFirstResponder(slider))
         let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
                                                   windowNumber: window.windowNumber, context: nil, characters: "\u{F703}", charactersIgnoringModifiers: "\u{F703}", isARepeat: false, keyCode: 124))
@@ -216,9 +221,16 @@ final class PreviewTests: XCTestCase {
         XCTAssertGreaterThan(model.position, 0)
         let fraction = (slider.doubleValue - slider.minValue) / (slider.maxValue - slider.minValue)
         XCTAssertEqual(model.position, fraction * model.duration, accuracy: 0.01)
-        XCTAssertFalse(scrubbing)
         XCTAssertNil(model.player.currentItem)
         XCTAssertEqual(model.player.rate, 0)
+
+        let titleBar = try XCTUnwrap(find(WindowChrome.ChromeView.self, in: host))
+        let titlePoint = titleBar.convert(NSPoint(x: titleBar.bounds.midX, y: titleBar.bounds.midY), to: nil)
+        let titleClick = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: titlePoint, modifierFlags: [],
+                                                         timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                                                         eventNumber: 1, clickCount: 1, pressure: 1))
+        window.sendEvent(titleClick)
+        XCTAssertEqual(window.dragRequests, 1, "The custom title bar still starts a native window drag")
     }
 
     @MainActor
@@ -239,5 +251,14 @@ final class PreviewTests: XCTestCase {
         XCTAssertLessThan(blue ? color.redComponent : color.blueComponent, 0.2, file: file, line: line)
         XCTAssertLessThanOrEqual(bitmap.pixelsWide, 288)
         XCTAssertLessThanOrEqual(bitmap.pixelsHigh, 162)
+    }
+}
+
+@MainActor
+private final class DragRecordingWindow: NSWindow {
+    private(set) var dragRequests = 0
+
+    override func performDrag(with event: NSEvent) {
+        dragRequests += 1
     }
 }

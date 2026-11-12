@@ -61,10 +61,18 @@ final class PlaybackExtrasTests: XCTestCase {
         model.seek(1.5)
         try await ready(model)
         XCTAssertEqual(model.audioDelay, 0.4)
-        model.setAudioDelay(-0.2)
+        model.setAudioDelay(-10)
         try await ready(model)
+        let shortenedAudioItem = try XCTUnwrap(player.currentItem)
+        model.seek(18)
+        let deadline = Date().addingTimeInterval(5)
+        while abs(player.currentTime().seconds - 18) > 0.2 && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(player.currentTime().seconds, 18, accuracy: 0.2, "The full video remains seekable after the shifted audio ends")
+        XCTAssertTrue(player.currentItem === shortenedAudioItem)
         for value in [Double.nan, .infinity, 11, -11] { model.setAudioDelay(value) }
-        XCTAssertEqual(model.audioDelay, -0.2)
+        XCTAssertEqual(model.audioDelay, -10)
         model.setAudioDelay(0.1 + 0.2 - 0.3)
         try await ready(model)
         XCTAssertEqual(model.audioDelay, 0)

@@ -13,24 +13,40 @@ final class PlaybackTests: XCTestCase {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-route-handoff-\(UUID())")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let movie = folder.appendingPathComponent("Movie.mkv")
+        let movieWithoutCaptions = folder.appendingPathComponent("Movie without captions.mkv")
+        let movieWithAlternateAudio = folder.appendingPathComponent("Movie with alternate audio.mkv")
         let captions = folder.appendingPathComponent("captions.srt")
         try "1\n00:00:00,500 --> 00:00:29,000\nRoute handoff caption\n".write(to: captions, atomically: true, encoding: .utf8)
         let generator = Process()
         generator.executableURL = ffmpeg
         generator.arguments = ["-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "color=c=blue:size=160x90:rate=10:duration=30",
             "-f", "lavfi", "-i", "sine=frequency=440:duration=30", "-f", "lavfi", "-i", "sine=frequency=880:duration=30", "-i", captions.path,
-            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s", "-c:v", "libx264", "-g", "10", "-bf", "0", "-c:a", "aac", "-c:s", "srt", movie.path]
+            "-f", "lavfi", "-i", "sine=frequency=660:duration=30",
+            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s", "-map", "3:s", "-map", "4:a", "-c:v", "libx264", "-g", "10", "-bf", "0",
+            "-c:a:0", "eac3", "-ac:a:0", "6", "-c:a:1", "aac", "-c:a:2", "eac3", "-ac:a:2", "6", "-c:s", "srt",
+            "-metadata:s:a:0", "language=rus", "-metadata:s:a:2", "language=eng",
+            "-metadata:s:s:0", "language=rus", "-metadata:s:s:1", "language=rus",
+            "-metadata:s:s:0", "title=Russian \"Captions\"", "-metadata:s:s:1", "title=Russian \"Captions\"", movie.path]
         generator.standardInput = FileHandle.nullDevice
         generator.standardOutput = FileHandle.nullDevice
         generator.standardError = FileHandle.nullDevice
         try generator.run(); generator.waitUntilExit()
         XCTAssertEqual(generator.terminationStatus, 0)
+        let remux = Process()
+        remux.executableURL = ffmpeg
+        remux.arguments = ["-v", "error", "-nostdin", "-i", movie.path,
+            "-map", "0:v", "-map", "0:a:0", "-map", "0:a:1", "-c", "copy", movieWithoutCaptions.path,
+            "-map", "0:v", "-map", "0:a:0", "-map", "0:a:2", "-c", "copy", movieWithAlternateAudio.path]
+        remux.standardOutput = FileHandle.nullDevice
+        remux.standardError = FileHandle.nullDevice
+        try remux.run(); remux.waitUntilExit()
+        XCTAssertEqual(remux.terminationStatus, 0)
         let original = try Data(contentsOf: movie)
         let suite = "app.beamly.route-handoff.\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defaults.set(ffmpeg.deletingLastPathComponent().path, forKey: "toolsDirectory")
         var playlist = Playlist()
-        playlist.append([movie]); playlist.items[0].position = 8; playlist.items[0].duration = 30
+        playlist.append([movieWithoutCaptions, movie, movieWithAlternateAudio]); playlist.items[0].position = 8; playlist.items[0].duration = 30
         let state = folder.appendingPathComponent("queue.json")
         try JSONEncoder().encode(playlist).write(to: state)
         let player = AirPlayTestPlayer()
@@ -39,15 +55,30 @@ final class PlaybackTests: XCTestCase {
         player.setExternalPlaybackActive(true)
         let model = AppModel(stateURL: state, defaults: defaults, player: player)
         defer { model.shutdown(); defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
         var pickerRequests = 0
         let observation = model.$isAirPlayPickerRequested.sink { if $0 { pickerRequests += 1 } }
         defer { observation.cancel() }
         func readyAndPlaying() -> Bool { !model.isPreparing && player.currentItem?.status == .readyToPlay && player.rate > 0 && model.isPlaying }
 
         model.togglePlay()
+        XCTAssertTrue(model.isPreparing)
+        model.togglePlay()
+        XCTAssertFalse(model.isPreparing)
+        XCTAssertEqual(model.position, 8, "Cancelling preparation must keep the resume position")
+        model.togglePlay()
         try await wait(diagnostic: model.errorMessage ?? "") { readyAndPlaying() }
         XCTAssertEqual(player.emptyReplacements, 0, "Starting must not clear a receiver selected before loading a movie")
         XCTAssertEqual(model.position, 8, accuracy: 1)
+        let resumedItem = try XCTUnwrap(player.currentItem)
+        XCTAssertEqual((resumedItem.asset as? AVURLAsset)?.url.pathExtension, "mp4")
+        XCTAssertTrue(model.isVideoCopied)
+        XCTAssertEqual(model.audioOptions.map(\.id), [1, 2])
+        XCTAssertTrue(model.subtitleOptions.isEmpty)
+        let resumedDuration = try await resumedItem.asset.load(.duration).seconds
+        XCTAssertEqual(resumedDuration, 30, accuracy: 0.3, "Resuming must publish the entire movie, including the first eight seconds")
+        XCTAssertEqual(player.currentTime().seconds, 8, accuracy: 1)
         model.togglePlay()
         try await wait { !model.isPlaying }
         player.setExternalPlaybackActive(false)
@@ -58,17 +89,94 @@ final class PlaybackTests: XCTestCase {
         XCTAssertGreaterThan(player.prerollCalls, 0, "A paused selected route can become active during rate-zero preparation")
 
         player.resetsRouteOnReplacement = true
+        let fallbackPosition = model.position
+        NotificationCenter.default.post(name: .AVPlayerItemFailedToPlayToEndTime, object: resumedItem)
+        try await wait(diagnostic: model.errorMessage ?? "") { readyAndPlaying() && model.isUsingHLS }
+        XCTAssertEqual(model.position, fallbackPosition, accuracy: 1.5, "The HLS fallback resumes the same movie position")
+        XCTAssertNil(model.errorMessage)
+
+        model.select(playlist.items[1].id, resumeAt: fallbackPosition)
+        try await wait(diagnostic: model.errorMessage ?? "") { readyAndPlaying() && model.isUsingHLS }
+        XCTAssertEqual(model.subtitleOptions.map(\.id), [3, 4])
+        let captionedItem = try XCTUnwrap(player.currentItem)
+        let dolbyURL = try XCTUnwrap((captionedItem.asset as? AVURLAsset)?.url)
+        let dolbyMaster = String(decoding: try await session.data(from: dolbyURL).0, as: UTF8.self)
+        XCTAssertTrue(dolbyMaster.contains(",ec-3\""))
+        XCTAssertFalse(dolbyMaster.contains("mp4a"))
+        XCTAssertEqual(dolbyMaster.split(separator: "\n").filter { $0.hasPrefix("#EXT-X-MEDIA:TYPE=AUDIO,") }.count, 2)
+        XCTAssertEqual(model.audioOptions.map(\.id), [1, 2, 5])
+        let loadedAudioGroup = try await captionedItem.asset.loadMediaSelectionGroup(for: .audible)
+        let audioGroup = try XCTUnwrap(loadedAudioGroup)
+        func activeLanguage() -> String? {
+            MediaLanguages.normalized(captionedItem.currentMediaSelection.selectedMediaOption(in: audioGroup)?.extendedLanguageTag)
+        }
+        XCTAssertEqual(activeLanguage(), "ru")
+        model.setAudio(5)
+        try await wait { activeLanguage() == "en" }
+        XCTAssertTrue(player.currentItem === captionedItem)
+        model.setAudio(nil)
+        try await wait { activeLanguage() == "ru" }
+        XCTAssertNil(model.audioID)
+        model.togglePlay()
+        try await wait { !model.isPlaying }
+        let receiverChoice = try XCTUnwrap(audioGroup.options.first { MediaLanguages.normalized($0.extendedLanguageTag) == "en" })
+        captionedItem.select(receiverChoice, in: audioGroup)
+        try await wait { model.audioID == 5 }
+        let fileDefault = try XCTUnwrap(audioGroup.defaultOption)
+        captionedItem.select(fileDefault, in: audioGroup)
+        try await wait { model.audioID == 1 }
+        captionedItem.select(receiverChoice, in: audioGroup)
+        try await wait { model.audioID == 5 }
+        XCTAssertTrue(player.currentItem === captionedItem)
+        let loadedCaptionGroup = try await captionedItem.asset.loadMediaSelectionGroup(for: .legible)
+        let group = try XCTUnwrap(loadedCaptionGroup)
+        XCTAssertEqual(group.options.count, 2)
+        XCTAssertNil(captionedItem.currentMediaSelection.selectedMediaOption(in: group))
+        model.setSubtitle(3)
+        try await wait { captionedItem.currentMediaSelection.selectedMediaOption(in: group) != nil }
+        let first = try XCTUnwrap(captionedItem.currentMediaSelection.selectedMediaOption(in: group))
+        let identifier = AVMetadataIdentifier(rawValue: "m3u8/NAME")
+        let name = try await AVMetadataItem.metadataItems(from: first.commonMetadata, filteredByIdentifier: identifier).first?.load(.stringValue)
+        XCTAssertEqual(name, "Russian 'Captions'")
+        XCTAssertTrue(player.currentItem === captionedItem)
+        let alternate = try XCTUnwrap(group.options.first { $0 != first })
+        captionedItem.select(alternate, in: group)
+        try await wait { model.subtitleID == 4 }
+        captionedItem.select(nil, in: group)
+        try await wait { model.subtitleID == nil }
+        captionedItem.select(alternate, in: group)
+        try await wait { model.subtitleID == 4 }
+        XCTAssertTrue(player.currentItem === captionedItem)
+        XCTAssertFalse(model.isPreparing)
+        XCTAssertEqual(player.rate, 0)
+        model.togglePlay()
+        try await wait { readyAndPlaying() }
+
+        let dolbyPosition = model.position
+        NotificationCenter.default.post(name: .AVPlayerItemFailedToPlayToEndTime, object: captionedItem)
+        try await wait(diagnostic: model.errorMessage ?? "") { readyAndPlaying() && player.currentItem !== captionedItem }
+        let stereoItem = try XCTUnwrap(player.currentItem)
+        let stereoURL = try XCTUnwrap((stereoItem.asset as? AVURLAsset)?.url)
+        let stereoMaster = String(decoding: try await session.data(from: stereoURL).0, as: UTF8.self)
+        XCTAssertTrue(stereoMaster.contains(",mp4a.40.2\""))
+        XCTAssertFalse(stereoMaster.contains("ec-3"))
+        XCTAssertTrue(model.isVideoCopied)
+        XCTAssertEqual(model.position, dolbyPosition, accuracy: 1.5)
+        XCTAssertEqual(model.audioID, 5)
+        XCTAssertEqual(model.subtitleID, 4)
+        let stereoCaptions = try await stereoItem.asset.loadMediaSelectionGroup(for: .legible)
+        XCTAssertNotNil(stereoItem.currentMediaSelection.selectedMediaOption(in: try XCTUnwrap(stereoCaptions)))
+
         let oldItem = try XCTUnwrap(player.currentItem)
         let oldURL = try XCTUnwrap((oldItem.asset as? AVURLAsset)?.url)
         let position = model.position
         model.setAudio(2)
         XCTAssertTrue(player.currentItem === oldItem, "Keep the routed item attached while preparing the replacement")
-        let session = URLSession(configuration: .ephemeral)
-        defer { session.invalidateAndCancel() }
         let (_, oldResponse) = try await session.data(from: oldURL)
         XCTAssertEqual((oldResponse as? HTTPURLResponse)?.statusCode, 200, "The old receiver URL must remain available during preparation")
         try await wait(diagnostic: model.errorMessage ?? "") { readyAndPlaying() }
         XCTAssertEqual(model.audioID, 2)
+        XCTAssertEqual(model.subtitleID, 4, "Replacing audio must retain the caption selected by the receiver")
         XCTAssertEqual(model.position, position, accuracy: 1.5)
         XCTAssertEqual(player.emptyReplacements, 0)
         let retiredResponse = try? await session.data(from: oldURL).1
@@ -80,15 +188,19 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(model.audioID, 1)
         XCTAssertEqual(model.subtitleID, 3, "Rapid replacements retain both manual choices and play intent")
         let loadedGroup = try await player.currentItem?.asset.loadMediaSelectionGroup(for: .legible)
-        let group = try XCTUnwrap(loadedGroup)
-        XCTAssertNotNil(player.currentItem?.currentMediaSelection.selectedMediaOption(in: group))
-        model.seek(1)
-        try await wait(diagnostic: model.errorMessage ?? "") { readyAndPlaying() }
-        XCTAssertEqual(model.position, 1, accuracy: 1)
+        let reloadedGroup = try XCTUnwrap(loadedGroup)
+        XCTAssertNotNil(player.currentItem?.currentMediaSelection.selectedMediaOption(in: reloadedGroup))
+        let routedItem = try XCTUnwrap(player.currentItem)
+        // Seek through AVPlayer, as a receiver would, without asking Beamly to rebuild the stream.
+        let rewound = await player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+        XCTAssertTrue(rewound)
+        try await wait(diagnostic: model.errorMessage ?? "") { readyAndPlaying() && model.position < 1 }
+        XCTAssertTrue(player.currentItem === routedItem)
         model.togglePlay()
         try await wait { !model.isPlaying }
         model.setSubtitle(nil)
-        try await wait { !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        try await wait { routedItem.currentMediaSelection.selectedMediaOption(in: reloadedGroup) == nil }
+        XCTAssertTrue(player.currentItem === routedItem)
         XCTAssertEqual(player.rate, 0, "Changing captions while paused must stay paused")
         model.togglePlay()
         try await wait { readyAndPlaying() }
@@ -103,7 +215,12 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(player.playCalls, calls, "A real disconnection cancels play intent")
         model.togglePlay()
         try await wait { readyAndPlaying() }
-        model.setAudio(2)
+        model.select(playlist.items[2].id)
+        try await wait { readyAndPlaying() }
+        XCTAssertTrue(model.isUsingHLS, "An MKV with alternate audio needs HLS even when it has no captions")
+        let audioOnlyGroup = try await player.currentItem?.asset.loadMediaSelectionGroup(for: .audible)
+        XCTAssertEqual(audioOnlyGroup?.options.count, 2)
+        model.setAudioDelay(0.5)
         model.stop()
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertNil(player.currentItem)
@@ -252,6 +369,13 @@ final class PlaybackTests: XCTestCase {
             defaults.removePersistentDomain(forName: suite)
             try? FileManager.default.removeItem(at: folder)
         }
+        model.togglePlay()
+        XCTAssertTrue(model.isPreparing)
+        XCTAssertTrue(model.isAirPlayPickerRequested, "Play must ask for a receiver before the item is ready")
+        XCTAssertEqual(player.playCalls, 0)
+        model.togglePlay()
+        XCTAssertFalse(model.isAirPlayPickerRequested)
+
         model.select(saved.items[0].id, autoPlay: false)
         try await wait { model.player.currentItem?.status == .readyToPlay && !model.isPreparing }
         XCTAssertNil(model.errorMessage)
@@ -261,29 +385,37 @@ final class PlaybackTests: XCTestCase {
         // Neither a manual request nor automatic preparation may play locally.
         let pausedTime = player.currentTime().seconds
         model.togglePlay()
+        XCTAssertTrue(model.isAirPlayPickerRequested)
         XCTAssertEqual(player.playCalls, 0)
         XCTAssertEqual(player.rate, 0)
         XCTAssertNil(model.errorMessage)
         model.togglePlay()
-        XCTAssertFalse(model.isPlaying, "Pause cancels pending route preparation")
-        try await Task.sleep(for: .seconds(3.1))
-        XCTAssertFalse(model.isAirPlayPickerRequested, "A cancelled request must not reopen the picker later")
+        XCTAssertFalse(model.isAirPlayPickerRequested, "Pause cancels the pending picker request")
         model.togglePlay()
-        try await wait { model.isAirPlayPickerRequested }
+        XCTAssertTrue(model.isAirPlayPickerRequested)
+        model.isAirPlayPickerRequested = false
+        model.airPlayPickerPresentationChanged(true)
+        XCTAssertEqual(player.prerollCalls, 0)
+        model.airPlayPickerPresentationChanged(false)
+        XCTAssertEqual(player.prerollCalls, 1, "Prime the player after a possible receiver selection")
+        try await Task.sleep(for: .seconds(3.1))
+        XCTAssertFalse(model.isAirPlayPickerRequested, "Dismissing the picker must not reopen it for the same Play request")
         XCTAssertEqual(player.currentTime().seconds, pausedTime, accuracy: 0.1, "Preroll must not advance the movie without a receiver")
         model.select(saved.items[0].id)
         try await wait { !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
         XCTAssertEqual(player.playCalls, 0)
         player.setExternalPlaybackActive(true)
         try await wait { model.isPlaying }
+        model.airPlayPickerPresentationChanged(true)
         player.setExternalPlaybackActive(false)
         try await wait { !model.isPlaying && !model.isExternal }
+        model.airPlayPickerPresentationChanged(false)
         XCTAssertEqual(player.rate, 0)
         let callsAfterDisconnect = player.playCalls
         model.togglePlay()
         XCTAssertEqual(player.playCalls, callsAfterDisconnect)
         XCTAssertNil(model.errorMessage)
-        try await wait { model.isAirPlayPickerRequested }
+        XCTAssertTrue(model.isAirPlayPickerRequested)
         player.setExternalPlaybackActive(true)
         try await wait { model.isExternal && model.isPlaying }
         model.togglePlay()
@@ -301,18 +433,40 @@ final class PlaybackTests: XCTestCase {
         let audioGroup = try XCTUnwrap(loadedAudio)
         XCTAssertEqual(nativeItem.currentMediaSelection.selectedMediaOption(in: audioGroup)?.displayName, secondAudio.title)
         model.setAudio(nil)
-        XCTAssertNotNil(nativeItem.currentMediaSelection.selectedMediaOption(in: audioGroup))
+        let defaultAudio = try XCTUnwrap(nativeItem.currentMediaSelection.selectedMediaOption(in: audioGroup))
+        let defaultTrack = try XCTUnwrap(model.audioOptions.first { $0.title == defaultAudio.displayName })
+        let otherAudio = try XCTUnwrap(audioGroup.options.first { $0.displayName == secondAudio.title })
+        nativeItem.select(otherAudio, in: audioGroup)
+        try await wait { model.audioID == secondAudio.id }
+        nativeItem.select(defaultAudio, in: audioGroup)
+        try await wait { model.audioID == defaultTrack.id }
+
+        let nativeCaptionGroup = try await nativeItem.asset.loadMediaSelectionGroup(for: .legible)
+        let nativeCaptions = try XCTUnwrap(nativeCaptionGroup)
+        let caption = try XCTUnwrap(nativeCaptions.options.first { !$0.hasMediaCharacteristic(.containsOnlyForcedSubtitles) })
+        let captionTrack = try XCTUnwrap(model.subtitleOptions.first)
+        nativeItem.select(caption, in: nativeCaptions)
+        try await wait { model.subtitleID == captionTrack.id }
+        nativeItem.select(nil, in: nativeCaptions)
+        try await wait { model.subtitleID == nil }
+        XCTAssertTrue(player.currentItem === nativeItem)
+        XCTAssertFalse(model.isPreparing)
+        XCTAssertEqual(player.rate, 0)
 
         model.add([subtitle])
         try await wait(diagnostic: model.errorMessage ?? "no player error") { model.isUsingHLS && !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
         XCTAssertNil(model.errorMessage)
         XCTAssertEqual(model.externalSubtitle, subtitle)
         let embedded = try XCTUnwrap(model.subtitleOptions.first)
-        model.setSubtitle(embedded.id)
-        try await wait { !model.isUsingHLS && !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
         let restoredItem = try XCTUnwrap(model.player.currentItem)
         let loadedCaptions = try await restoredItem.asset.loadMediaSelectionGroup(for: .legible)
         let captions = try XCTUnwrap(loadedCaptions)
+        let externalOption = restoredItem.currentMediaSelection.selectedMediaOption(in: captions)
+        XCTAssertNotNil(externalOption)
+        model.setSubtitle(embedded.id)
+        try await wait { restoredItem.currentMediaSelection.selectedMediaOption(in: captions) != externalOption }
+        XCTAssertTrue(model.player.currentItem === restoredItem)
+        XCTAssertFalse(model.isPreparing)
         XCTAssertNotNil(restoredItem.currentMediaSelection.selectedMediaOption(in: captions))
         XCTAssertEqual(model.subtitleID, embedded.id)
 

@@ -53,7 +53,8 @@ struct WindowChrome: NSViewRepresentable {
             window.titlebarSeparatorStyle = .none
             window.isOpaque = false
             window.backgroundColor = .clear
-            window.isMovableByWindowBackground = true
+            // Let controls such as the timeline receive drags. The header moves the window explicitly.
+            window.isMovableByWindowBackground = false
             window.contentMinSize = NSSize(width: 674, height: 360)
             window.contentMaxSize = NSSize(width: 674, height: window.contentMaxSize.height)
             window.collectionBehavior.subtract([.fullScreenPrimary, .fullScreenAuxiliary])
