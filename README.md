@@ -50,17 +50,17 @@ When using Beamly 1.0.0, select the `ffmpeg-full` bin folder in Settings if it i
 
 ### Download
 
-1. Download `Beamly-1.0.11-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
+1. Download `Beamly-1.0.12-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
 2. Extract it and move **Beamly.app** to **Applications**, or to your personal `~/Applications` folder.
 3. See [First launch](#first-launch) before opening a downloaded build.
 
 To verify the app ZIP, download `SHA256SUMS` from the same release and run this in the download directory:
 
 ```sh
-awk '$2 == "Beamly-1.0.11-universal.zip"' SHA256SUMS | shasum -a 256 -c -
+awk '$2 == "Beamly-1.0.12-universal.zip"' SHA256SUMS | shasum -a 256 -c -
 ```
 
-The same checksum file also lists `Beamly-FFmpeg-Sources-1.0.11.tar.xz`, the complete corresponding source for the bundled media tools. If both archives are downloaded, `shasum -a 256 -c SHA256SUMS` verifies both.
+The same checksum file also lists `Beamly-FFmpeg-Sources-1.0.12.tar.xz`, the complete corresponding source for the bundled media tools. If both archives are downloaded, `shasum -a 256 -c SHA256SUMS` verifies both.
 
 ### Homebrew
 
@@ -78,7 +78,7 @@ The cask installs the universal app and verifies the archive's pinned SHA-256 ch
 With Node.js 18 or later and npm installed (omit `--allow-git=root` on npm 11 or earlier):
 
 ```sh
-npm install --global --allow-git=root github:StPashik/Beamly#v1.0.11
+npm install --global --allow-git=root github:StPashik/Beamly#v1.0.12
 beamly install
 beamly
 ```
@@ -110,7 +110,9 @@ Choose **Subtitles → Subtitle timing…** to move captions earlier or later in
 
 Choose **Audio → Audio timing…** from the audio menu to move sound earlier or later in 0.1-second steps, up to ±10 seconds. Positive values delay audio. The correction is saved per video and survives seeks, track changes, queue removal, and relaunches while the movie remains in history. Nonzero corrections use HLS; compatible video keeps its original quality, resolution, and HDR metadata. Reset to zero to allow direct MP4 playback again. Audio outside the source's time range is silent; timing correction does not repair variable drift or guarantee receiver latency.
 
-Open **Watch history** from the clock icon in the header or the File menu. Choose a video under **Continue watching** to resume, or a completed video under **Watched** to restart. Adding a previously watched file also restores its saved position and timing. History retains up to 100 videos locally, independently of the queue, and migrates existing saved resume positions. **Clear** empties the queue; **Clear history** or **Remove from history** forgets history without deleting movies or changing the current queue. New playback or timing changes can add an active movie again. Missing or moved files must be added from their new location. Manual Stop resets the queue position while retaining the last history resume point.
+Open **Watch history** from the clock icon in the header or the File menu. Choose a video under **Continue watching** to resume, or a completed video under **Watched** to restart. Adding a previously watched file also restores its saved position and timing. Beamly prepares the full HLS timeline before seeking to the resume position, keeping the beginning available to the receiver. This can take longer for movies that require compatibility conversion.
+
+History retains up to 100 videos locally, independently of the queue, and migrates existing saved resume positions. **Clear** empties the queue; **Clear history** or **Remove from history** forgets history without deleting movies or changing the current queue. New playback or timing changes can add an active movie again. Missing or moved files must be added from their new location. Manual Stop resets the queue position while retaining the last history resume point.
 
 Control volume on your TV, receiver, or its remote; Beamly does not show a volume control.
 
@@ -168,13 +170,13 @@ The script builds and verifies both `arm64` and `x86_64` slices, assembles the a
 For development, run `python3 Scripts/build-media.py` first, then open **Beamly.xcodeproj**, select your development team in **Signing & Capabilities**, then select the **Beamly** scheme and **My Mac**, and run. Xcode uses Apple Development signing with hardened runtime; its embedded Sparkle framework and media helpers use the same identity. Use the script above for a local ad-hoc build without a development signing identity. The Xcode project and Swift package share the same core library.
 
 ```sh
-BEAMLY_TEST_APP_BUNDLE="$PWD/build/Beamly.app" Scripts/test.sh # Test the bundled media pipeline
+Scripts/test.sh                # Test the bundled media pipeline (uses build/Beamly.app)
 Scripts/release.sh             # Universal ZIP, SHA256SUMS, and updated Homebrew cask
 npm test                      # Installer integrity, existing-app protection, and real ZIP installation
 npm pack --dry-run            # Inspect the files included in the npm package
 ```
 
-Run `Scripts/release.sh` before `npm test`; the installation test uses the actual release ZIP and verifies both bundled helpers. Install `ffmpeg-full` on the developer/CI machine for the HEVC fixture generator; runtime playback tests use the bundled helpers when `BEAMLY_TEST_APP_BUNDLE` is set. Tests generate their own small videos and use isolated playlists, settings, and installation directories. Apple Silicon builds run both helper CPU slices without Homebrew in PATH, using Rosetta 2 for Intel; Intel hosts inspect ARM linkage but execute only x86_64.
+Run `Scripts/release.sh` before `npm test`; the installation test uses the actual release ZIP and verifies both bundled helpers. Install `ffmpeg-full` on the developer/CI machine for the HEVC fixture generator; runtime playback tests use the bundled helpers when `build/Beamly.app` exists or `BEAMLY_TEST_APP_BUNDLE` is set. Tests generate their own small videos and use isolated playlists, settings, and installation directories. Apple Silicon builds run both helper CPU slices without Homebrew in PATH, using Rosetta 2 for Intel; Intel hosts inspect ARM linkage but execute only x86_64.
 
 [GitHub Actions](.github/workflows/ci.yml) runs these checks for pull requests targeting `develop` or `main`, and for pushes to both branches. CI builds and verifies the application; publishing a release remains a separate maintainer action.
 

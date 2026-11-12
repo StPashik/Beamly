@@ -6,7 +6,9 @@ Beamly uses AVPlayer and the system AirPlay picker. The quality-preserving path 
 
 ## Playback paths
 
-With **Preserve video quality** enabled (the default), compatible MP4/M4V/MOV files are published unchanged. For supported HEVC or H.264 in MKV and other containers, FFmpeg copies the compressed video into HLS fragmented MP4 segments. No video encoder, resizing, color conversion, or subtitle filter runs in this path. The interface reports **Original video quality**; the metadata row describes the source file.
+With **Preserve video quality** enabled (the default), compatible MP4/M4V/MOV files are published unchanged. For supported HEVC or H.264 files that use HLS, FFmpeg copies the compressed video into fragmented MP4 segments. No video encoder, resizing, color conversion, or subtitle filter runs in this path. The interface reports **Original video quality**; the metadata row describes the source file.
+
+For supported H.264 MKV files with a selected Dolby Digital or Dolby Digital Plus surround track, Beamly can prepare a temporary MP4 when the file has no embedded text captions or compatible alternate audio, subtitles are off, and audio timing is unadjusted. FFmpeg copies the video and selected audio. The MP4 index gives AVPlayer the full movie and the saved position is applied as a seek. If the MP4 cannot be prepared or played, Beamly uses HLS.
 
 The remux path accepts HEVC Main/Main 10, 4:2:0, up to Level 5.1, 4096 × 2160, and 60 fps for SDR / 30 fps for HDR. HDR10 (PQ) and HLG retain their original bit depth, color characteristics, and in-bitstream metadata. The multivariant playlist declares `hvc1`, resolution, frame rate, and `VIDEO-RANGE`. HDR10+ dynamic metadata and Dolby Vision are not certified by this implementation. Dolby Vision remuxing is rejected explicitly rather than silently losing or mislabeling its metadata; compatible Dolby Vision MP4 files can still use direct playback.
 
@@ -16,19 +18,23 @@ Turning off **Preserve video quality** explicitly selects H.264 up to 1080p and 
 
 ## Audio
 
-The app's audio menu chooses the source track by its global stream index. Stereo AAC-LC is copied. Other audio gets a stereo AAC rendition. AC-3/E-AC-3 surround tracks also get an unmodified surround rendition, with a separate audio group and an AAC fallback. The video rendition is shared. DTS/TrueHD/Atmos conversion or passthrough is not promised; conversion of unsupported audio is independent of video and does not reduce its resolution.
+The app's audio menu chooses the source track by its global stream index. Original-quality HLS copies multichannel AC-3/E-AC-3 and publishes compatible alternate tracks in the same audio group. Tracks in the group have matching codecs, channel counts, and durations. Beamly reads the E-AC-3 initialization segment to signal Dolby Atmos when its JOC extension is present. If AVPlayer reports a Dolby playback error, Beamly retries once with the selected track in stereo AAC at the same movie position and keeps the selected captions. Apple specifies stereo AAC for general HLS delivery. The fast path targets receivers that support Dolby audio.
 
-Changing the source audio track rebuilds the HLS publication at the current movie position and preserves paused/playing state. Original video and audio files are never modified.
+Beamly copies compatible AAC-LC and converts other formats to stereo AAC. When conversion is needed in original-quality HLS, FFmpeg tries AudioToolbox first and then its built-in AAC encoder if AudioToolbox fails. DTS/TrueHD/Atmos conversion or passthrough is not promised. Audio conversion is independent of video and preserves its resolution.
+
+Apple TV and Beamly can switch tracks in the current HLS audio group during playback. Choose a track with a different format in Beamly's audio menu to prepare a new stream at the current position. Source files are read in place.
+
+Beamly updates its audio and subtitle menus when AVPlayer reports a selection made on the receiver. This also applies to files played directly through AVPlayer.
 
 **Settings → Track preferences** stores independent audio and subtitle choices. Language codes from stream metadata are normalized using Foundation, including two- and three-letter ISO codes and regional tags. A matching non-commentary audio track is preferred, with the default track winning ties. **Original audio** uses FFmpeg's `original` disposition or AVFoundation's `isOriginalContent` characteristic; without that marker, or if a requested language is absent, Beamly uses the file's default audio. Settings apply only when a video is opened, so manual choices survive seeks and stream rebuilds. Queue transitions and relaunches use the saved preferences.
 
-**Audio timing…** in the speaker menu stores a per-video correction from −10 to +10 seconds in 0.1-second steps. Positive values delay audio. A corrected MP4 uses HLS instead of direct playback. The original-quality path reads audio from a second input with FFmpeg's `-itsoffset`, leaving video packets and HDR metadata unchanged; audio preroll and packet trimming use the shifted timestamps. Stereo AAC and AC-3/E-AC-3 surround retain their existing copy paths. Compatibility conversion seeks the audio input independently, retaining the movie and subtitle clocks. Hardware-to-software retry forwards the correction. Seeking beyond the shifted audio's end publishes the remaining video without an audio rendition. This controls a fixed offset; actual receiver latency still needs physical calibration.
+**Audio timing…** in the speaker menu stores a per-video correction from −10 to +10 seconds in 0.1-second steps. Positive values delay audio. A corrected MP4 uses HLS instead of direct playback. The original-quality path reads audio from a second input with FFmpeg's `-itsoffset`, leaving video packets and HDR metadata unchanged; audio preroll and packet trimming use the shifted timestamps. Stereo AAC and AC-3/E-AC-3 surround retain their existing copy paths. Compatibility conversion seeks the audio input independently, retaining the movie and subtitle clocks. Hardware-to-software retry forwards the correction. This controls a fixed offset; actual receiver latency still needs physical calibration.
 
 ## Subtitles
 
-Selected embedded text subtitles and external SRT/ASS/SSA/WebVTT are converted to a separate WebVTT rendition. Each WebVTT file includes `X-TIMESTAMP-MAP`; cues spanning a seek point are retained and clipped at the new stream origin. Subtitles do not force video encoding. ASS animation, fonts, and complex positioning are simplified by WebVTT conversion. Bitmap formats such as PGS/VobSub require the explicit compatibility conversion and burn-in.
+Original-quality HLS includes each readable embedded text subtitle track and any selected external SRT/ASS/SSA/WebVTT file as separate named WebVTT renditions. Apple TV can switch among these tracks or turn captions off during playback. Each WebVTT file includes `X-TIMESTAMP-MAP`, keeping captions available across the full timeline. Video packets are copied. WebVTT simplifies ASS animation, fonts, and complex positioning. Bitmap formats such as PGS/VobSub require the explicit compatibility conversion and burn-in.
 
-Text extraction reads the subtitle source before publishing the selected rendition. For embedded subtitles this can require scanning the movie; large files and slow storage increase preparation time. Subtitle intermediates stay under `.inputs` and are not served. The selected caption track is explicitly enabled in AVPlayer, independently of system caption preferences.
+Beamly extracts embedded text tracks in one pass before publishing the HLS stream. Subtitle intermediates stay in the private `.inputs` directory. Beamly sets the initial caption selection in AVPlayer using the app's preferences.
 
 When selecting a video, Beamly scans only its containing folder for readable SRT, ASS, SSA, and VTT files. Names must match the video basename exactly or append a dot-separated suffix, such as `Movie.ru.srt`; similarly prefixed movies do not match. An exact-basename file takes priority, and a single match is selected automatically. Multiple language files remain available in the subtitle menu without guessing a preferred language.
 
@@ -40,25 +46,27 @@ AVFoundation can expose both full and forced-only views of the same MOV/MP4 text
 
 ## Seeking and buffering
 
-Remuxing starts at a preceding demuxer keyframe. FFmpeg reads preroll with original timestamps; a packet filter with `amount=0` discards only pictures before that random-access point, including leading open-GOP pictures that depend on an earlier GOP. Compressed payloads of retained pictures are untouched. Beamly measures the first output video timestamp and maps the generated timeline back to the original movie, including B-frame delay. Initial resume, track changes, and seeks outside the published range prepare a new stream and seek to the requested position within its initial GOP. Seeking within the published range uses AVPlayer directly.
+Beamly prepares HLS from the beginning of the movie. Resume and track changes seek to the saved position in AVPlayer after loading the full stream, keeping earlier segments available for receiver controls. Regular seeks use the current item. For copied video, FFmpeg starts at a safe keyframe, and Beamly measures the muxer's timestamp shift to preserve the movie clock, including B-frame delay. Compressed video packets are untouched.
 
-Generated media uses growing EVENT playlists and becomes complete when FFmpeg finishes. The master advertises measured segment bitrates and is refreshed after generation completes. This is a local on-demand stream with one source video quality, not an adaptive internet streaming ladder. Native Apple TV scrubbing is limited to the currently published timeline; dedicated I-frame trick-play renditions are not supplied. Generated media remains on disk until playback stops, with the existing free-space guard.
+Beamly publishes the EVENT playlists only after FFmpeg has finished and all media renditions contain `EXT-X-ENDLIST`. The master advertises measured segment bitrates. This gives the receiver a finite timeline from the first request. Receiver seeks use the regular media renditions. Preparing the full movie takes more time and temporary space, especially in compatibility mode. Cancelling preparation or stopping playback clears the generated media.
 
-The playback status reports actual preparation stages: inspecting the file, preparing original-quality segments or compatibility video, preparing captions, and loading the AVPlayer item. A failed system-encoder attempt reports its retry with the software encoder; the quality explanation retains that reason after loading. VideoToolbox is described as the system encoder because its current `allow_sw` setting permits an internal software implementation. No hardware-use guarantee, percentage, or ETA is inferred from the selected setting.
+The playback status reports actual preparation stages: inspecting the file, preparing original-quality segments or compatibility video, preparing captions, and loading the AVPlayer item. During packaging, the percentage estimates processed media from FFmpeg's reported timestamps and frame count. A failed system-encoder attempt reports its retry with the software encoder; the quality explanation retains that reason after loading. VideoToolbox's `allow_sw` setting permits an internal software implementation, so the stage does not guarantee hardware use.
 
 During playback, Beamly observes both AVPlayer's `timeControlStatus` and `reasonForWaitingToPlay`. It reports **Buffering…** only for `waitingToPlayAtSpecifiedRate` with `toMinimizeStalls`; the initial `evaluatingBufferingRate` phase is distinguished from a stall. This identifies the player's waiting state, without attributing it to Wi-Fi or conversion speed. Pause remains available while waiting, and disconnecting AirPlay still pauses playback. Cancellation and new-file selection clear preparation, quality, and retry messages; callbacks from an older load are ignored.
 
 During an item replacement, the retained AVPlayer keeps its paused current item and the old stream available until the new item is ready and its source position has been restored. This avoids clearing the selected AirPlay route between audio/subtitle changes, seeks, and queue transitions. Superseded preparation is cancelled; Stop and shutdown also revoke the retained stream.
 
-AVPlayer.isExternalPlaybackActive describes active external video playback, not a stored route choice. When Play is requested without that signal, Beamly primes the ready player with preroll(atRate:) at rate zero and waits up to three seconds for AirPlay activation before presenting the picker. It calls play() only with a confirmed external route. Genuine disconnection during established playback pauses and clears play intent; a temporary route transition during preparation does not discard that intent. Receiver reconnection timing still needs physical validation.
+When no receiver is known, a manual Play request opens the native AirPlay picker while the movie is preparing. If a route may already be selected, Beamly primes the ready player at rate zero for up to three seconds before asking again. `AVPlayer.isExternalPlaybackActive` must confirm the external route before Beamly calls `play()`. Genuine disconnection during playback pauses and clears play intent. A temporary route transition during preparation retains that intent.
 
 ## Chapters and seek previews
 
 FFprobe reads chapter titles and start/end times from the original file. Invalid and nonfinite ranges are ignored, valid ends are limited to the movie duration, and chapters are shown in source-time order. Playable MP4/MOV files retain a native AVFoundation chapter-loading fallback when FFprobe cannot inspect them, including chapters without a language tag. Files without chapters are not given synthetic ones.
 
-The chapter menu uses the same seek path as the timeline, including rebuilding HLS when a chapter lies before or outside the current buffer. Chapter names and the active chapter come from the original movie's timeline rather than the temporary HLS segment clock. Track choices and subtitle timing remain attached to the current movie.
+The chapter menu uses the same seek path as the timeline. Chapter names and the active chapter come from the original movie's timeline. Track choices and subtitle timing remain attached to the current movie.
 
 Timeline hover and drag previews use still images from the original file through AVAssetImageGenerator, with the bundled FFmpeg fallback. Frames are limited to 288 × 162 pixels, requested at one-second intervals after a short debounce, and held in a small transient per-video cache. Leaving the timeline, cancelling preparation, switching files, or stopping cancels obsolete requests. A failed preview does not interrupt playback. The midpoint image remains static; hovering does not seek, start playback, or change the saved resume position.
+
+For original-quality H.264 HLS playback, Apple TV can show thumbnails above its timeline while scrubbing with the remote. Beamly copies the existing keyframes into a separate HLS I-frame rendition on the same timeline as the movie. The spacing depends on the source keyframes. If the rendition cannot be prepared, the movie still plays and seeks normally. [Apple AirPlay guidance](https://developer.apple.com/videos/play/wwdc2019/501/)
 
 Video-only fMP4 streams use an explicit initialization filename: FFmpeg does not expand the variant placeholder for a single variant. Audio-bearing streams retain their existing per-variant initialization files.
 
@@ -82,17 +90,17 @@ Automated checks use generated media, never personal movies:
 
 - 3840 × 2160, 10-bit HEVC with PQ, BT.2020, mastering-display metadata, and content-light metadata;
 - exact hashes of every decoded frame before and after remuxing;
-- separate surround/stereo audio renditions and source-track selection;
-- native AVPlayer loading, decoding, saved-position resume, forward/backward seeks, and caption selection;
+- original surround audio, stereo retry, and receiver selection reflected in Beamly during playback and on pause;
+- native AVPlayer loading, decoding, resume with the full duration, receiver-style seeks back to the beginning, and caption selection;
 - embedded/external text subtitles, overlapping cues, and timeline offsets;
 - actual HTTP fetching of the master, media playlists, initialization segments, fragments, and captions;
 - cancellation, existing MP4 playback, and queue/file preservation.
-- generated MP4/MKV chapters, chapter seeks across HLS buffer rebuilds, still-frame timestamps, and thumbnail cancellation without moving the player.
+- generated MP4/MKV chapters, chapter seeks, still-frame timestamps, and thumbnail cancellation without moving the player.
 - timer replacement/cancellation, expiry during HLS playback and preparation, saved-position restoration, and rejection of late queue-advance callbacks.
 - signed audio corrections with AAC and surround, original 4K frame/HDR metadata preservation, caption clocks, conversion, source-duration bounds, and seeks beyond shifted audio.
 - history migration, completed-video restart, queue removal/re-addition, persisted history clearing, and shared mini-remote controls/window lifecycle.
 
-These checks do not certify physical AirPlay output, HDR display activation, every Dolby profile, Wi-Fi performance, or every receiver. Validate those on an Apple TV 4K and an HDR-capable display before describing hardware compatibility as confirmed.
+Physical Apple TV 4K trials used a 1080p H.264 MKV with Dolby Digital Plus. They verified opening the AirPlay picker during preparation, resuming with sound, and seeking back to the beginning with the receiver remote. Dolby HLS trials verified audio and subtitle changes from the remote, including updates to Beamly's selection while paused. The I-frame test build showed thumbnails that changed as the viewer scrubbed with the remote. Hardware validation of 4K/HDR and Atmos speaker output remains pending.
 
 The native 4K frame test uses HDR only when AVPlayer reports HDR eligibility, otherwise 4K SDR. HDR10/HLG metadata and decoded-frame preservation are always checked by FFmpeg. `BEAMLY_TEST_TOOLS_DIRECTORY=/absolute/path/to/tools Scripts/test.sh` runs the 4K fixtures against an isolated FFmpeg/ffprobe installation without replacing system tools.
 
