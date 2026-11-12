@@ -68,7 +68,9 @@ struct ContentView: View {
             HStack(spacing: 7) {
                 if model.isExternal { Circle().fill(mint).frame(width: 5, height: 5).accessibilityHidden(true) }
                 Text("AirPlay").font(.system(size: 11, weight: .medium))
-                AirPlayPicker(player: model.player, request: $model.isAirPlayPickerRequested).frame(width: 24, height: 25)
+                AirPlayPicker(player: model.player, request: $model.isAirPlayPickerRequested,
+                              onPresentationChanged: model.airPlayPickerPresentationChanged)
+                    .frame(width: 24, height: 25)
                     .accessibilityLabel("Choose an AirPlay device")
             }
             .padding(.leading, 12).padding(.trailing, 5).padding(.vertical, 2)
@@ -447,8 +449,9 @@ struct SeekPreview: View {
 struct AirPlayPicker: NSViewRepresentable {
     let player: AVPlayer
     @Binding var request: Bool
+    let onPresentationChanged: (Bool) -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator { Coordinator(onPresentationChanged: onPresentationChanged) }
 
     func makeNSView(context: Context) -> AVRoutePickerView {
         let view = AVRoutePickerView()
@@ -468,15 +471,20 @@ struct AirPlayPicker: NSViewRepresentable {
     final class Coordinator: NSObject, @preconcurrency AVRoutePickerViewDelegate {
         private var presentationScheduled = false
         private var isPresenting = false
+        private let onPresentationChanged: (Bool) -> Void
+
+        init(onPresentationChanged: @escaping (Bool) -> Void) {
+            self.onPresentationChanged = onPresentationChanged
+        }
 
         func presentRoutes(in view: AVRoutePickerView, request: Binding<Bool>) {
             guard request.wrappedValue, !presentationScheduled else { return }
             presentationScheduled = true
             DispatchQueue.main.async {
                 self.presentationScheduled = false
-                guard request.wrappedValue else { return }
+                guard request.wrappedValue, let window = view.window else { return }
                 request.wrappedValue = false
-                guard !self.isPresenting, let window = view.window else { return }
+                guard !self.isPresenting else { return }
                 window.deminiaturize(nil)
                 window.makeKeyAndOrderFront(nil)
                 NSApp.activate()
@@ -484,8 +492,15 @@ struct AirPlayPicker: NSViewRepresentable {
             }
         }
 
-        func routePickerViewWillBeginPresentingRoutes(_ routePickerView: AVRoutePickerView) { isPresenting = true }
-        func routePickerViewDidEndPresentingRoutes(_ routePickerView: AVRoutePickerView) { isPresenting = false }
+        func routePickerViewWillBeginPresentingRoutes(_ routePickerView: AVRoutePickerView) {
+            isPresenting = true
+            onPresentationChanged(true)
+        }
+
+        func routePickerViewDidEndPresentingRoutes(_ routePickerView: AVRoutePickerView) {
+            isPresenting = false
+            onPresentationChanged(false)
+        }
 
         @discardableResult
         static func press(in view: NSView) -> Bool {

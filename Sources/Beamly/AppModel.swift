@@ -54,6 +54,8 @@ final class AppModel: ObservableObject {
     private var preparation: Task<Void, Never>?
     private var routePreparation: Task<Void, Never>?
     private var shouldShowAirPlayPicker = false
+    private var isAirPlayPickerPresented = false
+    private var mayHaveSelectedAirPlayRoute = false
     private var previewTask: Task<Void, Never>?
     private var seekPreviewTask: Task<Void, Never>?
     private var sleepTimerTask: Task<Void, Never>?
@@ -103,9 +105,14 @@ final class AppModel: ObservableObject {
                     guard let self else { return }
                     let wasExternal = self.isExternal
                     self.isExternal = player.isExternalPlaybackActive
-                    if self.isExternal { self.isAirPlayPickerRequested = false }
-                    if self.isExternal, self.playRequested, !self.isPreparing { self.playIfConnected() }
-                    else if wasExternal, !self.isExternal, !self.isPreparing, !self.isConnectingAirPlay { self.pausePlayback() }
+                    if self.isExternal {
+                        self.mayHaveSelectedAirPlayRoute = true
+                        self.isAirPlayPickerRequested = false
+                        if self.playRequested, !self.isPreparing { self.playIfConnected() }
+                    } else if wasExternal, !self.isPreparing, !self.isConnectingAirPlay {
+                        if self.playRequested { self.mayHaveSelectedAirPlayRoute = false }
+                        self.pausePlayback()
+                    }
                 }
             },
             player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
@@ -210,8 +217,8 @@ final class AppModel: ObservableObject {
     }
     var qualityExplanation: String? {
         guard !isPreparing, qualityTitle != nil else { return nil }
-        if !isUsingHLS { return NSLocalizedString("Direct playback without video conversion.", comment: "") }
         if isVideoCopied { return NSLocalizedString("Prepared for AirPlay without video conversion.", comment: "") }
+        if !isUsingHLS { return NSLocalizedString("Direct playback without video conversion.", comment: "") }
         var reasons = [compatibilityReason].compactMap { $0 }
         if usedSoftwareFallback { reasons.insert(NSLocalizedString("System conversion failed; using the software encoder.", comment: ""), at: 0) }
         else if usesSoftwareEncoder { reasons.append(NSLocalizedString("Software encoding is in use.", comment: "")) }
@@ -293,19 +300,42 @@ final class AppModel: ObservableObject {
                 select(id)
                 playIfConnected(showPicker: true)
             } else { openFiles() }
-        } else if isPlaying { pausePlayback() }
-        else {
+        } else if isPlaying || (playRequested && (isAirPlayPickerRequested || isAirPlayPickerPresented)) {
+            pausePlayback()
+        } else {
             if player.isExternalPlaybackActive, duration > 0 && position >= duration - 0.5 { seek(0) }
             playIfConnected(showPicker: true)
         }
     }
 
+    func airPlayPickerPresentationChanged(_ isPresented: Bool) {
+        guard isAirPlayPickerPresented != isPresented else { return }
+        isAirPlayPickerPresented = isPresented
+        if isPresented {
+            // AVKit reports presentation without saying whether the user selected a route.
+            mayHaveSelectedAirPlayRoute = true
+            shouldShowAirPlayPicker = false
+            if routePreparation != nil { cancelRoutePreparation() }
+        } else if playRequested {
+            playIfConnected()
+        }
+    }
+
+    private func requestAirPlayPicker() {
+        guard shouldShowAirPlayPicker else { return }
+        shouldShowAirPlayPicker = false
+        if !isAirPlayPickerPresented { isAirPlayPickerRequested = true }
+    }
+
     private func playIfConnected(showPicker: Bool = false) {
         playRequested = true
         shouldShowAirPlayPicker = shouldShowAirPlayPicker || showPicker
+        if !player.isExternalPlaybackActive, !mayHaveSelectedAirPlayRoute || isAirPlayPickerPresented {
+            requestAirPlayPicker()
+        }
         guard !isPreparing, player.status == .readyToPlay, player.currentItem?.status == .readyToPlay else { return }
         guard player.isExternalPlaybackActive else {
-            guard routePreparation == nil else { return }
+            guard mayHaveSelectedAirPlayRoute, !isAirPlayPickerPresented, routePreparation == nil else { return }
             // Preroll primes an already selected route at rate zero; discovery never authorizes local playback.
             isConnectingAirPlay = true
             let generation = loadID
@@ -317,12 +347,16 @@ final class AppModel: ObservableObject {
                 self.player.cancelPendingPrerolls()
                 self.isConnectingAirPlay = false
                 if self.player.isExternalPlaybackActive { self.playIfConnected() }
-                else if self.shouldShowAirPlayPicker { self.isAirPlayPickerRequested = true }
+                else {
+                    self.mayHaveSelectedAirPlayRoute = false
+                    self.requestAirPlayPicker()
+                }
             }
             player.preroll(atRate: 1, completionHandler: nil)
             return
         }
         cancelRoutePreparation()
+        mayHaveSelectedAirPlayRoute = true
         isAirPlayPickerRequested = false
         shouldShowAirPlayPicker = false
         player.play()
@@ -588,7 +622,7 @@ final class AppModel: ObservableObject {
         return chapters.sorted { $0.start == $1.start ? $0.id < $1.id : $0.start < $1.start }
     }
 
-    private func prepare(at start: Double, autoPlay: Bool, applyTrackPreferences: Bool = false) {
+    private func prepare(at start: Double, autoPlay: Bool, applyTrackPreferences: Bool = false, allowMP4Remux: Bool = true) {
         guard let movie = current else { return }
         let showPicker = shouldShowAirPlayPicker
         cancelPlayback(keepingItem: true)
@@ -647,7 +681,9 @@ final class AppModel: ObservableObject {
                 try await server.start()
                 try Task.checkCancellation()
                 let playbackURL: URL
+                let remuxedMP4: Bool
                 if canPlayDirect {
+                    remuxedMP4 = false
                     isUsingHLS = false
                     isVideoCopied = false
                     sourceOffset = 0
@@ -660,12 +696,11 @@ final class AppModel: ObservableObject {
                     job = newJob
                     compatibilityReason = NSLocalizedString(preserveQuality ? "This video format requires compatibility conversion." : "Preserve video quality is off.", comment: "")
                     let choice: SubtitleChoice = externalSubtitle.map { .external($0) } ?? subtitleID.map { .embedded($0) } ?? .none
-                    let playlistURL = try await newJob.start(input: movie.url, info: metadata, audioTrack: audioID, subtitle: choice,
-                        hardwareEncoding: hardwareEncoding, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay, audioDelay: audioDelay,
-                        onFraction: { [weak self] fraction in
-                            guard let self, self.loadID == generation else { return }
-                            self.preparationFraction = max(self.preparationFraction ?? 0, fraction)
-                        }) { [weak self] stage in
+                    let reportFraction: @MainActor (Double) -> Void = { [weak self] fraction in
+                        guard let self, self.loadID == generation else { return }
+                        self.preparationFraction = max(self.preparationFraction ?? 0, fraction)
+                    }
+                    let reportStage: @MainActor (PlaybackPreparationStage) -> Void = { [weak self] stage in
                         guard let self, self.loadID == generation else { return }
                         self.preparationFraction = nil
                         self.preparationStage = stage
@@ -677,11 +712,30 @@ final class AppModel: ObservableObject {
                         default: break
                         }
                     }
-                    try Task.checkCancellation()
-                    guard loadID == generation else { return }
+                    let mp4: URL?
+                    if allowMP4Remux, preserveQuality, choice == .none, audioDelay == 0 {
+                        mp4 = try await newJob.prepareNativeMP4(input: movie.url, info: metadata, audioTrack: audioID,
+                                                              onFraction: reportFraction, progress: reportStage)
+                    } else {
+                        mp4 = nil
+                    }
+                    if let mp4 {
+                        try Task.checkCancellation()
+                        guard loadID == generation else { return }
+                        remuxedMP4 = true
+                        isUsingHLS = false
+                        playbackURL = try server.publish(file: mp4)
+                    } else {
+                        let playlist = try await newJob.start(input: movie.url, info: metadata, audioTrack: audioID, subtitle: choice,
+                            hardwareEncoding: hardwareEncoding, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay, audioDelay: audioDelay,
+                            onFraction: reportFraction, progress: reportStage)
+                        try Task.checkCancellation()
+                        guard loadID == generation else { return }
+                        remuxedMP4 = false
+                        playbackURL = try server.publish(directory: playlist.deletingLastPathComponent(), playlist: playlist.lastPathComponent)
+                    }
                     sourceOffset = newJob.sourceOffset
                     isVideoCopied = newJob.isVideoCopied
-                    playbackURL = try server.publish(directory: playlistURL.deletingLastPathComponent(), playlist: playlistURL.lastPathComponent)
                 }
                 try Task.checkCancellation()
                 guard loadID == generation else { return }
@@ -693,7 +747,7 @@ final class AppModel: ObservableObject {
                 try Task.checkCancellation()
                 guard loadID == generation else { return }
                 subtitleGroup = loadedSubtitles
-                if !isUsingHLS {
+                if canPlayDirect {
                     // Select tracks from the streamed asset, whose groups belong to this player item.
                     let audioGroup = try? await item.asset.loadMediaSelectionGroup(for: .audible)
                     let subtitleGroup = try? await item.asset.loadMediaSelectionGroup(for: .legible)
@@ -720,8 +774,8 @@ final class AppModel: ObservableObject {
                     Task { @MainActor in
                         guard let self, self.loadID == generation else { return }
                         if item.status == .failed {
-                            self.errorMessage = item.error?.localizedDescription ?? NSLocalizedString("Could not read the video.", comment: "")
-                            self.cancelPlayback()
+                            let reason = item.error?.localizedDescription ?? NSLocalizedString("Could not read the video.", comment: "")
+                            self.playbackFailed(reason, generation: generation, retryWithHLS: remuxedMP4)
                         } else if item.status == .readyToPlay {
                             if self.isUsingHLS, let group = self.subtitleGroup { item.select(group.options.first, in: group) }
                             if !self.isUsingHLS {
@@ -748,9 +802,8 @@ final class AppModel: ObservableObject {
                 failureObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main) { [weak self] note in
                     let reason = (note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)?.localizedDescription
                     Task { @MainActor in
-                        guard let self, self.loadID == generation else { return }
-                        self.errorMessage = reason ?? NSLocalizedString("The video stream was interrupted.", comment: "")
-                        self.cancelPlayback()
+                        self?.playbackFailed(reason ?? NSLocalizedString("The video stream was interrupted.", comment: ""),
+                                             generation: generation, retryWithHLS: remuxedMP4)
                     }
                 }
                 player.replaceCurrentItem(with: item)
@@ -762,6 +815,16 @@ final class AppModel: ObservableObject {
                 errorMessage = error.localizedDescription
                 cancelPlayback()
             }
+        }
+    }
+
+    private func playbackFailed(_ reason: String, generation: UUID, retryWithHLS: Bool) {
+        guard loadID == generation else { return }
+        if retryWithHLS {
+            prepare(at: position, autoPlay: playRequested, allowMP4Remux: false)
+        } else {
+            errorMessage = reason
+            cancelPlayback()
         }
     }
 

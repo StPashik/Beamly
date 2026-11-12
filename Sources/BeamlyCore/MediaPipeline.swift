@@ -519,6 +519,47 @@ public final class HLSJob {
         }
     }
 
+    public func prepareNativeMP4(input: URL, info: MediaInfo, audioTrack: Int?,
+                                 onFraction: (@MainActor (Double) -> Void)?,
+                                 progress: @MainActor (PlaybackPreparationStage) -> Void) async throws -> URL? {
+        let audio = audioTrack == nil ? info.defaultAudioTrack : info.audioTracks.first { $0.id == audioTrack }
+        guard input.pathExtension.lowercased() == "mkv", info.canCopyVideo, info.videoCodec == "h264",
+              info.duration.isFinite, info.duration > 0, let audio, Self.hasSurround(audio),
+              let ffmpeg = tools.ffmpegURL else { return nil }
+        try validateLocalFile(input)
+        stop()
+        diagnostic = nil
+        let currentGeneration = generation
+        let cache = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-MP4-\(UUID().uuidString)", isDirectory: true)
+        let file = cache.appendingPathComponent("movie.mp4")
+        do {
+            try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+            directory = cache
+            progress(.originalStream)
+            // A front index lets AVPlayer seek anywhere through the existing HTTP range server.
+            let arguments = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", input.path,
+                             "-map", "0:V:0", "-map", "0:\(audio.id)", "-c", "copy", "-movflags", "+faststart", file.lastPathComponent]
+            try await mux(ffmpeg, arguments: arguments, directory: cache, generation: currentGeneration,
+                          duration: info.duration, frameRate: info.frameRate, onFraction: onFraction)
+            let (playable, duration) = try await AVURLAsset(url: file).load(.isPlayable, .duration)
+            try Task.checkCancellation()
+            guard generation == currentGeneration else { throw CancellationError() }
+            guard playable, duration.seconds.isFinite, abs(duration.seconds - info.duration) <= 0.5 else {
+                stop()
+                return nil
+            }
+            sourceOffset = 0
+            isVideoCopied = true
+            return file
+        } catch {
+            guard generation == currentGeneration else { throw CancellationError() }
+            stop()
+            try Task.checkCancellation()
+            if error is InsufficientSpace { throw error }
+            return nil
+        }
+    }
+
     public func start(input: URL, info: MediaInfo, audioTrack: Int?, subtitle: SubtitleChoice,
                       startTime: Double = 0, hardwareEncoding: Bool, preserveQuality: Bool = true, subtitleDelay: Double = 0, audioDelay: Double = 0,
                       onFraction: (@MainActor (Double) -> Void)? = nil,
@@ -545,8 +586,6 @@ public final class HLSJob {
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
         directory = cache
         let currentGeneration = generation
-        let process = ProcessRunner()
-        runner = process
         let rendering: SubtitleRendering?
         if !isVideoCopied, subtitle != .none { progress(.subtitles) }
         do { rendering = isVideoCopied ? nil : try subtitleRendering(subtitle, input: input, info: info, directory: cache) }
@@ -555,7 +594,6 @@ public final class HLSJob {
             stop()
             throw error
         }
-        var canRetryInSoftware = !isVideoCopied && hardwareEncoding
         do {
             progress(isVideoCopied ? .originalStream : hardwareEncoding ? .systemEncoding : .softwareEncoding)
             let keyTime = isVideoCopied ? try await tools.firstVideoTimestamp(url: input, seek: startTime + info.startTime) : startTime
@@ -567,42 +605,9 @@ public final class HLSJob {
                 info.audioTracks.first { $0.id == audioTrack } ?? info.defaultAudioTrack
             let arguments = isVideoCopied ? Self.copyArguments(input: input, info: info, audio: audio, keyTime: keyTime, audioDelay: audioDelay) : Self.arguments(input: input, info: info, audioTrack: audioTrack,
                                            subtitleRendering: rendering, startTime: startTime, hardwareEncoding: hardwareEncoding, subtitleDelay: subtitleDelay, audioDelay: audioDelay)
-            let execution = Task.detached(priority: .userInitiated) {
-                try await process.run(executable: ffmpeg, arguments: ["-nostats", "-stats_period", "2", "-progress", ".progress"] + arguments, directory: cache)
-            }
-            completion = execution
             // Publish only after EOF so AirPlay sees the entire seekable timeline on its first request.
-            let progressFile = cache.appendingPathComponent(".progress")
-            let clock = SuspendingClock()
-            var deadline = clock.now.advanced(by: .seconds(90))
-            var diskCheck = clock.now
-            var progressSize = 0
-            while !process.isFinished {
-                try Task.checkCancellation()
-                guard generation == currentGeneration else { throw CancellationError() }
-                let now = clock.now
-                if now >= diskCheck {
-                    let capacity = try? cache.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
-                    let available = max(capacity?.volumeAvailableCapacityForImportantUsage ?? 0, Int64(capacity?.volumeAvailableCapacity ?? 0))
-                    if capacity != nil && available < 256 * 1024 * 1024 {
-                        canRetryInSoftware = false
-                        throw MediaPipelineError.invalidMedia(NSLocalizedString("Not enough space for the video buffer. Free up disk space and try again.", comment: ""))
-                    }
-                    diskCheck = now.advanced(by: .seconds(2))
-                }
-                if let size = (try? progressFile.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size > progressSize {
-                    progressSize = size
-                    deadline = now.advanced(by: .seconds(90))
-                    if let onFraction, let fraction = Self.preparedFraction(in: progressFile, size: size, duration: info.duration - startTime, frameRate: info.frameRate) {
-                        onFraction(fraction)
-                    }
-                }
-                guard now < deadline else { throw MediaPipelineError.timedOut }
-                try await Task.sleep(for: .milliseconds(100))
-            }
-            _ = try await execution.value
-            try Task.checkCancellation()
-            guard generation == currentGeneration else { throw CancellationError() }
+            try await mux(ffmpeg, arguments: arguments, directory: cache, generation: currentGeneration,
+                          duration: info.duration - startTime, frameRate: info.frameRate, onFraction: onFraction)
             let renditionCount = audio == nil ? 1 : Self.hasSurround(audio) ? 3 : 2
             let names = isVideoCopied ? (0..<renditionCount).map { "stream_\($0).m3u8" } : ["stream.m3u8"]
             guard names.allSatisfy({ name in
@@ -630,13 +635,59 @@ public final class HLSJob {
             guard generation == currentGeneration else { throw error }
             diagnostic = error.localizedDescription
             stop()
-            if canRetryInSoftware && !(error is CancellationError) {
+            if !isVideoCopied, hardwareEncoding, !(error is CancellationError), !(error is InsufficientSpace) {
                 progress(.softwareFallback)
                 return try await start(input: input, info: info, audioTrack: audioTrack, subtitle: subtitle,
                                        startTime: startTime, hardwareEncoding: false, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay, audioDelay: audioDelay, onFraction: onFraction, progress: progress)
             }
             throw error
         }
+    }
+
+    private struct InsufficientSpace: LocalizedError {
+        var errorDescription: String? {
+            NSLocalizedString("Not enough space for the video buffer. Free up disk space and try again.", comment: "")
+        }
+    }
+
+    private func mux(_ ffmpeg: URL, arguments: [String], directory cache: URL, generation currentGeneration: UUID,
+                     duration: Double, frameRate: Double, onFraction: (@MainActor (Double) -> Void)?) async throws {
+        try Task.checkCancellation()
+        guard generation == currentGeneration else { throw CancellationError() }
+        let process = ProcessRunner()
+        runner = process
+        let execution = Task.detached(priority: .userInitiated) {
+            try await process.run(executable: ffmpeg, arguments: ["-nostats", "-stats_period", "2", "-progress", ".progress"] + arguments, directory: cache)
+        }
+        completion = execution
+        let progressFile = cache.appendingPathComponent(".progress")
+        let clock = SuspendingClock()
+        var deadline = clock.now.advanced(by: .seconds(90))
+        var diskCheck = clock.now
+        var progressSize = 0
+        while !process.isFinished {
+            try Task.checkCancellation()
+            guard generation == currentGeneration else { throw CancellationError() }
+            let now = clock.now
+            if now >= diskCheck {
+                let capacity = try? cache.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
+                let available = max(capacity?.volumeAvailableCapacityForImportantUsage ?? 0, Int64(capacity?.volumeAvailableCapacity ?? 0))
+                if capacity != nil && available < 256 * 1024 * 1024 { throw InsufficientSpace() }
+                diskCheck = now.advanced(by: .seconds(2))
+            }
+            if let size = (try? progressFile.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size > progressSize {
+                progressSize = size
+                deadline = now.advanced(by: .seconds(90))
+                if let onFraction, let fraction = Self.preparedFraction(in: progressFile, size: size, duration: duration, frameRate: frameRate) {
+                    onFraction(fraction)
+                }
+            }
+            guard now < deadline else { throw MediaPipelineError.timedOut }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        _ = try await execution.value
+        try Task.checkCancellation()
+        guard generation == currentGeneration else { throw CancellationError() }
     }
 
     private static func preparedFraction(in file: URL, size: Int, duration: Double, frameRate: Double) -> Double? {

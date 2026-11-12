@@ -88,12 +88,16 @@ final class WindowAppearanceTests: XCTestCase {
         window.isReleasedWhenClosed = false
         defer { window.close() }
         let picker = PressablePicker()
-        window.contentView = picker
-        let coordinator = AirPlayPicker.Coordinator()
+        var presentationChanges: [Bool] = []
+        let coordinator = AirPlayPicker.Coordinator(onPresentationChanged: { presentationChanges.append($0) })
         var requested = false
         let request = Binding(get: { requested }, set: { requested = $0 })
         coordinator.presentRoutes(in: picker, request: request)
         requested = true
+        coordinator.presentRoutes(in: picker, request: request)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertTrue(requested, "Keep the request until the picker has a window")
+        window.contentView = picker
         coordinator.presentRoutes(in: picker, request: request)
         coordinator.presentRoutes(in: picker, request: request)
         try await Task.sleep(nanoseconds: 50_000_000)
@@ -113,6 +117,7 @@ final class WindowAppearanceTests: XCTestCase {
         try await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertEqual(picker.presses, 2)
         XCTAssertFalse(requested)
+        XCTAssertEqual(presentationChanges, [true, false])
     }
 
     @MainActor

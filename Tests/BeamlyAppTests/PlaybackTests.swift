@@ -19,7 +19,8 @@ final class PlaybackTests: XCTestCase {
         generator.executableURL = ffmpeg
         generator.arguments = ["-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "color=c=blue:size=160x90:rate=10:duration=30",
             "-f", "lavfi", "-i", "sine=frequency=440:duration=30", "-f", "lavfi", "-i", "sine=frequency=880:duration=30", "-i", captions.path,
-            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s", "-c:v", "libx264", "-g", "10", "-bf", "0", "-c:a", "aac", "-c:s", "srt", movie.path]
+            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s", "-c:v", "libx264", "-g", "10", "-bf", "0",
+            "-c:a:0", "eac3", "-ac:a:0", "6", "-c:a:1", "aac", "-c:s", "srt", movie.path]
         generator.standardInput = FileHandle.nullDevice
         generator.standardOutput = FileHandle.nullDevice
         generator.standardError = FileHandle.nullDevice
@@ -54,6 +55,10 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(player.emptyReplacements, 0, "Starting must not clear a receiver selected before loading a movie")
         XCTAssertEqual(model.position, 8, accuracy: 1)
         let resumedItem = try XCTUnwrap(player.currentItem)
+        XCTAssertEqual((resumedItem.asset as? AVURLAsset)?.url.pathExtension, "mp4")
+        XCTAssertTrue(model.isVideoCopied)
+        XCTAssertEqual(model.audioOptions.map(\.id), [1, 2])
+        XCTAssertEqual(model.subtitleOptions.map(\.id), [3])
         let resumedDuration = try await resumedItem.asset.load(.duration).seconds
         XCTAssertEqual(resumedDuration, 30, accuracy: 0.3, "Resuming must publish the entire movie, including the first eight seconds")
         XCTAssertEqual(player.currentTime().seconds, 8, accuracy: 1)
@@ -67,6 +72,12 @@ final class PlaybackTests: XCTestCase {
         XCTAssertGreaterThan(player.prerollCalls, 0, "A paused selected route can become active during rate-zero preparation")
 
         player.resetsRouteOnReplacement = true
+        let fallbackPosition = model.position
+        NotificationCenter.default.post(name: .AVPlayerItemFailedToPlayToEndTime, object: resumedItem)
+        try await wait(diagnostic: model.errorMessage ?? "") { readyAndPlaying() && model.isUsingHLS }
+        XCTAssertEqual(model.position, fallbackPosition, accuracy: 1.5, "The HLS fallback resumes the same movie position")
+        XCTAssertNil(model.errorMessage)
+
         let oldItem = try XCTUnwrap(player.currentItem)
         let oldURL = try XCTUnwrap((oldItem.asset as? AVURLAsset)?.url)
         let position = model.position
@@ -264,6 +275,13 @@ final class PlaybackTests: XCTestCase {
             defaults.removePersistentDomain(forName: suite)
             try? FileManager.default.removeItem(at: folder)
         }
+        model.togglePlay()
+        XCTAssertTrue(model.isPreparing)
+        XCTAssertTrue(model.isAirPlayPickerRequested, "Play must ask for a receiver before the item is ready")
+        XCTAssertEqual(player.playCalls, 0)
+        model.togglePlay()
+        XCTAssertFalse(model.isAirPlayPickerRequested)
+
         model.select(saved.items[0].id, autoPlay: false)
         try await wait { model.player.currentItem?.status == .readyToPlay && !model.isPreparing }
         XCTAssertNil(model.errorMessage)
@@ -273,29 +291,37 @@ final class PlaybackTests: XCTestCase {
         // Neither a manual request nor automatic preparation may play locally.
         let pausedTime = player.currentTime().seconds
         model.togglePlay()
+        XCTAssertTrue(model.isAirPlayPickerRequested)
         XCTAssertEqual(player.playCalls, 0)
         XCTAssertEqual(player.rate, 0)
         XCTAssertNil(model.errorMessage)
         model.togglePlay()
-        XCTAssertFalse(model.isPlaying, "Pause cancels pending route preparation")
-        try await Task.sleep(for: .seconds(3.1))
-        XCTAssertFalse(model.isAirPlayPickerRequested, "A cancelled request must not reopen the picker later")
+        XCTAssertFalse(model.isAirPlayPickerRequested, "Pause cancels the pending picker request")
         model.togglePlay()
-        try await wait { model.isAirPlayPickerRequested }
+        XCTAssertTrue(model.isAirPlayPickerRequested)
+        model.isAirPlayPickerRequested = false
+        model.airPlayPickerPresentationChanged(true)
+        XCTAssertEqual(player.prerollCalls, 0)
+        model.airPlayPickerPresentationChanged(false)
+        XCTAssertEqual(player.prerollCalls, 1, "Prime the player after a possible receiver selection")
+        try await Task.sleep(for: .seconds(3.1))
+        XCTAssertFalse(model.isAirPlayPickerRequested, "Dismissing the picker must not reopen it for the same Play request")
         XCTAssertEqual(player.currentTime().seconds, pausedTime, accuracy: 0.1, "Preroll must not advance the movie without a receiver")
         model.select(saved.items[0].id)
         try await wait { !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
         XCTAssertEqual(player.playCalls, 0)
         player.setExternalPlaybackActive(true)
         try await wait { model.isPlaying }
+        model.airPlayPickerPresentationChanged(true)
         player.setExternalPlaybackActive(false)
         try await wait { !model.isPlaying && !model.isExternal }
+        model.airPlayPickerPresentationChanged(false)
         XCTAssertEqual(player.rate, 0)
         let callsAfterDisconnect = player.playCalls
         model.togglePlay()
         XCTAssertEqual(player.playCalls, callsAfterDisconnect)
         XCTAssertNil(model.errorMessage)
-        try await wait { model.isAirPlayPickerRequested }
+        XCTAssertTrue(model.isAirPlayPickerRequested)
         player.setExternalPlaybackActive(true)
         try await wait { model.isExternal && model.isPlaying }
         model.togglePlay()

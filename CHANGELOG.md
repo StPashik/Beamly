@@ -3,6 +3,8 @@
 - Keep the full AirPlay timeline when resuming HLS video, including MKV. The saved position is a seek within the completed stream, so the beginning remains available to the receiver. Full preparation can take longer, especially for compatibility conversion.
 - Show progress during HLS preparation and use faster encoding for the stereo fallback while retaining the original video and surround packets.
 - Keep the resume position when preparation is cancelled.
+- Start compatible H.264 MKV files with Dolby surround audio faster by copying the selected tracks to a seekable MP4. Use HLS when the MP4 cannot play or when subtitles or timing corrections require it.
+- Open the AirPlay device picker as soon as Play is pressed when no receiver is known, so device selection and video preparation can happen together.
 
 # Beamly 1.0.11
 
