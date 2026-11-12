@@ -290,20 +290,32 @@ public struct FFmpegTools: Sendable {
     }
 
     func firstVideoTimestamp(url: URL, seek: Double? = nil) async throws -> Double {
+        let packet = try await firstPacket(url: url, stream: "V:0", seek: seek)
+        guard let value = packet?.pts_time.flatMap(Double.init), value.isFinite,
+              packet?.flags?.contains("K") == true else {
+            throw MediaPipelineError.invalidMedia(NSLocalizedString("A safe video seek point could not be found.", comment: ""))
+        }
+        return value
+    }
+
+    func firstAudioTimestamp(url: URL) async throws -> Double {
+        let packet = try await firstPacket(url: url, stream: "a:0", seek: nil)
+        guard let value = packet?.pts_time.flatMap(Double.init), value.isFinite else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return value
+    }
+
+    private func firstPacket(url: URL, stream: String, seek: Double?) async throws -> PacketList.Packet? {
         guard let executable = ffprobeURL else { throw MediaPipelineError.missingTool("ffprobe") }
-        var arguments = ["-v", "error", "-select_streams", "V:0"]
+        var arguments = ["-v", "error", "-select_streams", stream]
         if url.pathExtension == "m3u8" { arguments += ["-live_start_index", "0"] }
         // An explicit seek to zero can skip the first fMP4 GOP when its PTS is positive.
         let interval = seek.map { "\($0)%+#1" } ?? "%+#1"
         arguments += ["-read_intervals", interval,
                       "-show_entries", "packet=pts_time,flags", "-of", "json", url.path]
         let output = try await ProcessRunner().run(executable: executable, arguments: arguments)
-        let packet = try JSONDecoder().decode(VideoPackets.self, from: output.stdout).packets.first
-        guard let value = packet?.pts_time.flatMap(Double.init), value.isFinite,
-              packet?.flags?.contains("K") == true else {
-            throw MediaPipelineError.invalidMedia(NSLocalizedString("A safe video seek point could not be found.", comment: ""))
-        }
-        return value
+        return try JSONDecoder().decode(PacketList.self, from: output.stdout).packets.first
     }
 
     func videoEnd(url: URL, lastKeyframe: Double, maxInterval: Double) async throws -> Double {
@@ -312,7 +324,7 @@ public struct FFmpegTools: Sendable {
         let arguments = ["-v", "error", "-select_streams", "V:0", "-read_intervals", "\(lastKeyframe)%+\(maxInterval)",
                          "-show_entries", "packet=pts_time,duration_time,flags", "-of", "json", url.path]
         let output = try await ProcessRunner().run(executable: executable, arguments: arguments, outputLimit: 512 * 1024)
-        let packets = try JSONDecoder().decode(VideoPackets.self, from: output.stdout).packets
+        let packets = try JSONDecoder().decode(PacketList.self, from: output.stdout).packets
         guard let first = packets.first, first.flags?.contains("K") == true,
               let timestamp = first.pts_time.flatMap(Double.init), abs(timestamp - lastKeyframe) <= 0.002 else {
             throw CocoaError(.fileReadCorruptFile)
@@ -328,9 +340,30 @@ public struct FFmpegTools: Sendable {
         return end
     }
 
-    private struct VideoPackets: Decodable {
+    func videoDecodeRange(url: URL, preroll: Double, start: Double, end: Double, endsAtKeyframe: Bool) async throws -> (Double, Double) {
+        guard let executable = ffprobeURL else { throw MediaPipelineError.missingTool("ffprobe") }
+        let arguments = ["-v", "error", "-select_streams", "V:0", "-read_intervals", "\(preroll)%+\(end - preroll + 1.5)",
+                         "-show_entries", "packet=pts_time,dts_time,flags", "-of", "json", url.path]
+        let output = try await ProcessRunner().run(executable: executable, arguments: arguments, outputLimit: 512 * 1024)
+        let packets = try JSONDecoder().decode(PacketList.self, from: output.stdout).packets
+        func decodeTime(at timestamp: Double) -> Double? {
+            packets.first {
+                guard $0.flags?.contains("K") == true, let pts = $0.pts_time.flatMap(Double.init) else { return false }
+                return abs(pts - timestamp) <= 0.002
+            }?.dts_time.flatMap(Double.init)
+        }
+        guard let first = decodeTime(at: start),
+              let last = endsAtKeyframe ? decodeTime(at: end) : end + 0.25,
+              first.isFinite, last.isFinite, first < last, abs(first - start) < 0.5, abs(last - end) < 0.5 else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return (first, last)
+    }
+
+    private struct PacketList: Decodable {
         struct Packet: Decodable {
             let pts_time: String?
+            let dts_time: String?
             let duration_time: String?
             let flags: String?
         }
@@ -419,7 +452,7 @@ private func validateLocalFile(_ url: URL) throws {
     }
 }
 
-private struct ProcessOutput: Sendable {
+struct ProcessOutput: Sendable {
     let stdout: Data
     let stderr: Data
 }
@@ -448,7 +481,7 @@ private final class BoundedOutput: @unchecked Sendable {
     }
 }
 
-private final class ProcessRunner: @unchecked Sendable {
+final class ProcessRunner: @unchecked Sendable {
     private let lock = NSLock()
     private var process: Process?
     private var cancelled = false
@@ -556,9 +589,13 @@ public final class HLSJob {
     public private(set) var audioNames: [Int: String] = [:]
     public private(set) var pendingHLSFiles: Set<String> = []
     public private(set) var earlyHLSVideoDuration: Double?
+    public var generatedHLSSegments: URL? {
+        pendingHLSFiles.isEmpty ? nil : directory?.appendingPathComponent(".generated", isDirectory: true)
+    }
     public private(set) var subtitleNames: [SubtitleChoice: String] = [:]
     private let tools: FFmpegTools
     private var runner: ProcessRunner?
+    private var indexedRanges: IndexedHLSRanges?
     private var completion: Task<ProcessOutput, Error>?
     private var generation = UUID()
 
@@ -766,11 +803,11 @@ public final class HLSJob {
     }
 
     /// Returns nil when this file needs the regular preparation path.
-    public func prepareEarlyHLS(input: URL, info: MediaInfo, audioTrack: Int?, subtitleDelay: Double,
+    public func prepareEarlyHLS(input: URL, info: MediaInfo, audioTrack: Int?, startTime: Double = 0, subtitleDelay: Double,
                                 onFailure: @escaping @MainActor (Error) -> Void,
                                 progress: @MainActor (PlaybackPreparationStage) -> Void) async throws -> URL? {
         guard input.pathExtension.lowercased() == "mkv", info.canCopyVideo, info.videoCodec == "h264", info.startTime == 0,
-              (12...86_400).contains(info.duration), subtitleDelay.isFinite,
+              (12...86_400).contains(info.duration), startTime.isFinite, startTime >= 0, subtitleDelay.isFinite,
               let ffmpeg = tools.ffmpegURL else { return nil }
         let audio = info.audioTracks.first { $0.id == audioTrack } ?? info.defaultAudioTrack
         if let audio {
@@ -784,7 +821,7 @@ public final class HLSJob {
         diagnostic = nil
         let generation = self.generation
         do {
-            return try await prepareIndexedHLS(input: input, info: info, audio: audio, subtitleDelay: subtitleDelay,
+            return try await prepareIndexedHLS(input: input, info: info, audio: audio, startTime: startTime, subtitleDelay: subtitleDelay,
                                                ffmpeg: ffmpeg, generation: generation, onFailure: onFailure, progress: progress)
         } catch {
             guard self.generation == generation else { throw CancellationError() }
@@ -795,7 +832,7 @@ public final class HLSJob {
         }
     }
 
-    private func prepareIndexedHLS(input: URL, info: MediaInfo, audio: MediaTrack?, subtitleDelay: Double,
+    private func prepareIndexedHLS(input: URL, info: MediaInfo, audio: MediaTrack?, startTime: Double, subtitleDelay: Double,
                                    ffmpeg: URL, generation: UUID, onFailure: @escaping @MainActor (Error) -> Void,
                                    progress: @MainActor (PlaybackPreparationStage) -> Void) async throws -> URL? {
         let indexing = Task.detached(priority: .userInitiated) { try MatroskaCueIndex.videoKeyframes(in: input) }
@@ -819,10 +856,9 @@ public final class HLSJob {
             starts.append(time)
         }
         guard starts.count >= 2 else { return nil }
-        typealias Segment = (name: String, duration: Double)
-        func segments(_ times: [Double], prefix: String) -> [Segment] {
+        func segments(_ times: [Double], prefix: String) -> [IndexedHLSSegment] {
             zip(times, Array(times.dropFirst()) + [videoDuration]).enumerated().map { index, pair in
-                (prefix + String(format: "%06d.m4s", index), pair.1 - pair.0)
+                IndexedHLSSegment(name: prefix + String(format: "%06d.m4s", index), start: pair.0, end: pair.1)
             }
         }
         let videoSegments = segments(starts, prefix: "segment_0_")
@@ -834,8 +870,10 @@ public final class HLSJob {
 
         let cache = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-EarlyHLS-\(UUID().uuidString)", isDirectory: true)
         let inputs = cache.appendingPathComponent(".inputs", isDirectory: true)
+        let generated = cache.appendingPathComponent(".generated", isDirectory: true)
         directory = cache
         try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: generated, withIntermediateDirectories: false)
         isVideoCopied = true
         usesOriginalDolby = Self.hasSurround(audio)
         progress(.originalStream)
@@ -846,8 +884,8 @@ public final class HLSJob {
         args += ["-c", "copy", "-tag:v", "avc1", "-sn", "-dn", "-avoid_negative_ts", "make_zero", "-f", "hls",
                  "-hls_segment_type", "fmp4", "-hls_time", String(segmentLength), "-hls_list_size", "0",
                  "-hls_playlist_type", "vod", "-hls_flags", "temp_file+independent_segments",
-                 "-hls_fmp4_init_filename", "init_0.mp4", "-hls_segment_filename", "segment_0_%06d.m4s", ".rendered.m3u8"]
-        args += Self.iFrameArguments(duration: videoDuration, playlist: ".rendered-iframe.m3u8")
+                 "-hls_fmp4_init_filename", "init_0.mp4", "-hls_segment_filename", ".generated/segment_0_%06d.m4s", ".rendered.m3u8"]
+        args += Self.iFrameArguments(duration: videoDuration, playlist: ".rendered-iframe.m3u8", segmentPattern: ".generated/iframe-%06d.m4s")
         args += Self.captionArguments(captions, in: inputs)
 
         let packaging = Task { [weak self, args] in
@@ -860,7 +898,8 @@ public final class HLSJob {
                 throw error
             }
         }
-        let firstFiles = ["init_0.mp4", "iframe-init.mp4", videoSegments[0].name, videoSegments[1].name, frames[0].name]
+        let firstSegments = [videoSegments[0].name, videoSegments[1].name, frames[0].name]
+        let firstFiles = ["init_0.mp4", "iframe-init.mp4"] + firstSegments.map { ".generated/" + $0 }
         func firstSegmentsReady() -> Bool {
             firstFiles.allSatisfy { FileManager.default.fileExists(atPath: cache.appendingPathComponent($0).path) }
         }
@@ -877,27 +916,42 @@ public final class HLSJob {
             try await Task.sleep(for: .milliseconds(25))
         }
 
-        func write(_ name: String, initialization: String, segments: [Segment], iFrames: Bool = false) throws {
+        for name in firstSegments {
+            try FileManager.default.linkItem(at: generated.appendingPathComponent(name), to: cache.appendingPathComponent(name))
+        }
+
+        func write(_ name: String, initialization: String, segments: [IndexedHLSSegment], iFrames: Bool = false) throws {
             let target = Int(ceil(segments.map(\.duration).max() ?? 1))
             var lines = ["#EXTM3U", "#EXT-X-VERSION:7", "#EXT-X-TARGETDURATION:\(target)", "#EXT-X-PLAYLIST-TYPE:VOD",
                          "#EXT-X-MEDIA-SEQUENCE:0", "#EXT-X-INDEPENDENT-SEGMENTS", "#EXT-X-MAP:URI=\"\(initialization)\""]
             if iFrames { lines.append("#EXT-X-I-FRAMES-ONLY") }
             let locale = Locale(identifier: "en_US_POSIX")
-            for (name, duration) in segments {
-                lines.append(String(format: "#EXTINF:%.6f,", locale: locale, duration))
-                lines.append(name)
+            for segment in segments {
+                lines.append(String(format: "#EXTINF:%.6f,", locale: locale, segment.duration))
+                lines.append(segment.name)
             }
             lines += ["#EXT-X-ENDLIST", ""]
             try lines.joined(separator: "\n").write(to: cache.appendingPathComponent(name), atomically: true, encoding: .utf8)
         }
 
         // Measure the muxer's clock against the first closed fragment while the rest is being written.
-        try write(".first.m3u8", initialization: "init_0.mp4", segments: [videoSegments[0]])
-        let firstPTS = try await tools.firstVideoTimestamp(url: cache.appendingPathComponent(".first.m3u8"))
+        let first = cache.appendingPathComponent(".first.m3u8")
+        try write(first.lastPathComponent, initialization: "init_0.mp4", segments: [videoSegments[0]])
+        let firstPTS = try await tools.firstVideoTimestamp(url: first)
+        let firstAudioPTS = audio == nil ? 0 : try await tools.firstAudioTimestamp(url: first)
         let videoCodec = try await HLSCodec.identifier(at: cache.appendingPathComponent("init_0.mp4"))
         try Task.checkCancellation()
-        guard self.generation == generation, abs(firstPTS) < 0.5 else { throw CocoaError(.fileReadCorruptFile) }
+        guard self.generation == generation, abs(firstPTS) < 0.5, abs(firstAudioPTS) < 0.5 else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
         sourceOffset = -firstPTS
+        let ranges = IndexedHLSRanges(tools: tools, ffmpeg: ffmpeg, input: input, directory: cache, generated: generated,
+                                      audioTrack: audio?.id, firstPTS: firstPTS, firstAudioPTS: firstAudioPTS,
+                                      keyframes: keyframes, video: videoSegments, previews: frames)
+        indexedRanges = ranges
+        if startTime > 0 { try await ranges.prepare(at: min(startTime, videoDuration)) }
+        try Task.checkCancellation()
+        guard self.generation == generation else { throw CancellationError() }
         try write("stream_0.m3u8", initialization: "init_0.mp4", segments: videoSegments)
         try write("iframe.m3u8", initialization: "iframe-init.mp4", segments: frames, iFrames: true)
         for caption in captions { try Self.writeCaptionPlaylist(caption, duration: videoDuration - sourceOffset, in: cache) }
@@ -921,7 +975,7 @@ public final class HLSJob {
                 try await packaging.value
                 guard self.generation == generation else { return }
                 @MainActor
-                func matches(_ rendered: String, plan: [Segment], isIFramePlaylist: Bool = false) throws -> Bool {
+                func matches(_ rendered: String, plan: [IndexedHLSSegment], isIFramePlaylist: Bool = false) throws -> Bool {
                     let text = try String(contentsOf: cache.appendingPathComponent(rendered), encoding: .utf8)
                     let segments = Self.mediaSegments(in: text.components(separatedBy: .newlines))
                     return text.contains("#EXT-X-ENDLIST") && segments.count == plan.count &&
@@ -1170,14 +1224,15 @@ public final class HLSJob {
         return contents.contains("#EXTINF:") && contents.contains("#EXT-X-ENDLIST")
     }
 
-    private static func iFrameArguments(duration: Double, discardBefore: Double? = nil, playlist: String = "iframe.m3u8") -> [String] {
+    private static func iFrameArguments(duration: Double, discardBefore: Double? = nil, playlist: String = "iframe.m3u8",
+                                        segmentPattern: String = "iframe-%06d.m4s") -> [String] {
         let preroll = discardBefore.map { "+lt(pts*tb\\,\($0 - 0.000001))" } ?? ""
         // Hold each keyframe until the next one. The last fragment covers the end of the timeline.
         let filter = "noise=amount=0:drop=not(key)\(preroll),setts=ts=PTS-STARTPTS:duration=if(gt(NEXT_PTS\\,PTS)\\,NEXT_PTS-PTS\\,max(DURATION\\,\(duration)/TB-(PTS-STARTPTS)))"
         return ["-map", "0:V:0", "-c:v", "copy", "-tag:v", "avc1", "-bsf:v", filter,
                 "-f", "hls", "-hls_segment_type", "fmp4", "-hls_time", "0.001", "-hls_list_size", "0",
                 "-hls_playlist_type", "vod", "-hls_flags", "iframes_only+independent_segments+temp_file",
-                "-hls_fmp4_init_filename", "iframe-init.mp4", "-hls_segment_filename", "iframe-%06d.m4s", playlist]
+                "-hls_fmp4_init_filename", "iframe-init.mp4", "-hls_segment_filename", segmentPattern, playlist]
     }
 
     private static func finishIFrames(in cache: URL, duration: Double) throws -> Bandwidth {
@@ -1348,7 +1403,11 @@ public final class HLSJob {
     public func cancelPendingPreparation() {
         generation = UUID()
         runner?.cancel()
+        indexedRanges?.cancel()
+        indexedRanges = nil
     }
+
+    public func requestPendingHLSFile(_ name: String) { indexedRanges?.request(name) }
 
     public func stop() {
         cancelPendingPreparation()

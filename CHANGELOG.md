@@ -1,6 +1,6 @@
 # Unreleased
 
-- Start eligible H.264 MKV files after the first two HLS segments are ready while showing the full seekable timeline. Use regular preparation for other files or if early playback fails.
+- Start eligible H.264 MKV files at the saved position while showing the full seekable timeline. Prepare missing video and preview fragments on demand while the rest of the stream is generated. Use regular preparation for other files or if early playback fails.
 - Prepare compatible H.264 MKV files in one pass when using full HLS preparation with embedded captions and scrub previews.
 - Reopen the AirPlay picker immediately on Play after dismissing it without an active receiver.
 

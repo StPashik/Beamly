@@ -769,9 +769,9 @@ final class AppModel: ObservableObject {
                         }
                     }
                     let earlyPlaylist: URL?
-                    if allowEarlyHLS, start == 0, preserveQuality, allowDolbyAudio, choice == .none, audioDelay == 0 {
+                    if allowEarlyHLS, preserveQuality, allowDolbyAudio, choice == .none, audioDelay == 0 {
                         earlyPlaylist = try await newJob.prepareEarlyHLS(input: movie.url, info: metadata, audioTrack: audioID,
-                            subtitleDelay: captionDelay, onFailure: { [weak self] error in
+                            startTime: start, subtitleDelay: captionDelay, onFailure: { [weak self] error in
                                 self?.playbackFailed(error.localizedDescription, generation: generation, retry: .completeHLS)
                             }, progress: reportStage)
                     } else {
@@ -783,9 +783,12 @@ final class AppModel: ObservableObject {
                         duration = newJob.earlyHLSVideoDuration ?? duration
                         retry = .completeHLS
                         playbackURL = try server.publish(directory: earlyPlaylist.deletingLastPathComponent(),
-                            playlist: earlyPlaylist.lastPathComponent, pendingFiles: newJob.pendingHLSFiles) { [weak self] in
+                            playlist: earlyPlaylist.lastPathComponent, pendingFiles: newJob.pendingHLSFiles,
+                            generatedDirectory: newJob.generatedHLSSegments, onPendingRequest: { [weak newJob] name in
+                                Task { @MainActor in newJob?.requestPendingHLSFile(name) }
+                            }, onPendingTimeout: { [weak self] in
                                 Task { @MainActor in self?.playbackFailed(generation: generation, retry: .completeHLS) }
-                            }
+                            })
                     } else if allowMP4Remux, preserveQuality, choice == .none, audioDelay == 0,
                               let mp4 = try await newJob.prepareNativeMP4(input: movie.url, info: metadata, audioTrack: audioID,
                                                                         onFraction: reportFraction, progress: reportStage) {
@@ -864,9 +867,13 @@ final class AppModel: ObservableObject {
                             if let group = self.subtitleGroup { item.select(self.subtitleChoices[self.subtitleChoice], in: group) }
                             // Ignore time-zero callbacks until the saved position has been restored.
                             let target = CMTime(seconds: max(0, start - self.sourceOffset), preferredTimescale: 600)
-                            self.player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                            self.player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] completed in
                                 Task { @MainActor in
                                     guard let self, self.loadID == generation else { return }
+                                    if !completed, retry == .completeHLS {
+                                        self.playbackFailed(generation: generation, retry: retry)
+                                        return
+                                    }
                                     self.releasePreviousPlayback()
                                     self.isPreparing = false
                                     if self.playRequested { self.playIfConnected() }

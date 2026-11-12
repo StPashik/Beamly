@@ -8,12 +8,15 @@ public final class MediaHTTPServer: @unchecked Sendable {
     // All mutable state is confined to queue, including Network.framework callbacks.
     private enum Publication {
         case file(URL, name: String)
-        case directory(URL, pendingFiles: Set<String>, onPendingTimeout: (@Sendable () -> Void)?)
+        case directory(URL, pendingFiles: Set<String>, generatedDirectory: URL?,
+                       onPendingRequest: (@Sendable (String) -> Void)?, onPendingTimeout: (@Sendable () -> Void)?)
     }
 
     private struct PublishedFile {
         let url: URL
         var canWait = false
+        var generatedURL: URL?
+        var onPendingRequest: (@Sendable (String) -> Void)?
         var onPendingTimeout: (@Sendable () -> Void)?
     }
 
@@ -88,6 +91,7 @@ public final class MediaHTTPServer: @unchecked Sendable {
     }
 
     public func publish(directory: URL, playlist: String = "stream.m3u8", pendingFiles: Set<String> = [],
+                        generatedDirectory: URL? = nil, onPendingRequest: (@Sendable (String) -> Void)? = nil,
                         onPendingTimeout: (@Sendable () -> Void)? = nil) throws -> URL {
         try queue.sync {
             let directory = directory.standardizedFileURL.resolvingSymlinksInPath()
@@ -95,7 +99,12 @@ public final class MediaHTTPServer: @unchecked Sendable {
             guard values.isDirectory == true, Self.isMediaName(playlist) else {
                 throw ServerError("The HLS directory or playlist name is invalid.")
             }
-            return try register(.directory(directory, pendingFiles: pendingFiles, onPendingTimeout: onPendingTimeout), name: playlist)
+            let generated = generatedDirectory?.standardizedFileURL.resolvingSymlinksInPath()
+            guard generated == nil || generated?.deletingLastPathComponent().path == directory.path else {
+                throw ServerError("The generated segment directory is outside the HLS publication.")
+            }
+            return try register(.directory(directory, pendingFiles: pendingFiles, generatedDirectory: generated,
+                                           onPendingRequest: onPendingRequest, onPendingTimeout: onPendingTimeout), name: playlist)
         }
     }
 
@@ -195,11 +204,19 @@ public final class MediaHTTPServer: @unchecked Sendable {
         guard clients[client.id] != nil else { return }
         guard let published = resolve(target) else { respond(client, status: 404); return }
         let file = published.url
-        let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey]
+        var values = try? file.resourceValues(forKeys: keys)
+        if values == nil, let generated = published.generatedURL,
+           let candidate = try? generated.resourceValues(forKeys: keys),
+           candidate.isRegularFile == true, candidate.isSymbolicLink != true {
+            // The background producer and the priority producer publish through the same immutable filename.
+            try? FileManager.default.linkItem(at: generated, to: file)
+            values = try? URL(fileURLWithPath: file.path).resourceValues(forKeys: keys)
+        }
         guard values?.isSymbolicLink != true else { respond(client, status: 404); return }
         guard values?.isRegularFile == true else {
             guard published.canWait, values == nil else { respond(client, status: 404); return }
-            // shortcut: a distant seek can wait for sequential remuxing. Generate the requested range independently if this becomes a bottleneck.
+            if waitUntil == nil { published.onPendingRequest?(file.lastPathComponent) }
             let deadline = waitUntil ?? .now() + .seconds(12)
             guard DispatchTime.now() < deadline else {
                 respond(client, status: 503, fields: ["Retry-After": "1"])
@@ -253,12 +270,14 @@ public final class MediaHTTPServer: @unchecked Sendable {
         case .file(let published, let expected):
             guard name == expected else { return nil }
             return PublishedFile(url: published)
-        case .directory(let directory, let pendingFiles, let onPendingTimeout):
+        case .directory(let directory, let pendingFiles, let generatedDirectory, let onPendingRequest, let onPendingTimeout):
             guard Self.isMediaName(name) else { return nil }
             let file = directory.appendingPathComponent(name)
             // Resolve symlinks before confinement checks; .inputs must never be served.
             guard file.resolvingSymlinksInPath().deletingLastPathComponent().path == directory.path else { return nil }
-            return PublishedFile(url: file, canWait: pendingFiles.contains(name), onPendingTimeout: onPendingTimeout)
+            let canWait = pendingFiles.contains(name)
+            return PublishedFile(url: file, canWait: canWait, generatedURL: canWait ? generatedDirectory?.appendingPathComponent(name) : nil,
+                                 onPendingRequest: onPendingRequest, onPendingTimeout: onPendingTimeout)
         }
     }
 
