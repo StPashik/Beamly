@@ -1,16 +1,10 @@
-<p><strong>4K/HDR over AirPlay has not been tested on physical receivers.
-Playback may be unstable or incompatible with some devices or network configurations.</strong></p>
-<p><strong>Automatic update checks and a Settings checkbox.</strong> Beamly checks for signed updates at startup and periodically while it runs, normally once a day.
-Automatic checks stay quiet when no newer version is available or the network is unavailable.</p>
-<p>The native update window offers <strong>Install Update</strong>, <strong>Remind Me Later</strong>, and <strong>Skip This Version</strong>.
-Remind Me Later dismisses the window until the next check, including the next launch. Skip This Version suppresses that version in automatic checks;
-a manual check can still find it.</p>
-<p><strong>Settings → Updates → Check for updates automatically</strong> is enabled by default. Turning it off disables subsequent automatic checks,
-and the choice survives relaunches. Manual checks remain available. Downloads and installation require your explicit choice to install;
-automatic downloads/installs and system profiling remain disabled. Signed feeds, archive verification, and the existing trusted key are retained.</p>
-<p>The new setting and explanation are available in all five interface languages. Your queue, history, resume positions, timing corrections,
-and preferences are preserved. Original videos and subtitles are never changed. FFmpeg and ffprobe remain included for Apple Silicon and Intel.</p>
-<p>Startup checking becomes available after upgrading to 1.0.11. Update choices and preference persistence were checked in isolated applications;
-this does not certify physical AirPlay output. Receiver retesting of the existing reconnection fixes and audio timing correction is still required.
-Dolby Vision remuxing is not supported. Bitmap subtitles require compatibility conversion; ASS styling is simplified.
-This community build is ad-hoc signed and is not notarized by Apple. See the full release notes for verification limits.</p>
+<p><strong>4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.</strong></p>
+<p>Beamly 1.0.12 keeps the full AirPlay timeline when you resume an MKV, so you can seek back to the beginning with the Apple TV remote. If you need to select a receiver, the AirPlay picker opens while the movie is being prepared.</p>
+<ul>
+<li>Switch compatible audio and text subtitles with the Apple TV remote during playback. Beamly updates its menus to match.</li>
+<li>Play compatible Dolby Digital and Dolby Digital Plus tracks in their original surround format.</li>
+<li>See thumbnails while scrubbing original-quality H.264 HLS video on Apple TV.</li>
+<li>Drag the seek slider on the Mac to seek. Use the title bar to move the window.</li>
+<li>See preparation progress and keep your saved position if you cancel.</li>
+</ul>
+<p>Apple TV 4K trials used a 1080p H.264 MKV. Physical 4K/HDR and Atmos speaker output remain unverified. See the full release notes for the playback limitations.</p>
