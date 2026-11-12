@@ -50,6 +50,8 @@ final class PlaybackTests: XCTestCase {
         player.setExternalPlaybackActive(true)
         let model = AppModel(stateURL: state, defaults: defaults, player: player)
         defer { model.shutdown(); defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
         var pickerRequests = 0
         let observation = model.$isAirPlayPickerRequested.sink { if $0 { pickerRequests += 1 } }
         defer { observation.cancel() }
@@ -92,6 +94,11 @@ final class PlaybackTests: XCTestCase {
         try await wait(diagnostic: model.errorMessage ?? "") { readyAndPlaying() && model.isUsingHLS }
         XCTAssertEqual(model.subtitleOptions.map(\.id), [3, 4])
         let captionedItem = try XCTUnwrap(player.currentItem)
+        let dolbyURL = try XCTUnwrap((captionedItem.asset as? AVURLAsset)?.url)
+        let dolbyMaster = String(decoding: try await session.data(from: dolbyURL).0, as: UTF8.self)
+        XCTAssertTrue(dolbyMaster.contains(",ec-3\""))
+        XCTAssertFalse(dolbyMaster.contains("mp4a"))
+        XCTAssertEqual(dolbyMaster.split(separator: "\n").filter { $0.hasPrefix("#EXT-X-MEDIA:TYPE=AUDIO,") }.count, 1)
         let loadedCaptionGroup = try await captionedItem.asset.loadMediaSelectionGroup(for: .legible)
         let group = try XCTUnwrap(loadedCaptionGroup)
         XCTAssertEqual(group.options.count, 2)
@@ -109,13 +116,25 @@ final class PlaybackTests: XCTestCase {
         XCTAssertTrue(player.currentItem === captionedItem)
         XCTAssertFalse(model.isPreparing)
 
+        let dolbyPosition = model.position
+        NotificationCenter.default.post(name: .AVPlayerItemFailedToPlayToEndTime, object: captionedItem)
+        try await wait(diagnostic: model.errorMessage ?? "") { readyAndPlaying() && player.currentItem !== captionedItem }
+        let stereoItem = try XCTUnwrap(player.currentItem)
+        let stereoURL = try XCTUnwrap((stereoItem.asset as? AVURLAsset)?.url)
+        let stereoMaster = String(decoding: try await session.data(from: stereoURL).0, as: UTF8.self)
+        XCTAssertTrue(stereoMaster.contains(",mp4a.40.2\""))
+        XCTAssertFalse(stereoMaster.contains("ec-3"))
+        XCTAssertTrue(model.isVideoCopied)
+        XCTAssertEqual(model.position, dolbyPosition, accuracy: 1.5)
+        XCTAssertEqual(model.subtitleID, 4)
+        let stereoCaptions = try await stereoItem.asset.loadMediaSelectionGroup(for: .legible)
+        XCTAssertNotNil(stereoItem.currentMediaSelection.selectedMediaOption(in: try XCTUnwrap(stereoCaptions)))
+
         let oldItem = try XCTUnwrap(player.currentItem)
         let oldURL = try XCTUnwrap((oldItem.asset as? AVURLAsset)?.url)
         let position = model.position
         model.setAudio(2)
         XCTAssertTrue(player.currentItem === oldItem, "Keep the routed item attached while preparing the replacement")
-        let session = URLSession(configuration: .ephemeral)
-        defer { session.invalidateAndCancel() }
         let (_, oldResponse) = try await session.data(from: oldURL)
         XCTAssertEqual((oldResponse as? HTTPURLResponse)?.statusCode, 200, "The old receiver URL must remain available during preparation")
         try await wait(diagnostic: model.errorMessage ?? "") { readyAndPlaying() }

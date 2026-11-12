@@ -74,6 +74,7 @@ final class HEVCStreamingTests: XCTestCase {
         XCTAssertTrue(info.canCopyVideo)
         let master = try await job.start(input: input, info: info, audioTrack: 2, subtitle: .embedded(3), startTime: 0, hardwareEncoding: false, audioDelay: 0.5)
         XCTAssertTrue(job.isVideoCopied)
+        XCTAssertTrue(job.usesOriginalDolby)
         let directory = master.deletingLastPathComponent()
         try await waitForEnd(directory.appendingPathComponent("stream_0.m3u8"))
         let playlist = try String(contentsOf: master, encoding: .utf8)
@@ -82,7 +83,8 @@ final class HEVCStreamingTests: XCTestCase {
         XCTAssertTrue(playlist.contains("hvc1.2."), playlist)
         XCTAssertTrue(playlist.contains("ac-3"))
         XCTAssertTrue(playlist.contains("CHANNELS=\"6\""))
-        XCTAssertTrue(playlist.contains("mp4a.40.2"))
+        XCTAssertFalse(playlist.contains("mp4a.40.2"))
+        XCTAssertEqual(playlist.split(separator: "\n").filter { $0.hasPrefix("#EXT-X-MEDIA:TYPE=AUDIO,") }.count, 1)
         let video = directory.appendingPathComponent("stream_0.m3u8")
         let output = try await tools.probe(url: video)
         XCTAssertEqual(output.width, info.width)
@@ -102,16 +104,16 @@ final class HEVCStreamingTests: XCTestCase {
         }
         XCTAssertEqual(sei[0].count, 2)
         XCTAssertTrue(NSArray(array: sei[0]).isEqual(to: sei[1]), "HDR static metadata must survive remuxing")
-        func sound(_ index: Int) throws -> [String: Any] {
-            let json = try run(ffprobe, ["-v", "error", "-show_entries", "stream=codec_name,channels", "-of", "json", directory.appendingPathComponent("stream_\(index).m3u8").path])
+        func sound(_ directory: URL) throws -> [String: Any] {
+            let json = try run(ffprobe, ["-v", "error", "-show_entries", "stream=codec_name,channels", "-of", "json", directory.appendingPathComponent("stream_1.m3u8").path])
             let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
             return try XCTUnwrap((root["streams"] as? [[String: Any]])?.first)
         }
-        XCTAssertEqual(try sound(2)["codec_name"] as? String, "ac3")
-        XCTAssertEqual(try sound(2)["channels"] as? Int, 6)
-        XCTAssertEqual(try sound(1)["channels"] as? Int, 2)
-        func frequency(_ directory: URL, _ index: Int) throws -> Double {
-            let data = try runData(ffmpeg, ["-v", "error", "-i", directory.appendingPathComponent("stream_\(index).m3u8").path,
+        let surround = try sound(directory)
+        XCTAssertEqual(surround["codec_name"] as? String, "ac3")
+        XCTAssertEqual(surround["channels"] as? Int, 6)
+        func frequency(_ directory: URL) throws -> Double {
+            let data = try runData(ffmpeg, ["-v", "error", "-i", directory.appendingPathComponent("stream_1.m3u8").path,
                 "-map", "0:a:0", "-ss", "4.5", "-t", "1", "-ac", "1", "-ar", "8000", "-f", "f32le", "-"])
             let samples = data.withUnsafeBytes { bytes in
                 stride(from: 0, to: data.count - 3, by: 4).map { bytes.loadUnaligned(fromByteOffset: $0, as: Float.self) }
@@ -119,8 +121,7 @@ final class HEVCStreamingTests: XCTestCase {
             let crossings = zip(samples, samples.dropFirst()).filter { $0 <= 0 && $1 > 0 }.count
             return Double(crossings) / (Double(samples.count) / 8000)
         }
-        XCTAssertEqual(try frequency(directory, 1), 880, accuracy: 15)
-        XCTAssertEqual(try frequency(directory, 2), 880, accuracy: 15)
+        XCTAssertEqual(try frequency(directory), 880, accuracy: 15)
         func onset(_ url: URL, stream: String) throws -> Double {
             let first = try run(ffprobe, ["-v", "error", "-select_streams", stream, "-read_intervals", "%+#1", "-show_entries", "packet=pts_time", "-of", "json", url.path])
             let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(first.utf8)) as? [String: Any])
@@ -132,7 +133,6 @@ final class HEVCStreamingTests: XCTestCase {
             return pts + Double(sample) / 8000
         }
         let surroundOnset = try onset(input, stream: "2")
-        XCTAssertEqual(try onset(directory.appendingPathComponent("stream_2.m3u8"), stream: "a:0"), surroundOnset + 0.5 - job.sourceOffset, accuracy: 0.06)
         XCTAssertEqual(try onset(directory.appendingPathComponent("stream_1.m3u8"), stream: "a:0"), surroundOnset + 0.5 - job.sourceOffset, accuracy: 0.06)
         try await server.start()
         let url = try server.publish(directory: directory, playlist: "master.m3u8")
@@ -141,6 +141,16 @@ final class HEVCStreamingTests: XCTestCase {
             XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
             XCTAssertFalse(data.isEmpty)
         }
+        let stereo = try await job.start(input: input, info: info, audioTrack: 2, subtitle: .embedded(3),
+                                         hardwareEncoding: false, audioDelay: 0.5, allowDolbyAudio: false)
+        let stereoDirectory = stereo.deletingLastPathComponent()
+        XCTAssertTrue(job.isVideoCopied)
+        XCTAssertFalse(job.usesOriginalDolby)
+        let stereoAudio = try sound(stereoDirectory)
+        XCTAssertEqual(stereoAudio["codec_name"] as? String, "aac")
+        XCTAssertEqual(stereoAudio["channels"] as? Int, 2)
+        XCTAssertEqual(try frequency(stereoDirectory), 880, accuracy: 15)
+        XCTAssertEqual(try onset(stereoDirectory.appendingPathComponent("stream_1.m3u8"), stream: "a:0"), surroundOnset + 0.5 - job.sourceOffset, accuracy: 0.06)
         let seeked = try await job.start(input: input, info: info, audioTrack: 1, subtitle: .external(captions), startTime: 3.5, hardwareEncoding: false)
         XCTAssertLessThan(job.sourceOffset, 3.5)
         XCTAssertGreaterThan(job.sourceOffset, 0, "The second GOP must map after the movie's beginning")
@@ -152,7 +162,7 @@ final class HEVCStreamingTests: XCTestCase {
         let seekFrames = try frameHashes(seeked.deletingLastPathComponent().appendingPathComponent("stream_0.m3u8"), ffmpeg: ffmpeg)
         XCTAssertEqual(seekFrames.count, 144)
         XCTAssertTrue(Array(hashes[0].suffix(144)) == seekFrames, "Seeking an open GOP must not corrupt or repeat video frames")
-        XCTAssertEqual(try frequency(seeked.deletingLastPathComponent(), 1), 440, accuracy: 15)
+        XCTAssertEqual(try frequency(seeked.deletingLastPathComponent()), 440, accuracy: 15)
         XCTAssertEqual(try onset(seeked.deletingLastPathComponent().appendingPathComponent("stream_1.m3u8"), stream: "a:0"), try onset(input, stream: "1") - job.sourceOffset, accuracy: 0.06)
 
         for (choice, delay) in [(SubtitleChoice.external(captions), -1.5), (.embedded(3), 1.5)] {

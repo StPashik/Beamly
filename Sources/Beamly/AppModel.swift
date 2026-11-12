@@ -648,7 +648,8 @@ final class AppModel: ObservableObject {
         return chapters.sorted { $0.start == $1.start ? $0.id < $1.id : $0.start < $1.start }
     }
 
-    private func prepare(at start: Double, autoPlay: Bool, applyTrackPreferences: Bool = false, allowMP4Remux: Bool = true) {
+    private func prepare(at start: Double, autoPlay: Bool, applyTrackPreferences: Bool = false,
+                         allowMP4Remux: Bool = true, allowDolbyAudio: Bool = true) {
         guard let movie = current else { return }
         let showPicker = shouldShowAirPlayPicker
         cancelPlayback(keepingItem: true)
@@ -708,9 +709,9 @@ final class AppModel: ObservableObject {
                 try Task.checkCancellation()
                 let captionDelay = subtitleDelay
                 let playbackURL: URL
-                let remuxedMP4: Bool
+                let retry: PlaybackRetry?
                 if canPlayDirect {
-                    remuxedMP4 = false
+                    retry = nil
                     isUsingHLS = false
                     isVideoCopied = false
                     sourceOffset = 0
@@ -749,16 +750,16 @@ final class AppModel: ObservableObject {
                     if let mp4 {
                         try Task.checkCancellation()
                         guard loadID == generation else { return }
-                        remuxedMP4 = true
+                        retry = .hls
                         isUsingHLS = false
                         playbackURL = try server.publish(file: mp4)
                     } else {
                         let playlist = try await newJob.start(input: movie.url, info: metadata, audioTrack: audioID, subtitle: choice,
                             hardwareEncoding: hardwareEncoding, preserveQuality: preserveQuality, subtitleDelay: captionDelay, audioDelay: audioDelay,
-                            onFraction: reportFraction, progress: reportStage)
+                            allowDolbyAudio: allowDolbyAudio, onFraction: reportFraction, progress: reportStage)
                         try Task.checkCancellation()
                         guard loadID == generation else { return }
-                        remuxedMP4 = false
+                        retry = newJob.usesOriginalDolby ? .stereo : nil
                         playbackURL = try server.publish(directory: playlist.deletingLastPathComponent(), playlist: playlist.lastPathComponent)
                     }
                     sourceOffset = newJob.sourceOffset
@@ -808,7 +809,7 @@ final class AppModel: ObservableObject {
                         guard let self, self.loadID == generation else { return }
                         if item.status == .failed {
                             let reason = item.error?.localizedDescription ?? NSLocalizedString("Could not read the video.", comment: "")
-                            self.playbackFailed(reason, generation: generation, retryWithHLS: remuxedMP4)
+                            self.playbackFailed(reason, generation: generation, retry: retry)
                         } else if item.status == .readyToPlay {
                             if self.directAudioGroup != nil { self.setAudio(self.audioID) }
                             if let group = self.subtitleGroup { item.select(self.subtitleChoices[self.subtitleChoice], in: group) }
@@ -833,7 +834,7 @@ final class AppModel: ObservableObject {
                     let reason = (note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)?.localizedDescription
                     Task { @MainActor in
                         self?.playbackFailed(reason ?? NSLocalizedString("The video stream was interrupted.", comment: ""),
-                                             generation: generation, retryWithHLS: remuxedMP4)
+                                             generation: generation, retry: retry)
                     }
                 }
                 if subtitleGroup != nil {
@@ -849,17 +850,19 @@ final class AppModel: ObservableObject {
                 save()
             } catch is CancellationError {
             } catch {
-                guard loadID == generation else { return }
-                errorMessage = error.localizedDescription
-                cancelPlayback()
+                playbackFailed(error.localizedDescription, generation: generation, retry: job?.usesOriginalDolby == true ? .stereo : nil)
             }
         }
     }
 
-    private func playbackFailed(_ reason: String, generation: UUID, retryWithHLS: Bool) {
+    private enum PlaybackRetry {
+        case hls, stereo
+    }
+
+    private func playbackFailed(_ reason: String, generation: UUID, retry: PlaybackRetry?) {
         guard loadID == generation else { return }
-        if retryWithHLS {
-            prepare(at: position, autoPlay: playRequested, allowMP4Remux: false)
+        if let retry {
+            prepare(at: position, autoPlay: playRequested, allowMP4Remux: false, allowDolbyAudio: retry == .hls)
         } else {
             errorMessage = reason
             cancelPlayback()

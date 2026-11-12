@@ -500,6 +500,7 @@ public final class HLSJob {
     public private(set) var directory: URL?
     public private(set) var diagnostic: String?
     public private(set) var isVideoCopied = false
+    public private(set) var usesOriginalDolby = false
     public private(set) var sourceOffset = 0.0
     public private(set) var subtitleNames: [SubtitleChoice: String] = [:]
     private let tools: FFmpegTools
@@ -564,6 +565,7 @@ public final class HLSJob {
 
     public func start(input: URL, info: MediaInfo, audioTrack: Int?, subtitle: SubtitleChoice,
                       startTime: Double = 0, hardwareEncoding: Bool, preserveQuality: Bool = true, subtitleDelay: Double = 0, audioDelay: Double = 0,
+                      allowDolbyAudio: Bool = true,
                       onFraction: (@MainActor (Double) -> Void)? = nil,
                       progress: @MainActor (PlaybackPreparationStage) -> Void = { _ in }) async throws -> URL {
         stop()
@@ -605,10 +607,11 @@ public final class HLSJob {
             // Corrections can move all audio outside the remaining video, which must still play silently.
             let audio = audioDelay != 0 && (audioDelay >= info.duration || sourceOffset >= info.duration + audioDelay) ? nil :
                 info.audioTracks.first { $0.id == audioTrack } ?? info.defaultAudioTrack
-            let useSystemAAC = isVideoCopied && audio.map { !Self.isStereoAAC($0) } == true
+            let copyDolby = isVideoCopied && allowDolbyAudio && Self.hasSurround(audio)
+            let useSystemAAC = isVideoCopied && !copyDolby && audio.map { !Self.isStereoAAC($0) } == true
             func package(systemAAC: Bool) async throws {
                 let arguments = isVideoCopied ? Self.copyArguments(input: input, info: info, audio: audio, keyTime: keyTime,
-                    audioDelay: audioDelay, systemAAC: systemAAC) : Self.arguments(input: input, info: info, audioTrack: audioTrack,
+                    audioDelay: audioDelay, copyDolby: copyDolby, systemAAC: systemAAC) : Self.arguments(input: input, info: info, audioTrack: audioTrack,
                     subtitleRendering: rendering, startTime: startTime, hardwareEncoding: hardwareEncoding, subtitleDelay: subtitleDelay, audioDelay: audioDelay)
                 // Publish only after EOF so AirPlay sees the entire seekable timeline on its first request.
                 try await mux(ffmpeg, arguments: arguments, directory: cache, generation: currentGeneration,
@@ -621,7 +624,7 @@ public final class HLSJob {
                 progress(.originalStream)
                 try await package(systemAAC: false)
             }
-            let renditionCount = audio == nil ? 1 : Self.hasSurround(audio) ? 3 : 2
+            let renditionCount = audio == nil ? 1 : 2
             let names = isVideoCopied ? (0..<renditionCount).map { "stream_\($0).m3u8" } : ["stream.m3u8"]
             guard names.allSatisfy({ name in
                 guard let contents = try? String(contentsOf: cache.appendingPathComponent(name), encoding: .utf8) else { return false }
@@ -640,7 +643,9 @@ public final class HLSJob {
                 let codec = try await HLSCodec.identifier(at: cache.appendingPathComponent("init_0.mp4"))
                 try Task.checkCancellation()
                 guard generation == currentGeneration else { throw CancellationError() }
-                try Self.writeMaster(directory: cache, codec: codec, info: info, audio: audio, captions: captions, selectedSubtitle: subtitle)
+                try Self.writeMaster(directory: cache, codec: codec, info: info, audio: audio,
+                                     copyDolby: copyDolby, captions: captions, selectedSubtitle: subtitle)
+                usesOriginalDolby = copyDolby
                 subtitleNames = Dictionary(uniqueKeysWithValues: captions.map { ($0.choice, $0.name) })
                 return cache.appendingPathComponent("master.m3u8")
             }
@@ -652,7 +657,8 @@ public final class HLSJob {
             if !isVideoCopied, hardwareEncoding, !(error is CancellationError), !(error is InsufficientSpace) {
                 progress(.softwareFallback)
                 return try await start(input: input, info: info, audioTrack: audioTrack, subtitle: subtitle,
-                                       startTime: startTime, hardwareEncoding: false, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay, audioDelay: audioDelay, onFraction: onFraction, progress: progress)
+                                       startTime: startTime, hardwareEncoding: false, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay,
+                                       audioDelay: audioDelay, allowDolbyAudio: allowDolbyAudio, onFraction: onFraction, progress: progress)
             }
             throw error
         }
@@ -727,7 +733,8 @@ public final class HLSJob {
         audio.codec == "aac" && audio.profile == "LC" && (audio.channels ?? 0) <= 2
     }
 
-    private static func copyArguments(input: URL, info: MediaInfo, audio: MediaTrack?, keyTime: Double, audioDelay: Double, systemAAC: Bool) -> [String] {
+    private static func copyArguments(input: URL, info: MediaInfo, audio: MediaTrack?, keyTime: Double,
+                                      audioDelay: Double, copyDolby: Bool, systemAAC: Bool) -> [String] {
         // Read preroll with original timestamps, then discard packets before the selected random-access picture.
         var args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-copyts", "-ss", String(max(0, keyTime - 2)),
                     "-seek_timestamp", "1", "-i", input.path]
@@ -742,18 +749,13 @@ public final class HLSJob {
         var variants = "v:0"
         if let audio {
             args += ["-map", "\(audioInput):\(audio.id)"]
-            if isStereoAAC(audio) {
+            if copyDolby || isStereoAAC(audio) {
                 args += ["-c:a:0", "copy"]
             } else {
-                // The stereo fallback should not dominate preparation time; the surround rendition stays unchanged.
                 args += systemAAC ? ["-c:a:0", "aac_at", "-aac_at_quality:a:0", "2"] : ["-c:a:0", "aac", "-aac_coder:a:0", "fast"]
                 args += ["-b:a:0", "192k", "-ac:a:0", "2", "-ar:a:0", "48000"]
             }
             variants += " a:0"
-            if hasSurround(audio) {
-                args += ["-map", "\(audioInput):\(audio.id)", "-c:a:1", "copy"]
-                variants += " a:1"
-            }
             let end = audioDelay == 0 ? "" : "+gte(pts*tb\\,\(info.startTime + info.duration))"
             args += ["-bsf:a", "noise=amount=0:drop=lt(pts*tb\\,\(keyTime - 0.1))\(end)"]
         }
@@ -856,7 +858,7 @@ public final class HLSJob {
         }
     }
 
-    private static func writeMaster(directory: URL, codec: String, info: MediaInfo, audio: MediaTrack?,
+    private static func writeMaster(directory: URL, codec: String, info: MediaInfo, audio: MediaTrack?, copyDolby: Bool,
                                     captions: [CaptionRendition], selectedSubtitle: SubtitleChoice) throws {
         var master = "#EXTM3U\n#EXT-X-VERSION:7\n"
         for caption in captions {
@@ -864,23 +866,24 @@ public final class HLSJob {
             master += "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"\(caption.name)\",LANGUAGE=\"\(caption.language)\",DEFAULT=\(isDefault),AUTOSELECT=\(isDefault),URI=\"\(caption.stem).m3u8\"\n"
         }
         let video = try bandwidth(directory: directory, index: 0)
-        let language = audio?.language.flatMap { code in
-            code.count >= 2 && code.count <= 8 && code.utf8.allSatisfy { (65...90).contains($0) || (97...122).contains($0) } ? code : nil
-        } ?? "und"
-        let groups: [(String?, Int?, String?)] = audio == nil ? [(nil, nil, nil)] :
-            (hasSurround(audio) ? [("surround", 2, audio?.codec == "ac3" ? "ac-3" : "ec-3"), ("stereo", 1, "mp4a.40.2")] : [("stereo", 1, "mp4a.40.2")])
-        for (group, index, audioCodec) in groups {
-            let sound = try index.map { try bandwidth(directory: directory, index: $0) } ?? (peak: 0, average: 0)
-            if let group, let index {
-                let channels = group == "surround" ? audio?.channels ?? 6 : 2
-                master += "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"\(group)\",NAME=\"\(group)\",LANGUAGE=\"\(language)\",CHANNELS=\"\(channels)\",DEFAULT=YES,AUTOSELECT=YES,URI=\"stream_\(index).m3u8\"\n"
-            }
-            master += "#EXT-X-STREAM-INF:BANDWIDTH=\(video.peak + sound.peak),AVERAGE-BANDWIDTH=\(video.average + sound.average),RESOLUTION=\(info.width)x\(info.height),CODECS=\"\(codec)\(audioCodec.map { ",\($0)" } ?? "")\",VIDEO-RANGE=\(info.videoRange)"
-            if info.frameRate > 0 { master += String(format: ",FRAME-RATE=%.3f", locale: Locale(identifier: "en_US_POSIX"), info.frameRate) }
-            if let group { master += ",AUDIO=\"\(group)\"" }
-            if !captions.isEmpty { master += ",SUBTITLES=\"subs\"" }
-            master += ",CLOSED-CAPTIONS=NONE\nstream_0.m3u8\n"
+        var sound = (peak: 0, average: 0)
+        var codecs = codec
+        let group = copyDolby ? "surround" : "stereo"
+        if let audio {
+            sound = try bandwidth(directory: directory, index: 1)
+            let language = audio.language.flatMap { code in
+                code.count >= 2 && code.count <= 8 && code.utf8.allSatisfy { (65...90).contains($0) || (97...122).contains($0) } ? code : nil
+            } ?? "und"
+            let channels = copyDolby ? audio.channels ?? 6 : 2
+            let audioCodec = copyDolby ? (audio.codec == "ac3" ? "ac-3" : "ec-3") : "mp4a.40.2"
+            codecs += ",\(audioCodec)"
+            master += "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"\(group)\",NAME=\"\(group)\",LANGUAGE=\"\(language)\",CHANNELS=\"\(channels)\",DEFAULT=YES,AUTOSELECT=YES,URI=\"stream_1.m3u8\"\n"
         }
+        master += "#EXT-X-STREAM-INF:BANDWIDTH=\(video.peak + sound.peak),AVERAGE-BANDWIDTH=\(video.average + sound.average),RESOLUTION=\(info.width)x\(info.height),CODECS=\"\(codecs)\",VIDEO-RANGE=\(info.videoRange)"
+        if info.frameRate > 0 { master += String(format: ",FRAME-RATE=%.3f", locale: Locale(identifier: "en_US_POSIX"), info.frameRate) }
+        if audio != nil { master += ",AUDIO=\"\(group)\"" }
+        if !captions.isEmpty { master += ",SUBTITLES=\"subs\"" }
+        master += ",CLOSED-CAPTIONS=NONE\nstream_0.m3u8\n"
         let url = directory.appendingPathComponent("master.m3u8")
         if (try? String(contentsOf: url, encoding: .utf8)) != master { try master.write(to: url, atomically: true, encoding: .utf8) }
     }
@@ -910,6 +913,7 @@ public final class HLSJob {
         runner = nil
         completion = nil
         directory = nil
+        usesOriginalDolby = false
         subtitleNames = [:]
         if let cache {
             Task.detached {
