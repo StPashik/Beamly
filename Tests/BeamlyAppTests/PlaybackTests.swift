@@ -13,25 +13,35 @@ final class PlaybackTests: XCTestCase {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-route-handoff-\(UUID())")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let movie = folder.appendingPathComponent("Movie.mkv")
+        let movieWithoutCaptions = folder.appendingPathComponent("Movie without captions.mkv")
         let captions = folder.appendingPathComponent("captions.srt")
         try "1\n00:00:00,500 --> 00:00:29,000\nRoute handoff caption\n".write(to: captions, atomically: true, encoding: .utf8)
         let generator = Process()
         generator.executableURL = ffmpeg
         generator.arguments = ["-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "color=c=blue:size=160x90:rate=10:duration=30",
             "-f", "lavfi", "-i", "sine=frequency=440:duration=30", "-f", "lavfi", "-i", "sine=frequency=880:duration=30", "-i", captions.path,
-            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s", "-c:v", "libx264", "-g", "10", "-bf", "0",
-            "-c:a:0", "eac3", "-ac:a:0", "6", "-c:a:1", "aac", "-c:s", "srt", movie.path]
+            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s", "-map", "3:s", "-c:v", "libx264", "-g", "10", "-bf", "0",
+            "-c:a:0", "eac3", "-ac:a:0", "6", "-c:a:1", "aac", "-c:s", "srt",
+            "-metadata:s:s:0", "language=rus", "-metadata:s:s:1", "language=rus",
+            "-metadata:s:s:0", "title=Russian \"Captions\"", "-metadata:s:s:1", "title=Russian \"Captions\"", movie.path]
         generator.standardInput = FileHandle.nullDevice
         generator.standardOutput = FileHandle.nullDevice
         generator.standardError = FileHandle.nullDevice
         try generator.run(); generator.waitUntilExit()
         XCTAssertEqual(generator.terminationStatus, 0)
+        let remux = Process()
+        remux.executableURL = ffmpeg
+        remux.arguments = ["-v", "error", "-nostdin", "-i", movie.path, "-map", "0:v", "-map", "0:a", "-c", "copy", movieWithoutCaptions.path]
+        remux.standardOutput = FileHandle.nullDevice
+        remux.standardError = FileHandle.nullDevice
+        try remux.run(); remux.waitUntilExit()
+        XCTAssertEqual(remux.terminationStatus, 0)
         let original = try Data(contentsOf: movie)
         let suite = "app.beamly.route-handoff.\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defaults.set(ffmpeg.deletingLastPathComponent().path, forKey: "toolsDirectory")
         var playlist = Playlist()
-        playlist.append([movie]); playlist.items[0].position = 8; playlist.items[0].duration = 30
+        playlist.append([movieWithoutCaptions, movie]); playlist.items[0].position = 8; playlist.items[0].duration = 30
         let state = folder.appendingPathComponent("queue.json")
         try JSONEncoder().encode(playlist).write(to: state)
         let player = AirPlayTestPlayer()
@@ -58,7 +68,7 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual((resumedItem.asset as? AVURLAsset)?.url.pathExtension, "mp4")
         XCTAssertTrue(model.isVideoCopied)
         XCTAssertEqual(model.audioOptions.map(\.id), [1, 2])
-        XCTAssertEqual(model.subtitleOptions.map(\.id), [3])
+        XCTAssertTrue(model.subtitleOptions.isEmpty)
         let resumedDuration = try await resumedItem.asset.load(.duration).seconds
         XCTAssertEqual(resumedDuration, 30, accuracy: 0.3, "Resuming must publish the entire movie, including the first eight seconds")
         XCTAssertEqual(player.currentTime().seconds, 8, accuracy: 1)
@@ -78,6 +88,27 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(model.position, fallbackPosition, accuracy: 1.5, "The HLS fallback resumes the same movie position")
         XCTAssertNil(model.errorMessage)
 
+        model.select(playlist.items[1].id, resumeAt: fallbackPosition)
+        try await wait(diagnostic: model.errorMessage ?? "") { readyAndPlaying() && model.isUsingHLS }
+        XCTAssertEqual(model.subtitleOptions.map(\.id), [3, 4])
+        let captionedItem = try XCTUnwrap(player.currentItem)
+        let loadedCaptionGroup = try await captionedItem.asset.loadMediaSelectionGroup(for: .legible)
+        let group = try XCTUnwrap(loadedCaptionGroup)
+        XCTAssertEqual(group.options.count, 2)
+        XCTAssertNil(captionedItem.currentMediaSelection.selectedMediaOption(in: group))
+        model.setSubtitle(3)
+        try await wait { captionedItem.currentMediaSelection.selectedMediaOption(in: group) != nil }
+        let first = try XCTUnwrap(captionedItem.currentMediaSelection.selectedMediaOption(in: group))
+        let identifier = AVMetadataIdentifier(rawValue: "m3u8/NAME")
+        let name = try await AVMetadataItem.metadataItems(from: first.commonMetadata, filteredByIdentifier: identifier).first?.load(.stringValue)
+        XCTAssertEqual(name, "Russian 'Captions'")
+        XCTAssertTrue(player.currentItem === captionedItem)
+        let alternate = try XCTUnwrap(group.options.first { $0 != first })
+        captionedItem.select(alternate, in: group)
+        try await wait { model.subtitleID == 4 }
+        XCTAssertTrue(player.currentItem === captionedItem)
+        XCTAssertFalse(model.isPreparing)
+
         let oldItem = try XCTUnwrap(player.currentItem)
         let oldURL = try XCTUnwrap((oldItem.asset as? AVURLAsset)?.url)
         let position = model.position
@@ -89,6 +120,7 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual((oldResponse as? HTTPURLResponse)?.statusCode, 200, "The old receiver URL must remain available during preparation")
         try await wait(diagnostic: model.errorMessage ?? "") { readyAndPlaying() }
         XCTAssertEqual(model.audioID, 2)
+        XCTAssertEqual(model.subtitleID, 4, "Replacing audio must retain the caption selected by the receiver")
         XCTAssertEqual(model.position, position, accuracy: 1.5)
         XCTAssertEqual(player.emptyReplacements, 0)
         let retiredResponse = try? await session.data(from: oldURL).1
@@ -100,8 +132,8 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(model.audioID, 1)
         XCTAssertEqual(model.subtitleID, 3, "Rapid replacements retain both manual choices and play intent")
         let loadedGroup = try await player.currentItem?.asset.loadMediaSelectionGroup(for: .legible)
-        let group = try XCTUnwrap(loadedGroup)
-        XCTAssertNotNil(player.currentItem?.currentMediaSelection.selectedMediaOption(in: group))
+        let reloadedGroup = try XCTUnwrap(loadedGroup)
+        XCTAssertNotNil(player.currentItem?.currentMediaSelection.selectedMediaOption(in: reloadedGroup))
         let routedItem = try XCTUnwrap(player.currentItem)
         // Seek through AVPlayer, as a receiver would, without asking Beamly to rebuild the stream.
         let rewound = await player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
@@ -111,7 +143,8 @@ final class PlaybackTests: XCTestCase {
         model.togglePlay()
         try await wait { !model.isPlaying }
         model.setSubtitle(nil)
-        try await wait { !model.isPreparing && player.currentItem?.status == .readyToPlay }
+        try await wait { routedItem.currentMediaSelection.selectedMediaOption(in: reloadedGroup) == nil }
+        XCTAssertTrue(player.currentItem === routedItem)
         XCTAssertEqual(player.rate, 0, "Changing captions while paused must stay paused")
         model.togglePlay()
         try await wait { readyAndPlaying() }
@@ -346,11 +379,15 @@ final class PlaybackTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
         XCTAssertEqual(model.externalSubtitle, subtitle)
         let embedded = try XCTUnwrap(model.subtitleOptions.first)
-        model.setSubtitle(embedded.id)
-        try await wait { !model.isUsingHLS && !model.isPreparing && model.player.currentItem?.status == .readyToPlay }
         let restoredItem = try XCTUnwrap(model.player.currentItem)
         let loadedCaptions = try await restoredItem.asset.loadMediaSelectionGroup(for: .legible)
         let captions = try XCTUnwrap(loadedCaptions)
+        let externalOption = restoredItem.currentMediaSelection.selectedMediaOption(in: captions)
+        XCTAssertNotNil(externalOption)
+        model.setSubtitle(embedded.id)
+        try await wait { restoredItem.currentMediaSelection.selectedMediaOption(in: captions) != externalOption }
+        XCTAssertTrue(model.player.currentItem === restoredItem)
+        XCTAssertFalse(model.isPreparing)
         XCTAssertNotNil(restoredItem.currentMediaSelection.selectedMediaOption(in: captions))
         XCTAssertEqual(model.subtitleID, embedded.id)
 

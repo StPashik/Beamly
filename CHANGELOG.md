@@ -4,6 +4,7 @@
 - Show progress during HLS preparation and use faster encoding for the stereo fallback while retaining the original video and surround packets.
 - Keep the resume position when preparation is cancelled.
 - Start compatible H.264 MKV files with Dolby surround audio faster by copying the selected tracks to a seekable MP4. Use HLS when the MP4 cannot play or when subtitles or timing corrections require it.
+- Publish embedded text subtitles as separate HLS tracks so Apple TV can switch or turn them off during playback. Use AudioToolbox to speed up preparation of the stereo AAC rendition, with the FFmpeg AAC encoder as a fallback.
 - Open the AirPlay device picker as soon as Play is pressed when no receiver is known, so device selection and video preparation can happen together.
 
 # Beamly 1.0.11

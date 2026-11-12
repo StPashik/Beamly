@@ -8,7 +8,7 @@ Beamly uses AVPlayer and the system AirPlay picker. The quality-preserving path 
 
 With **Preserve video quality** enabled (the default), compatible MP4/M4V/MOV files are published unchanged. For supported HEVC or H.264 files that use HLS, FFmpeg copies the compressed video into fragmented MP4 segments. No video encoder, resizing, color conversion, or subtitle filter runs in this path. The interface reports **Original video quality**; the metadata row describes the source file.
 
-For supported H.264 MKV files with a selected Dolby Digital or Dolby Digital Plus surround track, Beamly can prepare a temporary MP4 when subtitles are off and audio timing is unadjusted. FFmpeg copies the video and selected audio. The MP4 index gives AVPlayer the full movie and the saved position is applied as a seek. If the MP4 cannot be prepared or played, Beamly uses HLS with its stereo fallback.
+For supported H.264 MKV files with a selected Dolby Digital or Dolby Digital Plus surround track, Beamly can prepare a temporary MP4 when the file has no embedded text captions, subtitles are off, and audio timing is unadjusted. FFmpeg copies the video and selected audio. The MP4 index gives AVPlayer the full movie and the saved position is applied as a seek. If the MP4 cannot be prepared or played, Beamly uses HLS with its stereo fallback.
 
 The remux path accepts HEVC Main/Main 10, 4:2:0, up to Level 5.1, 4096 × 2160, and 60 fps for SDR / 30 fps for HDR. HDR10 (PQ) and HLG retain their original bit depth, color characteristics, and in-bitstream metadata. The multivariant playlist declares `hvc1`, resolution, frame rate, and `VIDEO-RANGE`. HDR10+ dynamic metadata and Dolby Vision are not certified by this implementation. Dolby Vision remuxing is rejected explicitly rather than silently losing or mislabeling its metadata; compatible Dolby Vision MP4 files can still use direct playback.
 
@@ -18,7 +18,7 @@ Turning off **Preserve video quality** explicitly selects H.264 up to 1080p and 
 
 ## Audio
 
-The app's audio menu chooses the source track by its global stream index. Stereo AAC-LC is copied. Other audio gets a stereo AAC rendition. AC-3/E-AC-3 surround tracks also get an unmodified surround rendition, with a separate audio group and an AAC fallback. The video rendition is shared. DTS/TrueHD/Atmos conversion or passthrough is not promised; conversion of unsupported audio is independent of video and does not reduce its resolution.
+The app's audio menu chooses the source track by its global stream index. Stereo AAC-LC is copied. Other audio gets a stereo AAC rendition. In the original-quality HLS path, FFmpeg tries AudioToolbox for stereo AAC and falls back to its built-in AAC encoder if AudioToolbox fails. AC-3/E-AC-3 surround tracks also get an unmodified surround rendition, with a separate audio group and an AAC fallback. The video rendition is shared. DTS/TrueHD/Atmos conversion or passthrough is not promised. Audio conversion is independent of video and preserves its resolution.
 
 Changing the source audio track prepares the stream with the selected track, then restores the movie position and paused/playing state. Original video and audio files are never modified.
 
@@ -28,9 +28,9 @@ Changing the source audio track prepares the stream with the selected track, the
 
 ## Subtitles
 
-Selected embedded text subtitles and external SRT/ASS/SSA/WebVTT are converted to a separate WebVTT rendition. Each WebVTT file includes `X-TIMESTAMP-MAP`; captions earlier than the resume position stay available when you rewind. Subtitles do not force video encoding. ASS animation, fonts, and complex positioning are simplified by WebVTT conversion. Bitmap formats such as PGS/VobSub require the explicit compatibility conversion and burn-in.
+Original-quality HLS includes each readable embedded text subtitle track and any selected external SRT/ASS/SSA/WebVTT file as separate named WebVTT renditions. Apple TV can switch among these tracks or turn captions off during playback. Each WebVTT file includes `X-TIMESTAMP-MAP`, keeping captions available across the full timeline. Video packets are copied. WebVTT simplifies ASS animation, fonts, and complex positioning. Bitmap formats such as PGS/VobSub require the explicit compatibility conversion and burn-in.
 
-Text extraction reads the subtitle source before publishing the selected rendition. For embedded subtitles this can require scanning the movie; large files and slow storage increase preparation time. Subtitle intermediates stay under `.inputs` and are not served. The selected caption track is explicitly enabled in AVPlayer, independently of system caption preferences.
+Beamly extracts embedded text tracks in one pass before publishing the HLS stream. Subtitle intermediates stay in the private `.inputs` directory. Beamly sets the initial caption selection in AVPlayer using the app's preferences.
 
 When selecting a video, Beamly scans only its containing folder for readable SRT, ASS, SSA, and VTT files. Names must match the video basename exactly or append a dot-separated suffix, such as `Movie.ru.srt`; similarly prefixed movies do not match. An exact-basename file takes priority, and a single match is selected automatically. Multiple language files remain available in the subtitle menu without guessing a preferred language.
 
