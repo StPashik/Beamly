@@ -638,13 +638,35 @@ public final class HLSJob {
             var audioTracks = audio.map { track in
                 isVideoCopied && (copyDolby || Self.isStereoAAC(track)) ? Self.matchingAudioTracks(for: track, in: info.audioTracks) : [track]
             } ?? []
+            let embeddedCaptions = isVideoCopied ? try Self.embeddedCaptions(subtitle, info: info) : []
+            var sharedOutputs: [String] = []
+            // With a zero-based MKV timeline, both captions and preview frames can use the main input.
+            if isVideoCopied, info.videoCodec == "h264", input.pathExtension.lowercased() == "mkv",
+               startTime == 0, info.startTime == 0, keyTime == 0, info.duration.isFinite, info.duration > 0 {
+                if !embeddedCaptions.isEmpty {
+                    let inputs = cache.appendingPathComponent(".inputs", isDirectory: true)
+                    try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: true)
+                    sharedOutputs = Self.captionArguments(embeddedCaptions, in: inputs)
+                }
+                sharedOutputs += Self.iFrameArguments(duration: info.duration, discardBefore: keyTime)
+            }
             func package(systemAAC: Bool) async throws {
                 let arguments = isVideoCopied ? Self.copyArguments(input: input, info: info, audioTracks: audioTracks, keyTime: keyTime,
                     audioDelay: audioDelay, copyDolby: copyDolby, systemAAC: systemAAC) : Self.arguments(input: input, info: info, audioTrack: audioTrack,
                     subtitleRendering: rendering, startTime: startTime, hardwareEncoding: hardwareEncoding, subtitleDelay: subtitleDelay, audioDelay: audioDelay)
                 // Publish only after EOF so AirPlay sees the entire seekable timeline on its first request.
-                try await mux(ffmpeg, arguments: arguments, directory: cache, generation: currentGeneration,
-                              duration: info.duration - startTime, frameRate: info.frameRate, onFraction: onFraction)
+                do {
+                    try await mux(ffmpeg, arguments: arguments + sharedOutputs, directory: cache, generation: currentGeneration,
+                                  duration: info.duration - startTime, frameRate: info.frameRate, onFraction: onFraction)
+                } catch MediaPipelineError.processFailed(_, let message) where !sharedOutputs.isEmpty && !(systemAAC && message.contains("aac_at")) {
+                    // An optional output can fail on damaged tracks or an older custom FFmpeg.
+                    try Task.checkCancellation()
+                    guard generation == currentGeneration else { throw CancellationError() }
+                    sharedOutputs.removeAll()
+                    Self.removeIFrames(in: cache)
+                    try await mux(ffmpeg, arguments: arguments, directory: cache, generation: currentGeneration,
+                                  duration: info.duration - startTime, frameRate: info.frameRate, onFraction: onFraction)
+                }
             }
             do { try await package(systemAAC: useSystemAAC) }
             catch MediaPipelineError.processFailed(_, let message) where useSystemAAC && message.contains("aac_at") {
@@ -671,11 +693,22 @@ public final class HLSJob {
                 guard generation == currentGeneration else { throw CancellationError() }
                 sourceOffset -= firstPTS
                 let video = try Self.bandwidth(of: playlist)
-                // Start with the SDR H.264 path verified on Apple TV.
-                let iFrames = info.videoCodec == "h264" ? try await prepareIFrames(from: playlist, duration: video.duration,
-                    ffmpeg: ffmpeg, generation: currentGeneration) : nil
+                var iFrames: Bandwidth?
+                if info.videoCodec == "h264" {
+                    if !sharedOutputs.isEmpty {
+                        // If the container duration comes from a much longer audio track, use the actual video clock.
+                        if abs(info.duration - video.duration) <= 0.5 {
+                            iFrames = try? Self.finishIFrames(in: cache, duration: video.duration)
+                        }
+                        if iFrames == nil { Self.removeIFrames(in: cache) }
+                    }
+                    if iFrames == nil {
+                        iFrames = try await prepareIFrames(from: playlist, duration: video.duration, ffmpeg: ffmpeg, generation: currentGeneration)
+                    }
+                }
                 if subtitle != .none || info.subtitleTracks.contains(where: \.isTextSubtitle) { progress(.subtitles) }
-                let captions = try await prepareCaptions(subtitle, input: input, info: info, cache: cache, subtitleDelay: subtitleDelay, ffmpeg: ffmpeg)
+                let captions = try await prepareCaptions(subtitle, embedded: embeddedCaptions, alreadyExtracted: !sharedOutputs.isEmpty,
+                    input: input, info: info, cache: cache, subtitleDelay: subtitleDelay, ffmpeg: ffmpeg)
                 let codec = try await HLSCodec.identifier(at: cache.appendingPathComponent("init_0.mp4"))
                 try Task.checkCancellation()
                 guard generation == currentGeneration else { throw CancellationError() }
@@ -808,7 +841,7 @@ public final class HLSJob {
         // FFmpeg leaves %v literal in the initialization filename when there is only one variant.
         let initialization = audioTracks.isEmpty ? "init_0.mp4" : "init_%v.mp4"
         args += ["-sn", "-dn", "-output_ts_offset", String(-keyTime), "-avoid_negative_ts", "make_zero", "-f", "hls", "-hls_segment_type", "fmp4",
-                 "-hls_time", "6", "-hls_list_size", "0", "-hls_playlist_type", "event", "-hls_flags", "temp_file",
+                 "-hls_time", "6", "-hls_list_size", "0", "-hls_playlist_type", "vod", "-hls_flags", "temp_file",
                  "-hls_fmp4_init_filename", initialization, "-hls_segment_filename", "segment_%v_%06d.m4s",
                  "-var_stream_map", variants, "stream_%v.m3u8"]
         return args
@@ -834,8 +867,7 @@ public final class HLSJob {
         return name
     }
 
-    private func prepareCaptions(_ selected: SubtitleChoice, input: URL, info: MediaInfo, cache: URL,
-                                 subtitleDelay: Double, ffmpeg: URL) async throws -> [CaptionRendition] {
+    private static func embeddedCaptions(_ selected: SubtitleChoice, info: MediaInfo) throws -> [CaptionRendition] {
         if case .embedded(let id) = selected {
             guard let track = info.subtitleTracks.first(where: { $0.id == id }) else {
                 throw MediaPipelineError.invalidMedia(NSLocalizedString("The selected subtitle track is missing from the file.", comment: ""))
@@ -844,36 +876,46 @@ public final class HLSJob {
                 throw MediaPipelineError.invalidMedia(NSLocalizedString("Bitmap subtitles require video conversion. Choose text subtitles or turn off Preserve video quality.", comment: ""))
             }
         }
-        let textTracks = info.subtitleTracks.filter(\.isTextSubtitle)
-        guard !textTracks.isEmpty || selected != .none else { return [] }
-        let privateFolder = cache.appendingPathComponent(".inputs")
-        let duration = max(0.01, info.duration - sourceOffset)
-        try FileManager.default.createDirectory(at: privateFolder, withIntermediateDirectories: true)
         var names: Set<String> = []
-        var renditions = textTracks.map { track in
+        return info.subtitleTracks.filter(\.isTextSubtitle).map { track in
             let choice = SubtitleChoice.embedded(track.id)
             let language = MediaLanguages.normalized(track.language) ?? "und"
             let name = track.title ?? Locale(identifier: "en").localizedString(forLanguageCode: language) ?? "Subtitles"
             return CaptionRendition(choice: choice, name: Self.uniqueRenditionName(name, fallback: "Subtitles", names: &names), language: language,
                                     stem: choice == selected ? "captions" : "captions-\(track.id)")
         }
+    }
+
+    private static func captionArguments(_ renditions: [CaptionRendition], in directory: URL) -> [String] {
+        renditions.flatMap { rendition in
+            let stream: String
+            if case .embedded(let id) = rendition.choice { stream = "0:\(id)" }
+            else { stream = "0:s:0" }
+            return ["-map", stream, "-c:s", "webvtt", directory.appendingPathComponent(rendition.stem + ".vtt").path]
+        }
+    }
+
+    private func prepareCaptions(_ selected: SubtitleChoice, embedded: [CaptionRendition], alreadyExtracted: Bool,
+                                 input: URL, info: MediaInfo, cache: URL, subtitleDelay: Double, ffmpeg: URL) async throws -> [CaptionRendition] {
+        guard !embedded.isEmpty || selected != .none else { return [] }
+        let privateFolder = cache.appendingPathComponent(".inputs")
+        let duration = max(0.01, info.duration - sourceOffset)
+        try FileManager.default.createDirectory(at: privateFolder, withIntermediateDirectories: true)
+        var names = Set(embedded.map(\.name))
+        var renditions = embedded
         func extract(from source: URL, outputs: [CaptionRendition]) async throws {
             guard !outputs.isEmpty else { return }
-            var arguments = ["-v", "error", "-nostdin", "-y", "-copyts", "-i", source.path]
-            for rendition in outputs {
-                let stream: String
-                if case .embedded(let id) = rendition.choice { stream = "0:\(id)" }
-                else { stream = "0:s:0" }
-                arguments += ["-map", stream, "-c:s", "webvtt", privateFolder.appendingPathComponent(rendition.stem + ".vtt").path]
-            }
+            let arguments = ["-v", "error", "-nostdin", "-y", "-copyts", "-i", source.path] + Self.captionArguments(outputs, in: privateFolder)
             _ = try await ProcessRunner().run(executable: ffmpeg, arguments: arguments)
         }
-        do { try await extract(from: input, outputs: renditions) }
-        catch {
-            try Task.checkCancellation()
-            // A broken optional track must not stop the movie or its selected captions.
-            renditions = renditions.filter { $0.choice == selected }
-            try await extract(from: input, outputs: renditions)
+        if !alreadyExtracted {
+            do { try await extract(from: input, outputs: renditions) }
+            catch {
+                try Task.checkCancellation()
+                // A broken optional track must not stop the movie or its selected captions.
+                renditions = renditions.filter { $0.choice == selected }
+                try await extract(from: input, outputs: renditions)
+            }
         }
         if case .external(let url) = selected {
             try validateLocalFile(url)
@@ -911,37 +953,53 @@ public final class HLSJob {
         return contents.contains("#EXTINF:") && contents.contains("#EXT-X-ENDLIST")
     }
 
+    private static func iFrameArguments(duration: Double, discardBefore: Double? = nil) -> [String] {
+        let preroll = discardBefore.map { "+lt(pts*tb\\,\($0 - 0.000001))" } ?? ""
+        // Hold each keyframe until the next one. The last fragment covers the end of the timeline.
+        let filter = "noise=amount=0:drop=not(key)\(preroll),setts=ts=PTS-STARTPTS:duration=if(gt(NEXT_PTS\\,PTS)\\,NEXT_PTS-PTS\\,max(DURATION\\,\(duration)/TB-(PTS-STARTPTS)))"
+        return ["-map", "0:V:0", "-c:v", "copy", "-tag:v", "avc1", "-bsf:v", filter,
+                "-f", "hls", "-hls_segment_type", "fmp4", "-hls_time", "0.001", "-hls_list_size", "0",
+                "-hls_playlist_type", "vod", "-hls_flags", "iframes_only+independent_segments",
+                "-hls_fmp4_init_filename", "iframe-init.mp4", "-hls_segment_filename", "iframe-%06d.m4s", "iframe.m3u8"]
+    }
+
+    private static func finishIFrames(in cache: URL, duration: Double) throws -> Bandwidth {
+        let playlist = cache.appendingPathComponent("iframe.m3u8")
+        var lines = try String(contentsOf: playlist, encoding: .utf8).components(separatedBy: .newlines)
+        var segments = mediaSegments(in: lines)
+        guard segments.count > 1, lines.contains("#EXT-X-I-FRAMES-ONLY"), lines.contains("#EXT-X-ENDLIST"),
+              lines.contains("#EXT-X-MAP:URI=\"iframe-init.mp4\""),
+              FileManager.default.fileExists(atPath: cache.appendingPathComponent("iframe-init.mp4").path),
+              let targetLine = lines.firstIndex(where: { $0.hasPrefix("#EXT-X-TARGETDURATION:") }),
+              var last = segments.popLast() else { throw CocoaError(.fileReadCorruptFile) }
+        // FFmpeg may write the previous keyframe interval as the last EXTINF.
+        last.duration = duration - segments.reduce(0) { $0 + $1.duration }
+        guard last.duration > 0 else { throw CocoaError(.fileReadCorruptFile) }
+        segments.append(last)
+        let target = ceil(segments.map(\.duration).max() ?? 1)
+        let measured = try bandwidth(of: segments, in: cache, targetDuration: target)
+        lines[targetLine] = "#EXT-X-TARGETDURATION:\(Int(target))"
+        lines[last.durationLine] = String(format: "#EXTINF:%.6f,", locale: Locale(identifier: "en_US_POSIX"), last.duration)
+        try lines.joined(separator: "\n").write(to: playlist, atomically: true, encoding: .utf8)
+        return measured
+    }
+
+    private static func removeIFrames(in cache: URL) {
+        let files = (try? FileManager.default.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil)) ?? []
+        for file in files where file.lastPathComponent.hasPrefix("iframe") {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+
     private func prepareIFrames(from video: URL, duration: Double, ffmpeg: URL, generation currentGeneration: UUID) async throws -> Bandwidth? {
         guard duration > 0 else { return nil }
         let cache = video.deletingLastPathComponent()
-        let playlist = cache.appendingPathComponent("iframe.m3u8")
-        // The copied video provides the exact seek origin. Hold each keyframe until the next one.
-        let filter = "noise=amount=0:drop=not(key),setts=ts=PTS-STARTPTS:duration=if(gt(NEXT_PTS\\,PTS)\\,NEXT_PTS-PTS\\,max(DURATION\\,\(duration)/TB-(PTS-STARTPTS)))"
-        let arguments = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", video.lastPathComponent,
-                         "-map", "0:V:0", "-c:v", "copy", "-tag:v", "avc1", "-bsf:v", filter,
-                         "-f", "hls", "-hls_segment_type", "fmp4", "-hls_time", "0.001", "-hls_list_size", "0",
-                         "-hls_playlist_type", "vod", "-hls_flags", "iframes_only+independent_segments",
-                         "-hls_fmp4_init_filename", "iframe-init.mp4", "-hls_segment_filename", "iframe-%06d.m4s", playlist.lastPathComponent]
+        let arguments = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", video.lastPathComponent]
+            + Self.iFrameArguments(duration: duration)
         do {
             try await mux(ffmpeg, arguments: arguments, directory: cache, generation: currentGeneration,
                           duration: duration, frameRate: 0, onFraction: nil)
-            var lines = try String(contentsOf: playlist, encoding: .utf8).components(separatedBy: .newlines)
-            var segments = Self.mediaSegments(in: lines)
-            guard segments.count > 1, lines.contains("#EXT-X-I-FRAMES-ONLY"), lines.contains("#EXT-X-ENDLIST"),
-                  lines.contains("#EXT-X-MAP:URI=\"iframe-init.mp4\""),
-                  FileManager.default.fileExists(atPath: cache.appendingPathComponent("iframe-init.mp4").path),
-                  let targetLine = lines.firstIndex(where: { $0.hasPrefix("#EXT-X-TARGETDURATION:") }),
-                  var last = segments.popLast() else { throw CocoaError(.fileReadCorruptFile) }
-            // FFmpeg may write the previous keyframe interval as the last EXTINF.
-            last.duration = duration - segments.reduce(0) { $0 + $1.duration }
-            guard last.duration > 0 else { throw CocoaError(.fileReadCorruptFile) }
-            segments.append(last)
-            let target = ceil(segments.map(\.duration).max() ?? 1)
-            let measured = try Self.bandwidth(of: segments, in: cache, targetDuration: target)
-            lines[targetLine] = "#EXT-X-TARGETDURATION:\(Int(target))"
-            lines[last.durationLine] = String(format: "#EXTINF:%.6f,", locale: Locale(identifier: "en_US_POSIX"), last.duration)
-            try lines.joined(separator: "\n").write(to: playlist, atomically: true, encoding: .utf8)
-            return measured
+            return try Self.finishIFrames(in: cache, duration: duration)
         } catch {
             try Task.checkCancellation()
             guard generation == currentGeneration else { throw CancellationError() }
@@ -951,10 +1009,7 @@ public final class HLSJob {
             try Task.checkCancellation()
             guard generation == currentGeneration else { throw CancellationError() }
             // Scrub previews are optional, including when custom FFmpeg lacks the required filters.
-            let files = (try? FileManager.default.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil)) ?? []
-            for file in files where file.lastPathComponent.hasPrefix("iframe") {
-                try? FileManager.default.removeItem(at: file)
-            }
+            Self.removeIFrames(in: cache)
             return nil
         }
     }

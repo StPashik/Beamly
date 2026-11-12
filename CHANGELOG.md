@@ -1,3 +1,7 @@
+# Unreleased
+
+- Prepare eligible H.264 MKV files faster by building embedded captions and scrub previews alongside the main stream.
+
 # Beamly 1.0.12
 
 **4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**

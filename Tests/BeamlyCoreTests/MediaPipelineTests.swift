@@ -64,7 +64,21 @@ final class MediaPipelineTests: XCTestCase {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-iframes-\(UUID())")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let input = folder.appendingPathComponent("source.mkv")
-        let job = HLSJob(tools: tools)
+        let commandLog = folder.appendingPathComponent("ffmpeg-arguments.txt")
+        let shim = folder.appendingPathComponent("ffmpeg")
+        try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("real-ffmpeg"), withDestinationURL: ffmpeg)
+        try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("ffprobe"), withDestinationURL: ffprobe)
+        try """
+            #!/bin/sh
+            tools_dir="$(dirname "$0")"
+            printf '%s\\n' "$@" >> "$tools_dir/ffmpeg-arguments.txt"
+            if [ -f "$tools_dir/reject-shared" ]; then
+                case " $* " in *" stream_%v.m3u8 "*" iframe.m3u8 "*) exit 1 ;; esac
+            fi
+            exec "$tools_dir/real-ffmpeg" "$@"
+            """.write(to: shim, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shim.path)
+        let job = HLSJob(tools: FFmpegTools(customDirectory: folder))
         defer { job.stop(); try? FileManager.default.removeItem(at: folder) }
 
         func run(_ executable: URL, _ arguments: [String]) throws -> Data {
@@ -82,27 +96,17 @@ final class MediaPipelineTests: XCTestCase {
             return data
         }
 
+        let srt = folder.appendingPathComponent("source.srt")
+        try "1\n00:00:02,000 --> 00:00:04,000\nSCRUB TEST\n".write(to: srt, atomically: true, encoding: .utf8)
         _ = try run(ffmpeg, ["-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=12:duration=5.4",
-                             "-c:v", "libx264", "-g", "12", "-sc_threshold", "0", input.path])
+                             "-i", srt.path, "-map", "0:v", "-map", "1:s", "-c:v", "libx264", "-g", "12", "-sc_threshold", "0",
+                             "-c:s", "srt", input.path])
         let info = try await tools.probe(url: input)
-        let master = try await job.start(input: input, info: info, audioTrack: nil, subtitle: .none,
-                                         startTime: 1.5, hardwareEncoding: false)
-        let cache = master.deletingLastPathComponent()
-        let video = cache.appendingPathComponent("stream_0.m3u8")
-        let previews = cache.appendingPathComponent("iframe.m3u8")
-        let multivariant = try String(contentsOf: master, encoding: .utf8)
-        let variant = try XCTUnwrap(multivariant.split(separator: "\n").first { $0.hasPrefix("#EXT-X-I-FRAME-STREAM-INF:") })
-        XCTAssertTrue(variant.contains("CODECS=\"avc1."))
-        XCTAssertTrue(variant.contains("VIDEO-RANGE=SDR,URI=\"iframe.m3u8\""))
-        let playlist = try String(contentsOf: previews, encoding: .utf8)
-        XCTAssertTrue(playlist.contains("#EXT-X-I-FRAMES-ONLY"))
-        XCTAssertTrue(playlist.contains("#EXT-X-MAP:URI=\"iframe-init.mp4\""))
-        XCTAssertTrue(playlist.contains("#EXT-X-ENDLIST"))
+        let captions = SubtitleChoice.embedded(try XCTUnwrap(info.subtitleTracks.first).id)
         func duration(_ text: String) -> Double {
             text.split(separator: "\n").filter { $0.hasPrefix("#EXTINF:") }
                 .compactMap { Double($0.dropFirst(8).dropLast()) }.reduce(0, +)
         }
-        XCTAssertEqual(duration(playlist), try duration(String(contentsOf: video, encoding: .utf8)), accuracy: 0.000001)
 
         struct Packets: Decodable {
             struct Packet: Decodable {
@@ -118,14 +122,37 @@ final class MediaPipelineTests: XCTestCase {
             let result = try JSONDecoder().decode(Packets.self, from: data)
             return result.packets
         }
-        let keys = try packets(video).filter { $0.flags.contains("K") }
-        let frames = try packets(previews)
-        XCTAssertGreaterThan(frames.count, 1)
-        XCTAssertTrue(frames.allSatisfy { $0.flags.contains("K") })
-        XCTAssertEqual(frames.map(\.data_hash), keys.map(\.data_hash))
-        let firstPTS = try XCTUnwrap(keys.first.flatMap { Double($0.pts_time) })
-        for (frame, key) in zip(frames, keys) {
-            XCTAssertEqual(try XCTUnwrap(Double(frame.pts_time)), try XCTUnwrap(Double(key.pts_time)) - firstPTS, accuracy: 0.001)
+        for start in [0.0, 1.5] {
+            let master = try await job.start(input: input, info: info, audioTrack: nil, subtitle: captions,
+                                             startTime: start, hardwareEncoding: false)
+            let cache = master.deletingLastPathComponent()
+            let video = cache.appendingPathComponent("stream_0.m3u8")
+            let previews = cache.appendingPathComponent("iframe.m3u8")
+            let multivariant = try String(contentsOf: master, encoding: .utf8)
+            let variant = try XCTUnwrap(multivariant.split(separator: "\n").first { $0.hasPrefix("#EXT-X-I-FRAME-STREAM-INF:") })
+            XCTAssertTrue(variant.contains("CODECS=\"avc1."))
+            XCTAssertTrue(variant.contains("VIDEO-RANGE=SDR,URI=\"iframe.m3u8\""))
+            let playlist = try String(contentsOf: previews, encoding: .utf8)
+            XCTAssertTrue(playlist.contains("#EXT-X-I-FRAMES-ONLY"))
+            XCTAssertTrue(playlist.contains("#EXT-X-MAP:URI=\"iframe-init.mp4\""))
+            XCTAssertTrue(playlist.contains("#EXT-X-ENDLIST"))
+            let videoPlaylist = try String(contentsOf: video, encoding: .utf8)
+            XCTAssertTrue(videoPlaylist.contains("#EXT-X-PLAYLIST-TYPE:VOD"))
+            XCTAssertEqual(duration(playlist), duration(videoPlaylist), accuracy: 0.000001)
+            XCTAssertTrue(try String(contentsOf: cache.appendingPathComponent("captions.vtt"), encoding: .utf8).contains("SCRUB TEST"))
+            if start == 0 {
+                let arguments = try String(contentsOf: commandLog, encoding: .utf8).split(separator: "\n")
+                XCTAssertEqual(arguments.filter { $0 == "-i" }.count, 1, "HLS, captions and previews should use one FFmpeg input pass")
+            }
+            let keys = try packets(video).filter { $0.flags.contains("K") }
+            let frames = try packets(previews)
+            XCTAssertGreaterThan(frames.count, 1)
+            XCTAssertTrue(frames.allSatisfy { $0.flags.contains("K") })
+            XCTAssertEqual(frames.map(\.data_hash), keys.map(\.data_hash))
+            let firstPTS = try XCTUnwrap(keys.first.flatMap { Double($0.pts_time) })
+            for (frame, key) in zip(frames, keys) {
+                XCTAssertEqual(try XCTUnwrap(Double(frame.pts_time)), try XCTUnwrap(Double(key.pts_time)) - firstPTS, accuracy: 0.001)
+            }
         }
 
         // A stream with one remaining keyframe still plays, with no incomplete preview rendition.
@@ -133,6 +160,16 @@ final class MediaPipelineTests: XCTestCase {
                                        startTime: 5.1, hardwareEncoding: false)
         XCTAssertFalse(try String(contentsOf: tail, encoding: .utf8).contains("#EXT-X-I-FRAME-STREAM-INF:"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: tail.deletingLastPathComponent().appendingPathComponent("iframe-init.mp4").path))
+
+        // Custom tools can reject an optional output. The separate preparation path must still provide all tracks.
+        try Data().write(to: folder.appendingPathComponent("reject-shared"))
+        try Data().write(to: commandLog)
+        let fallback = try await job.start(input: input, info: info, audioTrack: nil, subtitle: captions, hardwareEncoding: false)
+        let fallbackArguments = try String(contentsOf: commandLog, encoding: .utf8).split(separator: "\n")
+        XCTAssertGreaterThan(fallbackArguments.filter { $0 == "-i" }.count, 1)
+        XCTAssertTrue(try String(contentsOf: fallback, encoding: .utf8).contains("#EXT-X-I-FRAME-STREAM-INF:"))
+        let fallbackCaptions = fallback.deletingLastPathComponent().appendingPathComponent("captions.vtt")
+        XCTAssertTrue(try String(contentsOf: fallbackCaptions, encoding: .utf8).contains("SCRUB TEST"))
     }
 
     @MainActor
