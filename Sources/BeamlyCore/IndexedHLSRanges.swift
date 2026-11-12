@@ -22,6 +22,7 @@ final class IndexedHLSRanges {
     private let input: URL
     private let directory: URL
     private let generated: URL
+    private let isHEVC: Bool
     private let audioTrack: Int?
     private let firstPTS: Double
     private let firstAudioPTS: Double
@@ -32,13 +33,14 @@ final class IndexedHLSRanges {
     private var running: [String: Task<Void, Never>] = [:]
     private var cancelled = false
 
-    init(tools: FFmpegTools, ffmpeg: URL, input: URL, directory: URL, generated: URL, audioTrack: Int?,
+    init(tools: FFmpegTools, ffmpeg: URL, input: URL, directory: URL, generated: URL, isHEVC: Bool, audioTrack: Int?,
          firstPTS: Double, firstAudioPTS: Double, keyframes: [Double], video: [IndexedHLSSegment], previews: [IndexedHLSSegment]) {
         self.tools = tools
         self.ffmpeg = ffmpeg
         self.input = input
         self.directory = directory
         self.generated = generated
+        self.isHEVC = isHEVC
         self.audioTrack = audioTrack
         self.firstPTS = firstPTS
         self.firstAudioPTS = firstAudioPTS
@@ -108,18 +110,22 @@ final class IndexedHLSRanges {
 
         var arguments = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-copyts",
                          "-ss", String(preroll), "-seek_timestamp", "1", "-t", String(end - preroll), "-i", input.path,
-                         "-map", "0:V:0", "-map_chapters", "-1", "-c", "copy", "-tag:v", "avc1", "-sn", "-dn"]
-        let lower = segment.start - 0.000_001
+                         "-map", "0:V:0", "-map_chapters", "-1", "-c", "copy", "-tag:v", isHEVC ? "hvc1" : "avc1", "-sn", "-dn"]
         if request.isPreview {
-            let filter = "noise=amount=0:drop=not(key)+lt(pts*tb\\,\(lower))+gte(pts*tb\\,\(segment.start + 0.001)),setts=ts=PTS:duration=\(segment.duration)/TB"
+            let filter = "noise=amount=0:drop=not(key)+lt(pts*tb\\,\(segment.start - 0.000_001))+gte(pts*tb\\,\(segment.start + 0.001)),setts=ts=PTS:duration=\(segment.duration)/TB"
             arguments += ["-bsf:v", filter]
         } else {
-            let upper = segment.end - 0.000_001
-            arguments += ["-bsf:v", "noise=amount=0:drop=lt(pts*tb\\,\(lower))+gte(pts*tb\\,\(upper))"]
+            let decode = isHEVC || audioTrack != nil
+                ? try await tools.videoDecodeRange(url: input, preroll: preroll, start: segment.start,
+                    end: segment.end, endsAtKeyframe: request.index < video.count - 1)
+                : (segment.start, segment.end)
+            // HEVC pictures can be presented across a cut, so match the sequential muxer's decode boundaries.
+            let (lower, upper) = isHEVC ? decode : (segment.start, segment.end)
+            let clock = isHEVC ? "dts" : "pts"
+            let filter = isHEVC ? "hevc_mp4toannexb," : ""
+            arguments += ["-bsf:v", filter + "noise=amount=0:drop=lt(\(clock)*tb\\,\(lower - 0.000_001))+gte(\(clock)*tb\\,\(upper - 0.000_001))"]
             if let audioTrack {
                 // Use the video decode boundaries so adjacent fragments contain consecutive audio packets.
-                let decode = try await tools.videoDecodeRange(url: input, preroll: preroll, start: segment.start,
-                    end: segment.end, endsAtKeyframe: request.index < video.count - 1)
                 let trim = "noise=amount=0:drop=lt(pts*tb\\,\(decode.0 - 0.000_001))+gte(pts*tb\\,\(decode.1 - 0.000_001))"
                 // The shared HLS initialization already accounts for the first audio packet's offset.
                 arguments += ["-map", "0:\(audioTrack)", "-bsf:a", trim + ",setts=ts=PTS-\(firstAudioPTS)/TB"]

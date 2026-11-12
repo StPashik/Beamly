@@ -818,13 +818,13 @@ public final class HLSJob {
     public func prepareEarlyHLS(input: URL, info: MediaInfo, audioTrack: Int?, startTime: Double = 0, subtitleDelay: Double,
                                 onFailure: @escaping @MainActor (Error) -> Void,
                                 progress: @MainActor (PlaybackPreparationStage) -> Void) async throws -> URL? {
-        guard input.pathExtension.lowercased() == "mkv", info.canCopyVideo, info.videoCodec == "h264", info.startTime == 0,
+        guard input.pathExtension.lowercased() == "mkv", info.canCopyVideo, info.startTime == 0,
               (12...86_400).contains(info.duration), startTime.isFinite, startTime >= 0, subtitleDelay.isFinite,
               let ffmpeg = tools.ffmpegURL else { return nil }
         let audio = info.audioTracks.first { $0.id == audioTrack } ?? info.defaultAudioTrack
         if let audio {
             // Dolby Digital Plus uses the regular audio rendition so it can signal JOC.
-            guard (audio.codec == "ac3" && Self.hasSurround(audio)) || Self.isStereoAAC(audio),
+            guard (audio.codec == "ac3" && (info.videoCodec == "hevc" || Self.hasSurround(audio))) || Self.isStereoAAC(audio),
                   Self.matchingAudioTracks(for: audio, in: info.audioTracks).count == 1 else { return nil }
         }
 
@@ -873,9 +873,10 @@ public final class HLSJob {
                 IndexedHLSSegment(name: prefix + String(format: "%06d.m4s", index), start: pair.0, end: pair.1)
             }
         }
+        let isHEVC = info.videoCodec == "hevc"
         let videoSegments = segments(starts, prefix: "segment_0_")
-        let frames = segments(keyframes, prefix: "iframe-")
-        guard frames.allSatisfy({ (0.001...maximumKeyframeInterval).contains($0.duration) }),
+        let frames = isHEVC ? [] : segments(keyframes, prefix: "iframe-")
+        guard zip(keyframes, keyframes.dropFirst() + [videoDuration]).allSatisfy({ (0.001...maximumKeyframeInterval).contains($1 - $0) }),
               videoSegments.allSatisfy({ (0.01...maximumSegmentDuration).contains($0.duration) }) else {
             return nil
         }
@@ -886,17 +887,20 @@ public final class HLSJob {
         try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: false)
         try FileManager.default.createDirectory(at: generated, withIntermediateDirectories: false)
         isVideoCopied = true
-        usesOriginalDolby = Self.hasSurround(audio)
+        usesOriginalDolby = audio?.codec == "ac3"
         progress(.originalStream)
         let captions = try Self.embeddedCaptions(.none, info: info)
 
         var args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-copyts", "-i", input.path, "-map", "0:V:0"]
         if let audio { args += ["-map", "0:\(audio.id)"] }
-        args += ["-c", "copy", "-tag:v", "avc1", "-sn", "-dn", "-avoid_negative_ts", "make_zero", "-f", "hls",
+        if isHEVC { args += ["-bsf:v", "hevc_mp4toannexb"] }
+        args += ["-c", "copy", "-tag:v", isHEVC ? "hvc1" : "avc1", "-sn", "-dn", "-avoid_negative_ts", "make_zero", "-f", "hls",
                  "-hls_segment_type", "fmp4", "-hls_time", String(segmentLength), "-hls_list_size", "0",
                  "-hls_playlist_type", "vod", "-hls_flags", "temp_file+independent_segments",
                  "-hls_fmp4_init_filename", "init_0.mp4", "-hls_segment_filename", ".generated/segment_0_%06d.m4s", ".rendered.m3u8"]
-        args += Self.iFrameArguments(duration: videoDuration, playlist: ".rendered-iframe.m3u8", segmentPattern: ".generated/iframe-%06d.m4s")
+        if !frames.isEmpty {
+            args += Self.iFrameArguments(duration: videoDuration, playlist: ".rendered-iframe.m3u8", segmentPattern: ".generated/iframe-%06d.m4s")
+        }
         args += Self.captionArguments(captions, in: inputs)
 
         let packaging = Task { [weak self, args] in
@@ -909,8 +913,8 @@ public final class HLSJob {
                 throw error
             }
         }
-        let firstSegments = [videoSegments[0].name, videoSegments[1].name, frames[0].name]
-        let firstFiles = ["init_0.mp4", "iframe-init.mp4"] + firstSegments.map { ".generated/" + $0 }
+        let firstSegments = videoSegments.prefix(2).map(\.name) + frames.prefix(1).map(\.name)
+        let firstFiles = ["init_0.mp4"] + (frames.isEmpty ? [] : ["iframe-init.mp4"]) + firstSegments.map { ".generated/" + $0 }
         func firstSegmentsReady() -> Bool {
             firstFiles.allSatisfy { FileManager.default.fileExists(atPath: cache.appendingPathComponent($0).path) }
         }
@@ -956,7 +960,7 @@ public final class HLSJob {
             throw CocoaError(.fileReadCorruptFile)
         }
         sourceOffset = -firstPTS
-        let ranges = IndexedHLSRanges(tools: tools, ffmpeg: ffmpeg, input: input, directory: cache, generated: generated,
+        let ranges = IndexedHLSRanges(tools: tools, ffmpeg: ffmpeg, input: input, directory: cache, generated: generated, isHEVC: isHEVC,
                                       audioTrack: audio?.id, firstPTS: firstPTS, firstAudioPTS: firstAudioPTS,
                                       keyframes: keyframes, video: videoSegments, previews: frames)
         indexedRanges = ranges
@@ -964,14 +968,14 @@ public final class HLSJob {
         try Task.checkCancellation()
         guard self.generation == generation else { throw CancellationError() }
         try write("stream_0.m3u8", initialization: "init_0.mp4", segments: videoSegments)
-        try write("iframe.m3u8", initialization: "iframe-init.mp4", segments: frames, iFrames: true)
+        if !frames.isEmpty { try write("iframe.m3u8", initialization: "iframe-init.mp4", segments: frames, iFrames: true) }
         for caption in captions { try Self.writeCaptionPlaylist(caption, duration: videoDuration - sourceOffset, in: cache) }
         let audioCodec = audio.map { $0.codec == "ac3" ? ",ac-3" : ",mp4a.40.2" } ?? ""
         let size = try input.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         // Estimate bandwidth for the single variant before the final fragment sizes are known.
         let average = max(1, Int(min(1_000_000_000, Double(size) * 8 / videoDuration)))
         let video = (peak: average * 3, average: average, duration: videoDuration)
-        let previews = (peak: average, average: max(1, average / 8), duration: videoDuration)
+        let previews: Bandwidth? = frames.isEmpty ? nil : (peak: average, average: max(1, average / 8), duration: videoDuration)
         _ = try await Self.writeMaster(directory: cache, codec: videoCodec + audioCodec, info: info, video: video, iFrames: previews,
                                        iFrameCodec: videoCodec, audioTracks: [], copyDolby: usesOriginalDolby, captions: captions, selectedSubtitle: .none)
         try Task.checkCancellation()
@@ -998,7 +1002,7 @@ public final class HLSJob {
                         }
                 }
                 guard try matches(".rendered.m3u8", plan: videoSegments),
-                      try matches(".rendered-iframe.m3u8", plan: frames, isIFramePlaylist: true) else {
+                      try (frames.isEmpty || matches(".rendered-iframe.m3u8", plan: frames, isIFramePlaylist: true)) else {
                     throw CocoaError(.fileReadCorruptFile)
                 }
                 let readyCaptions = try await self.prepareCaptions(.none, embedded: captions, alreadyExtracted: true, input: input,

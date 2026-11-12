@@ -8,6 +8,16 @@ import SwiftUI
 final class PlaybackTests: XCTestCase {
     @MainActor
     func testIndexedHLSResumesAndSeeksBeforeTheSequentialRemuxCompletes() async throws {
+        try await checkIndexedHLS(hevc: false)
+    }
+
+    @MainActor
+    func testIndexedHDR10HEVCResumesAndSeeksBeforeTheSequentialRemuxCompletes() async throws {
+        try await checkIndexedHLS(hevc: true)
+    }
+
+    @MainActor
+    private func checkIndexedHLS(hevc: Bool) async throws {
         let tools = mediaTestTools()
         let ffmpeg = try XCTUnwrap(tools.ffmpegURL)
         let ffprobe = try XCTUnwrap(tools.ffprobeURL)
@@ -20,11 +30,14 @@ final class PlaybackTests: XCTestCase {
         try "1\n00:00:01,000 --> 00:01:03,000\nEarly HLS caption\n".write(to: captions, atomically: true, encoding: .utf8)
         try ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=60000\ntitle=Movie\n".write(to: chapters, atomically: true, encoding: .utf8)
         let generator = Process()
-        generator.executableURL = ffmpeg
+        generator.executableURL = hevc ? try XCTUnwrap(FFmpegTools().ffmpegURL) : ffmpeg
+        let video = hevc ? ["-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p10le",
+            "-x265-params", "pools=2:frame-threads=2:keyint=104:min-keyint=104:scenecut=0:open-gop=0:bframes=2:repeat-headers=1:log-level=error:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,400"]
+            : ["-c:v", "libx264", "-g", "104", "-sc_threshold", "0", "-bf", "0"]
         generator.arguments = ["-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=c=blue:size=160x90:rate=10:duration=60",
-            "-f", "lavfi", "-i", "anullsrc=r=48000:cl=5.1:d=60", "-i", captions.path, "-i", chapters.path,
-            "-map", "0:v", "-map", "1:a", "-map", "2:s", "-map_chapters", "3", "-c:v", "libx264", "-g", "104",
-            "-sc_threshold", "0", "-bf", "0", "-c:a", "ac3", "-af", "asetpts=PTS+256/SR/TB", "-c:s", "srt", movie.path]
+            "-f", "lavfi", "-i", hevc ? "anullsrc=r=48000:cl=stereo:d=60" : "anullsrc=r=48000:cl=5.1:d=60",
+            "-i", captions.path, "-i", chapters.path, "-map", "0:v", "-map", "1:a", "-map", "2:s", "-map_chapters", "3"]
+            + video + ["-c:a", "ac3", "-af", "asetpts=PTS+256/SR/TB", "-c:s", "srt", movie.path]
         generator.standardInput = FileHandle.nullDevice
         try generator.run()
         generator.waitUntilExit()
@@ -44,9 +57,12 @@ final class PlaybackTests: XCTestCase {
                 pwd > "$tools_dir/early-cache"
                 mkdir -p .staged/.generated
                 (cd .staged && "$tools_dir/real-ffmpeg" "$@")
-                mv .staged/init_0.mp4 .staged/iframe-init.mp4 .
-                mv .staged/.generated/iframe-000000.m4s \\
-                   .staged/.generated/segment_0_000000.m4s .staged/.generated/segment_0_000001.m4s .generated
+                mv .staged/init_0.mp4 .
+                if [ -f .staged/iframe-init.mp4 ]; then
+                    mv .staged/iframe-init.mp4 .
+                    mv .staged/.generated/iframe-000000.m4s .generated
+                fi
+                mv .staged/.generated/segment_0_000000.m4s .staged/.generated/segment_0_000001.m4s .generated
                 attempts=0
                 until [ -f "$tools_dir/finish-early" ]; do
                     attempts=$((attempts + 1))
@@ -54,7 +70,8 @@ final class PlaybackTests: XCTestCase {
                     sleep 0.05
                 done
                 mv .staged/.generated/*.m4s .generated
-                mv .staged/.rendered.m3u8 .staged/.rendered-iframe.m3u8 .
+                mv .staged/.rendered.m3u8 .
+                if [ -f .staged/.rendered-iframe.m3u8 ]; then mv .staged/.rendered-iframe.m3u8 .; fi
                 exit 0 ;;
             esac
             exec "$tools_dir/real-ffmpeg" "$@"
@@ -85,6 +102,12 @@ final class PlaybackTests: XCTestCase {
         let cachePath = try String(contentsOf: folder.appendingPathComponent("early-cache"), encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let cache = URL(fileURLWithPath: cachePath, isDirectory: true)
+        if hevc {
+            let master = try String(contentsOf: cache.appendingPathComponent("master.m3u8"), encoding: .utf8)
+            XCTAssertTrue(master.contains("VIDEO-RANGE=PQ"))
+            XCTAssertTrue(master.contains("hvc1.2."))
+            XCTAssertTrue(master.contains("ac-3"))
+        }
         let manifest = try String(contentsOf: cache.appendingPathComponent("stream_0.m3u8"), encoding: .utf8)
         let last = try XCTUnwrap(manifest.split(separator: "\n").last { $0.hasSuffix(".m4s") })
         XCTAssertFalse(FileManager.default.fileExists(atPath: cache.appendingPathComponent(String(last)).path))
@@ -105,6 +128,26 @@ final class PlaybackTests: XCTestCase {
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: cache.appendingPathComponent(".rendered.m3u8").path))
         XCTAssertTrue(player.currentItem === earlyItem)
+        if hevc {
+            let initialization = try Data(contentsOf: cache.appendingPathComponent("init_0.mp4"))
+            let sequential = cache.appendingPathComponent(".staged/.generated").appendingPathComponent(String(last))
+            let probeInput = folder.appendingPathComponent("fragment.mp4")
+            func packets(_ segment: URL) throws -> [Substring] {
+                try (initialization + Data(contentsOf: segment)).write(to: probeInput)
+                let probe = Process()
+                let output = Pipe()
+                probe.executableURL = ffprobe
+                probe.arguments = ["-v", "error", "-show_entries", "packet=stream_index,pts,dts,duration,data_hash",
+                                   "-show_data_hash", "sha256", "-of", "compact", probeInput.path]
+                probe.standardOutput = output
+                try probe.run()
+                let rows = output.fileHandleForReading.readDataToEndOfFile()
+                probe.waitUntilExit()
+                XCTAssertEqual(probe.terminationStatus, 0)
+                return String(decoding: rows, as: UTF8.self).split(separator: "\n").sorted()
+            }
+            XCTAssertTrue(try packets(lastSegment) == packets(sequential), "Priority HEVC and AC-3 packets must match the sequential remux")
+        }
         model.seek(0)
         try await wait { player.currentTime().seconds < 1 && player.timeControlStatus == .playing }
 
