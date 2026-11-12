@@ -74,7 +74,7 @@ final class PlaybackStatusTests: XCTestCase {
         defaults.set(false, forKey: "directPlayback")
         defaults.set(false, forKey: "hardwareEncoding")
         let id = try XCTUnwrap(model.current?.id)
-        model.select(id, autoPlay: false)
+        model.select(id, autoPlay: false, resumeAt: 2.5)
         XCTAssertEqual(model.preparationStage, .readingFile)
         XCTAssertNil(model.qualityTitle, "Do not display the previous stream's quality during inspection")
         try await wait(diagnostic: model.errorMessage ?? "") { ready() }
@@ -83,6 +83,10 @@ final class PlaybackStatusTests: XCTestCase {
         XCTAssertFalse(model.usedSoftwareFallback)
         XCTAssertEqual(model.qualityTitle, "Compatibility conversion · up to 1080p SDR")
         XCTAssertTrue(model.qualityExplanation?.contains("Preserve video quality is off.") == true)
+        let convertedItem = try XCTUnwrap(player.currentItem)
+        let convertedDuration = try await convertedItem.asset.load(.duration).seconds
+        XCTAssertEqual(convertedDuration, 6, accuracy: 0.3)
+        XCTAssertEqual(player.currentTime().seconds, 2.5, accuracy: 0.2)
 
         let wrapped = folder.appendingPathComponent("tools")
         try FileManager.default.createDirectory(at: wrapped, withIntermediateDirectories: true)

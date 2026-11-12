@@ -22,6 +22,7 @@ final class AppModel: ObservableObject {
     @Published private var waitingReason: AVPlayer.WaitingReason?
     @Published private(set) var isPreparing = false
     @Published private(set) var preparationStage = PlaybackPreparationStage.readingFile
+    @Published private var preparationFraction: Double?
     @Published private(set) var usesSoftwareEncoder = false
     @Published private(set) var usedSoftwareFallback = false
     @Published private var compatibilityReason: String?
@@ -64,7 +65,7 @@ final class AppModel: ObservableObject {
     private var itemObservation: NSKeyValueObservation?
     private var endObserver: NSObjectProtocol?
     private var failureObserver: NSObjectProtocol?
-    // HLS starts at local time zero; the UI still shows the position in the original movie.
+    // Map the muxer's timestamp shift back to the original movie clock.
     private var sourceOffset = 0.0
     private var lastSavedSecond = -1
     private var lastHistoryItem: PlaylistItem?
@@ -124,12 +125,6 @@ final class AppModel: ObservableObject {
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor in
                 guard let self, !self.isPreparing, self.player.currentItem != nil, time.seconds.isFinite else { return }
-                if let diagnostic = self.job?.diagnostic {
-                    self.errorMessage = diagnostic
-                    self.remember()
-                    self.cancelPlayback()
-                    return
-                }
                 self.position = min(self.duration, max(0, self.sourceOffset + time.seconds))
                 self.playlist.remember(position: self.position, duration: self.duration)
                 let second = Int(self.position)
@@ -196,7 +191,10 @@ final class AppModel: ObservableObject {
             playbackControlStatus == .waitingToPlayAtSpecifiedRate && waitingReason == .toMinimizeStalls
     }
     var playbackStatus: String {
-        if isPreparing { return NSLocalizedString(preparationStage.rawValue, comment: "") }
+        if isPreparing {
+            let stage = NSLocalizedString(preparationStage.rawValue, comment: "")
+            return preparationFraction.map { "\(stage) \($0.formatted(.percent.precision(.fractionLength(0))))" } ?? stage
+        }
         guard player.currentItem != nil else { return errorMessage ?? NSLocalizedString("Ready to play", comment: "") }
         if isConnectingAirPlay { return NSLocalizedString("Starting playback…", comment: "") }
         if !isExternal { return NSLocalizedString("Choose an AirPlay device to start playback.", comment: "") }
@@ -211,7 +209,7 @@ final class AppModel: ObservableObject {
             : NSLocalizedString("Original video quality", comment: "")
     }
     var qualityExplanation: String? {
-        guard qualityTitle != nil else { return nil }
+        guard !isPreparing, qualityTitle != nil else { return nil }
         if !isUsingHLS { return NSLocalizedString("Direct playback without video conversion.", comment: "") }
         if isVideoCopied { return NSLocalizedString("Prepared for AirPlay without video conversion.", comment: "") }
         var reasons = [compatibilityReason].compactMap { $0 }
@@ -283,7 +281,13 @@ final class AppModel: ObservableObject {
     }
 
     func togglePlay() {
-        if isPreparing { stop(); return }
+        if isPreparing {
+            setSleepTimer(nil)
+            remember()
+            cancelPlayback()
+            updateNowPlaying()
+            return
+        }
         if player.currentItem == nil {
             if let id = playlist.currentID {
                 select(id)
@@ -398,14 +402,9 @@ final class AppModel: ObservableObject {
     }
 
     func seek(_ seconds: Double) {
-        guard seconds.isFinite, duration > 0 else { return }
+        guard !isPreparing, seconds.isFinite, duration > 0 else { return }
         let target = min(max(0, seconds), max(0, duration - 0.05))
         position = target
-        if isUsingHLS {
-            let local = target - sourceOffset
-            let seekable = player.currentItem?.seekableTimeRanges.contains { CMTimeRangeContainsTime($0.timeRangeValue, time: CMTime(seconds: local, preferredTimescale: 600)) } == true
-            if local < 0 || !seekable { prepare(at: target, autoPlay: isPlaying || playRequested); return }
-        }
         player.seek(to: CMTime(seconds: max(0, target - sourceOffset), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         remember()
         updateNowPlaying()
@@ -655,15 +654,20 @@ final class AppModel: ObservableObject {
                     playbackURL = try server.publish(file: movie.url)
                 } else {
                     isUsingHLS = true
-                    sourceOffset = start
                     audioOptions = metadata.audioTracks.map { TrackOption(id: $0.id, title: self.trackTitle($0)) }
                     subtitleOptions = metadata.subtitleTracks.map { TrackOption(id: $0.id, title: self.trackTitle($0)) }
                     let newJob = HLSJob(tools: tools)
                     job = newJob
                     compatibilityReason = NSLocalizedString(preserveQuality ? "This video format requires compatibility conversion." : "Preserve video quality is off.", comment: "")
                     let choice: SubtitleChoice = externalSubtitle.map { .external($0) } ?? subtitleID.map { .embedded($0) } ?? .none
-                    let playlistURL = try await newJob.start(input: movie.url, info: metadata, audioTrack: audioID, subtitle: choice, startTime: start, hardwareEncoding: hardwareEncoding, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay, audioDelay: audioDelay) { [weak self] stage in
+                    let playlistURL = try await newJob.start(input: movie.url, info: metadata, audioTrack: audioID, subtitle: choice,
+                        hardwareEncoding: hardwareEncoding, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay, audioDelay: audioDelay,
+                        onFraction: { [weak self] fraction in
+                            guard let self, self.loadID == generation else { return }
+                            self.preparationFraction = max(self.preparationFraction ?? 0, fraction)
+                        }) { [weak self] stage in
                         guard let self, self.loadID == generation else { return }
+                        self.preparationFraction = nil
                         self.preparationStage = stage
                         switch stage {
                         case .originalStream: self.isVideoCopied = true
@@ -681,6 +685,7 @@ final class AppModel: ObservableObject {
                 }
                 try Task.checkCancellation()
                 guard loadID == generation else { return }
+                preparationFraction = nil
                 preparationStage = .loadingPlayer
                 let item = AVPlayerItem(url: playbackURL)
                 let loadedSubtitles = isUsingHLS && (externalSubtitle != nil || subtitleID != nil)
@@ -836,6 +841,7 @@ final class AppModel: ObservableObject {
         directAudioChoices = [:]
         directSubtitleChoices = [:]
         isPreparing = false
+        preparationFraction = nil
         preparationStage = .readingFile
         playbackControlStatus = .paused
         waitingReason = nil

@@ -1,3 +1,9 @@
+# Unreleased
+
+- Keep the full AirPlay timeline when resuming HLS video, including MKV. The saved position is a seek within the completed stream, so the beginning remains available to the receiver. Full preparation can take longer, especially for compatibility conversion.
+- Show progress during HLS preparation and use faster encoding for the stereo fallback while retaining the original video and surround packets.
+- Keep the resume position when preparation is cancelled.
+
 # Beamly 1.0.11
 
 **4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**

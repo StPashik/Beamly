@@ -45,9 +45,18 @@ final class PlaybackTests: XCTestCase {
         func readyAndPlaying() -> Bool { !model.isPreparing && player.currentItem?.status == .readyToPlay && player.rate > 0 && model.isPlaying }
 
         model.togglePlay()
+        XCTAssertTrue(model.isPreparing)
+        model.togglePlay()
+        XCTAssertFalse(model.isPreparing)
+        XCTAssertEqual(model.position, 8, "Cancelling preparation must keep the resume position")
+        model.togglePlay()
         try await wait(diagnostic: model.errorMessage ?? "") { readyAndPlaying() }
         XCTAssertEqual(player.emptyReplacements, 0, "Starting must not clear a receiver selected before loading a movie")
         XCTAssertEqual(model.position, 8, accuracy: 1)
+        let resumedItem = try XCTUnwrap(player.currentItem)
+        let resumedDuration = try await resumedItem.asset.load(.duration).seconds
+        XCTAssertEqual(resumedDuration, 30, accuracy: 0.3, "Resuming must publish the entire movie, including the first eight seconds")
+        XCTAssertEqual(player.currentTime().seconds, 8, accuracy: 1)
         model.togglePlay()
         try await wait { !model.isPlaying }
         player.setExternalPlaybackActive(false)
@@ -82,9 +91,12 @@ final class PlaybackTests: XCTestCase {
         let loadedGroup = try await player.currentItem?.asset.loadMediaSelectionGroup(for: .legible)
         let group = try XCTUnwrap(loadedGroup)
         XCTAssertNotNil(player.currentItem?.currentMediaSelection.selectedMediaOption(in: group))
-        model.seek(1)
-        try await wait(diagnostic: model.errorMessage ?? "") { readyAndPlaying() }
-        XCTAssertEqual(model.position, 1, accuracy: 1)
+        let routedItem = try XCTUnwrap(player.currentItem)
+        // Seek through AVPlayer, as a receiver would, without asking Beamly to rebuild the stream.
+        let rewound = await player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+        XCTAssertTrue(rewound)
+        try await wait(diagnostic: model.errorMessage ?? "") { readyAndPlaying() && model.position < 1 }
+        XCTAssertTrue(player.currentItem === routedItem)
         model.togglePlay()
         try await wait { !model.isPlaying }
         model.setSubtitle(nil)

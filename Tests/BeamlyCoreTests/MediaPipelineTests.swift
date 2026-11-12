@@ -159,6 +159,7 @@ final class MediaPipelineTests: XCTestCase {
                                           subtitle: .external(subtitle), startTime: 2, hardwareEncoding: false, preserveQuality: false)
         let text = try String(contentsOf: playlist, encoding: .utf8)
         XCTAssertTrue(text.contains("#EXT-X-INDEPENDENT-SEGMENTS"))
+        XCTAssertTrue(text.contains("#EXT-X-ENDLIST"), "Compatibility playlists must be complete before publication")
         XCTAssertGreaterThanOrEqual(text.components(separatedBy: "#EXTINF:").count - 1, 2)
         let segment = playlist.deletingLastPathComponent().appendingPathComponent("segment000000.ts")
         let segmentInfo = try await tools.probe(url: segment)

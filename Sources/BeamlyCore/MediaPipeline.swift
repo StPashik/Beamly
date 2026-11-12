@@ -221,7 +221,7 @@ public enum MediaPipelineError: LocalizedError {
             return String(format: NSLocalizedString("%@ is missing. Reinstall Beamly or choose a custom FFmpeg folder in Settings.", comment: ""), name)
         case .invalidMedia(let message): return message
         case .processFailed(let name, let message): return "\(name): \(message)"
-        case .timedOut: return NSLocalizedString("The video could not be prepared within 90 seconds. Try software encoding.", comment: "")
+        case .timedOut: return NSLocalizedString("Video preparation made no progress for 90 seconds. Try software encoding.", comment: "")
         }
     }
 }
@@ -504,14 +504,11 @@ public final class HLSJob {
     private let tools: FFmpegTools
     private var runner: ProcessRunner?
     private var completion: Task<ProcessOutput, Error>?
-    private var monitor: Task<Void, Never>?
     private var generation = UUID()
-    private var copiedVideoCodec: String?
 
     public init(tools: FFmpegTools = FFmpegTools()) { self.tools = tools }
 
     deinit {
-        monitor?.cancel()
         runner?.cancel()
         let task = completion
         if let cache = directory {
@@ -523,7 +520,8 @@ public final class HLSJob {
     }
 
     public func start(input: URL, info: MediaInfo, audioTrack: Int?, subtitle: SubtitleChoice,
-                      startTime: Double, hardwareEncoding: Bool, preserveQuality: Bool = true, subtitleDelay: Double = 0, audioDelay: Double = 0,
+                      startTime: Double = 0, hardwareEncoding: Bool, preserveQuality: Bool = true, subtitleDelay: Double = 0, audioDelay: Double = 0,
+                      onFraction: (@MainActor (Double) -> Void)? = nil,
                       progress: @MainActor (PlaybackPreparationStage) -> Void = { _ in }) async throws -> URL {
         stop()
         diagnostic = nil
@@ -557,6 +555,7 @@ public final class HLSJob {
             stop()
             throw error
         }
+        var canRetryInSoftware = !isVideoCopied && hardwareEncoding
         do {
             progress(isVideoCopied ? .originalStream : hardwareEncoding ? .systemEncoding : .softwareEncoding)
             let keyTime = isVideoCopied ? try await tools.firstVideoTimestamp(url: input, seek: startTime + info.startTime) : startTime
@@ -569,60 +568,50 @@ public final class HLSJob {
             let arguments = isVideoCopied ? Self.copyArguments(input: input, info: info, audio: audio, keyTime: keyTime, audioDelay: audioDelay) : Self.arguments(input: input, info: info, audioTrack: audioTrack,
                                            subtitleRendering: rendering, startTime: startTime, hardwareEncoding: hardwareEncoding, subtitleDelay: subtitleDelay, audioDelay: audioDelay)
             let execution = Task.detached(priority: .userInitiated) {
-                try await process.run(executable: ffmpeg, arguments: arguments, directory: cache)
+                try await process.run(executable: ffmpeg, arguments: ["-nostats", "-stats_period", "2", "-progress", ".progress"] + arguments, directory: cache)
             }
             completion = execution
-            monitor = Task { [weak self] in
-                while !process.isFinished && !Task.isCancelled {
+            // Publish only after EOF so AirPlay sees the entire seekable timeline on its first request.
+            let progressFile = cache.appendingPathComponent(".progress")
+            let clock = SuspendingClock()
+            var deadline = clock.now.advanced(by: .seconds(90))
+            var diskCheck = clock.now
+            var progressSize = 0
+            while !process.isFinished {
+                try Task.checkCancellation()
+                guard generation == currentGeneration else { throw CancellationError() }
+                let now = clock.now
+                if now >= diskCheck {
                     let capacity = try? cache.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
                     let available = max(capacity?.volumeAvailableCapacityForImportantUsage ?? 0, Int64(capacity?.volumeAvailableCapacity ?? 0))
                     if capacity != nil && available < 256 * 1024 * 1024 {
-                        guard let self, self.generation == currentGeneration else { return }
-                        self.diagnostic = NSLocalizedString("Not enough space for the video buffer. Free up disk space and try again.", comment: "")
-                        process.cancel()
-                        return
+                        canRetryInSoftware = false
+                        throw MediaPipelineError.invalidMedia(NSLocalizedString("Not enough space for the video buffer. Free up disk space and try again.", comment: ""))
                     }
-                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    diskCheck = now.advanced(by: .seconds(2))
                 }
-                let result = await execution.result
-                guard !Task.isCancelled, let self, self.generation == currentGeneration else { return }
-                if case .failure(let error) = result, self.diagnostic == nil { self.diagnostic = error.localizedDescription }
-                if let codec = self.copiedVideoCodec, FileManager.default.fileExists(atPath: cache.appendingPathComponent("master.m3u8").path) {
-                    do { try Self.writeMaster(directory: cache, codec: codec, info: info, audio: audio, hasSubtitles: subtitle != .none) }
-                    catch { self.diagnostic = error.localizedDescription }
-                }
-            }
-            let playlist = cache.appendingPathComponent(isVideoCopied ? "stream_0.m3u8" : "stream.m3u8")
-            let deadline = Date().addingTimeInterval(90)
-            func ready() -> Bool {
-                guard let contents = try? String(contentsOf: playlist, encoding: .utf8) else { return false }
-                let segments = contents.components(separatedBy: "#EXTINF:").count - 1
-                guard segments >= 2 || (segments >= 1 && contents.contains("#EXT-X-ENDLIST")) else { return false }
-                if isVideoCopied {
-                    let count = audio == nil ? 1 : Self.hasSurround(audio) ? 3 : 2
-                    return (0..<count).allSatisfy { index in
-                            (try? String(contentsOf: cache.appendingPathComponent("stream_\(index).m3u8"), encoding: .utf8).contains("#EXTINF:")) == true
-                        }
-                }
-                return true
-            }
-            while Date() < deadline {
-                try Task.checkCancellation()
-                guard generation == currentGeneration else { throw CancellationError() }
-                if ready() { break }
-                if process.isFinished {
-                    do { _ = try await execution.value }
-                    catch {
-                        if !Task.isCancelled, let diagnostic { throw MediaPipelineError.invalidMedia(diagnostic) }
-                        throw error
+                if let size = (try? progressFile.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size > progressSize {
+                    progressSize = size
+                    deadline = now.advanced(by: .seconds(90))
+                    if let onFraction, let fraction = Self.preparedFraction(in: progressFile, size: size, duration: info.duration - startTime, frameRate: info.frameRate) {
+                        onFraction(fraction)
                     }
-                    // A very short clip can end between the playlist read and process termination.
-                    if ready() { break }
-                    throw MediaPipelineError.invalidMedia(NSLocalizedString("FFmpeg did not create any video segments.", comment: ""))
                 }
-                try await Task.sleep(nanoseconds: 100_000_000)
+                guard now < deadline else { throw MediaPipelineError.timedOut }
+                try await Task.sleep(for: .milliseconds(100))
             }
-            guard ready() else { throw MediaPipelineError.timedOut }
+            _ = try await execution.value
+            try Task.checkCancellation()
+            guard generation == currentGeneration else { throw CancellationError() }
+            let renditionCount = audio == nil ? 1 : Self.hasSurround(audio) ? 3 : 2
+            let names = isVideoCopied ? (0..<renditionCount).map { "stream_\($0).m3u8" } : ["stream.m3u8"]
+            guard names.allSatisfy({ name in
+                guard let contents = try? String(contentsOf: cache.appendingPathComponent(name), encoding: .utf8) else { return false }
+                return contents.contains("#EXTINF:") && contents.contains("#EXT-X-ENDLIST")
+            }) else {
+                throw MediaPipelineError.invalidMedia(NSLocalizedString("FFmpeg did not create any video segments.", comment: ""))
+            }
+            let playlist = cache.appendingPathComponent(names[0])
             if isVideoCopied {
                 let firstPTS = try await tools.firstVideoTimestamp(url: playlist)
                 try Task.checkCancellation()
@@ -633,23 +622,35 @@ public final class HLSJob {
                 let codec = try await HLSCodec.identifier(at: cache.appendingPathComponent("init_0.mp4"))
                 try Task.checkCancellation()
                 guard generation == currentGeneration else { throw CancellationError() }
-                copiedVideoCodec = codec
                 try Self.writeMaster(directory: cache, codec: codec, info: info, audio: audio, hasSubtitles: subtitle != .none)
                 return cache.appendingPathComponent("master.m3u8")
             }
             return playlist
         } catch {
             guard generation == currentGeneration else { throw error }
-            let copied = isVideoCopied
             diagnostic = error.localizedDescription
             stop()
-            if !copied && hardwareEncoding && !(error is CancellationError) {
+            if canRetryInSoftware && !(error is CancellationError) {
                 progress(.softwareFallback)
                 return try await start(input: input, info: info, audioTrack: audioTrack, subtitle: subtitle,
-                                       startTime: startTime, hardwareEncoding: false, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay, audioDelay: audioDelay, progress: progress)
+                                       startTime: startTime, hardwareEncoding: false, preserveQuality: preserveQuality, subtitleDelay: subtitleDelay, audioDelay: audioDelay, onFraction: onFraction, progress: progress)
             }
             throw error
         }
+    }
+
+    private static func preparedFraction(in file: URL, size: Int, duration: Double, frameRate: Double) -> Double? {
+        guard duration.isFinite, duration > 0, let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        defer { try? handle.close() }
+        guard (try? handle.seek(toOffset: UInt64(max(0, size - 2048)))) != nil,
+              let data = try? handle.read(upToCount: 2048) else { return nil }
+        let lines = String(decoding: data, as: UTF8.self).split(separator: "\n")
+        func last(_ key: String) -> Double {
+            lines.last { $0.hasPrefix(key) }.flatMap { Double($0.dropFirst(key.count)) } ?? 0
+        }
+        // With separate audio renditions, FFmpeg's time report can lag behind the copied video frames.
+        let seconds = max(last("out_time_us=") / 1_000_000, frameRate > 0 ? last("frame=") / frameRate : 0)
+        return seconds.isFinite && seconds > 0 ? min(0.99, seconds / duration) : nil
     }
 
     private static func hasSurround(_ audio: MediaTrack?) -> Bool {
@@ -674,7 +675,10 @@ public final class HLSJob {
             args += ["-map", "\(audioInput):\(audio.id)"]
             if audio.codec == "aac", audio.profile == "LC", (audio.channels ?? 0) <= 2 {
                 args += ["-c:a:0", "copy"]
-            } else { args += ["-c:a:0", "aac", "-b:a:0", "192k", "-ac:a:0", "2", "-ar:a:0", "48000"] }
+            } else {
+                // The stereo fallback should not dominate preparation time; the surround rendition stays unchanged.
+                args += ["-c:a:0", "aac", "-aac_coder:a:0", "fast", "-b:a:0", "192k", "-ac:a:0", "2", "-ar:a:0", "48000"]
+            }
             variants += " a:0"
             if hasSurround(audio) {
                 args += ["-map", "\(audioInput):\(audio.id)", "-c:a:1", "copy"]
@@ -776,15 +780,12 @@ public final class HLSJob {
 
     public func stop() {
         generation = UUID()
-        monitor?.cancel()
-        monitor = nil
         runner?.cancel()
         let task = completion
         let cache = directory
         runner = nil
         completion = nil
         directory = nil
-        copiedVideoCodec = nil
         if let cache {
             Task.detached {
                 // FFmpeg may still be closing files after cancellation; wait before deleting them.
