@@ -55,7 +55,8 @@ final class AppModel: ObservableObject {
     private var routePreparation: Task<Void, Never>?
     private var shouldShowAirPlayPicker = false
     private var isAirPlayPickerPresented = false
-    private var mayHaveSelectedAirPlayRoute = false
+    private enum AirPlayRouteHint { case none, pickerSelection, confirmed }
+    private var airPlayRouteHint = AirPlayRouteHint.none
     private var previewTask: Task<Void, Never>?
     private var seekPreviewTask: Task<Void, Never>?
     private var sleepTimerTask: Task<Void, Never>?
@@ -108,11 +109,11 @@ final class AppModel: ObservableObject {
                     let wasExternal = self.isExternal
                     self.isExternal = player.isExternalPlaybackActive
                     if self.isExternal {
-                        self.mayHaveSelectedAirPlayRoute = true
+                        self.airPlayRouteHint = .confirmed
                         self.isAirPlayPickerRequested = false
                         if self.playRequested, !self.isPreparing { self.playIfConnected() }
                     } else if wasExternal, !self.isPreparing, !self.isConnectingAirPlay {
-                        if self.playRequested { self.mayHaveSelectedAirPlayRoute = false }
+                        if self.playRequested { self.airPlayRouteHint = .none }
                         self.pausePlayback()
                     }
                 }
@@ -194,8 +195,8 @@ final class AppModel: ObservableObject {
     }
     func clearHistory() { lastHistoryItem = current; playlist.history = []; save() }
     var networkAddress: String { server.host }
-    // Waiting playback still needs a Pause action, even though media is not advancing yet.
-    var isPlaying: Bool { playbackControlStatus != .paused || isConnectingAirPlay }
+    // Leave Play available while a dismissed picker has yet to yield a confirmed receiver.
+    var isPlaying: Bool { playbackControlStatus != .paused || (isConnectingAirPlay && airPlayRouteHint == .confirmed) }
     var isBuffering: Bool {
         !isPreparing && isExternal && player.currentItem != nil &&
             playbackControlStatus == .waitingToPlayAtSpecifiedRate && waitingReason == .toMinimizeStalls
@@ -316,7 +317,7 @@ final class AppModel: ObservableObject {
         isAirPlayPickerPresented = isPresented
         if isPresented {
             // AVKit reports presentation without saying whether the user selected a route.
-            mayHaveSelectedAirPlayRoute = true
+            airPlayRouteHint = .pickerSelection
             shouldShowAirPlayPicker = false
             if routePreparation != nil { cancelRoutePreparation() }
         } else if playRequested {
@@ -333,12 +334,16 @@ final class AppModel: ObservableObject {
     private func playIfConnected(showPicker: Bool = false) {
         playRequested = true
         shouldShowAirPlayPicker = shouldShowAirPlayPicker || showPicker
-        if !player.isExternalPlaybackActive, !mayHaveSelectedAirPlayRoute || isAirPlayPickerPresented {
-            requestAirPlayPicker()
+        if !player.isExternalPlaybackActive {
+            if showPicker, !isAirPlayPickerPresented, airPlayRouteHint == .pickerSelection {
+                cancelRoutePreparation()
+                airPlayRouteHint = .none
+            }
+            if airPlayRouteHint == .none || isAirPlayPickerPresented { requestAirPlayPicker() }
         }
         guard !isPreparing, player.status == .readyToPlay, player.currentItem?.status == .readyToPlay else { return }
         guard player.isExternalPlaybackActive else {
-            guard mayHaveSelectedAirPlayRoute, !isAirPlayPickerPresented, routePreparation == nil else { return }
+            guard airPlayRouteHint != .none, !isAirPlayPickerPresented, routePreparation == nil else { return }
             // Preroll primes an already selected route at rate zero; discovery never authorizes local playback.
             isConnectingAirPlay = true
             let generation = loadID
@@ -351,7 +356,7 @@ final class AppModel: ObservableObject {
                 self.isConnectingAirPlay = false
                 if self.player.isExternalPlaybackActive { self.playIfConnected() }
                 else {
-                    self.mayHaveSelectedAirPlayRoute = false
+                    self.airPlayRouteHint = .none
                     self.requestAirPlayPicker()
                 }
             }
@@ -359,7 +364,7 @@ final class AppModel: ObservableObject {
             return
         }
         cancelRoutePreparation()
-        mayHaveSelectedAirPlayRoute = true
+        airPlayRouteHint = .confirmed
         isAirPlayPickerRequested = false
         shouldShowAirPlayPicker = false
         player.play()
@@ -672,7 +677,7 @@ final class AppModel: ObservableObject {
     }
 
     private func prepare(at start: Double, autoPlay: Bool, applyTrackPreferences: Bool = false,
-                         allowMP4Remux: Bool = true, allowDolbyAudio: Bool = true) {
+                         allowMP4Remux: Bool = true, allowDolbyAudio: Bool = true, allowEarlyHLS: Bool = true) {
         guard let movie = current else { return }
         let showPicker = shouldShowAirPlayPicker
         cancelPlayback(keepingItem: true)
@@ -763,14 +768,34 @@ final class AppModel: ObservableObject {
                         default: break
                         }
                     }
-                    let mp4: URL?
-                    if allowMP4Remux, preserveQuality, choice == .none, audioDelay == 0 {
-                        mp4 = try await newJob.prepareNativeMP4(input: movie.url, info: metadata, audioTrack: audioID,
-                                                              onFraction: reportFraction, progress: reportStage)
+                    let earlyPlaylist: URL?
+                    if allowEarlyHLS, preserveQuality, allowDolbyAudio, choice == .none, audioDelay == 0 {
+                        earlyPlaylist = try await newJob.prepareEarlyHLS(input: movie.url, info: metadata, audioTrack: audioID,
+                            startTime: start, subtitleDelay: captionDelay, onFailure: { [weak self] error in
+                                if MediaPipelineError.isInsufficientSpace(error) {
+                                    self?.playbackFailed(MediaPipelineError.insufficientSpace.localizedDescription, generation: generation, retry: nil)
+                                } else {
+                                    self?.playbackFailed(error.localizedDescription, generation: generation, retry: .completeHLS)
+                                }
+                            }, progress: reportStage)
                     } else {
-                        mp4 = nil
+                        earlyPlaylist = nil
                     }
-                    if let mp4 {
+                    if let earlyPlaylist {
+                        try Task.checkCancellation()
+                        guard loadID == generation else { return }
+                        duration = newJob.earlyHLSVideoDuration ?? duration
+                        retry = .completeHLS
+                        playbackURL = try server.publish(directory: earlyPlaylist.deletingLastPathComponent(),
+                            playlist: earlyPlaylist.lastPathComponent, pendingFiles: newJob.pendingHLSFiles,
+                            generatedDirectory: newJob.generatedHLSSegments, onPendingRequest: { [weak newJob] name in
+                                Task { @MainActor in newJob?.requestPendingHLSFile(name) }
+                            }, onPendingTimeout: { [weak self] in
+                                Task { @MainActor in self?.playbackFailed(generation: generation, retry: .completeHLS) }
+                            })
+                    } else if allowMP4Remux, preserveQuality, choice == .none, audioDelay == 0,
+                              let mp4 = try await newJob.prepareNativeMP4(input: movie.url, info: metadata, audioTrack: audioID,
+                                                                        onFraction: reportFraction, progress: reportStage) {
                         try Task.checkCancellation()
                         guard loadID == generation else { return }
                         retry = .hls
@@ -846,9 +871,13 @@ final class AppModel: ObservableObject {
                             if let group = self.subtitleGroup { item.select(self.subtitleChoices[self.subtitleChoice], in: group) }
                             // Ignore time-zero callbacks until the saved position has been restored.
                             let target = CMTime(seconds: max(0, start - self.sourceOffset), preferredTimescale: 600)
-                            self.player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                            self.player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] completed in
                                 Task { @MainActor in
                                     guard let self, self.loadID == generation else { return }
+                                    if !completed, retry == .completeHLS {
+                                        self.playbackFailed(generation: generation, retry: retry)
+                                        return
+                                    }
                                     self.releasePreviousPlayback()
                                     self.isPreparing = false
                                     if self.playRequested { self.playIfConnected() }
@@ -880,22 +909,27 @@ final class AppModel: ObservableObject {
                 playlist.remember(position: start, duration: duration)
                 save()
             } catch is CancellationError {
+            } catch where MediaPipelineError.isInsufficientSpace(error) {
+                playbackFailed(MediaPipelineError.insufficientSpace.localizedDescription, generation: generation, retry: nil)
             } catch {
-                playbackFailed(error.localizedDescription, generation: generation, retry: job?.usesOriginalDolby == true ? .stereo : nil)
+                let retry: PlaybackRetry?
+                if job?.pendingHLSFiles.isEmpty == false { retry = .completeHLS }
+                else { retry = job?.usesOriginalDolby == true ? .stereo : nil }
+                playbackFailed(error.localizedDescription, generation: generation, retry: retry)
             }
         }
     }
 
     private enum PlaybackRetry {
-        case hls, stereo
+        case hls, completeHLS, stereo
     }
 
-    private func playbackFailed(_ reason: String, generation: UUID, retry: PlaybackRetry?) {
+    private func playbackFailed(_ reason: String? = nil, generation: UUID, retry: PlaybackRetry?) {
         guard loadID == generation else { return }
         if let retry {
-            prepare(at: position, autoPlay: playRequested, allowMP4Remux: false, allowDolbyAudio: retry == .hls)
+            prepare(at: position, autoPlay: playRequested, allowMP4Remux: false, allowDolbyAudio: retry != .stereo, allowEarlyHLS: false)
         } else {
-            errorMessage = reason
+            errorMessage = reason ?? NSLocalizedString("The video stream was interrupted.", comment: "")
             cancelPlayback()
         }
     }
@@ -975,6 +1009,7 @@ final class AppModel: ObservableObject {
             // Keep the old item and its URLs alive until replacement is ready so AVKit retains the route.
             if previousPlayback?.item !== item {
                 releasePreviousPlayback()
+                job?.cancelPendingPreparation()
                 previousPlayback = (item, server, job)
             }
             else { job?.stop(); server.stop() }

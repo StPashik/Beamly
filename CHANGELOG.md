@@ -1,3 +1,14 @@
+# Beamly 1.0.13
+
+- Start eligible H.264 and HEVC MKV files from the beginning or the saved position while showing the full seekable timeline. Prepare missing video fragments and H.264 scrub previews on demand while the rest of the stream is generated. Use regular preparation for other files or if early playback fails.
+- Preserve HDR10 and HLG when copying HEVC video. Fix playback for MKV files whose HEVC decoder parameters are carried in keyframes.
+- Switch compatible Dolby Digital and Dolby Digital Plus tracks on Apple TV during fast HLS playback. Beamly prepares missing audio and video fragments together when you seek.
+- Prepare compatible H.264 MKV files in one pass when using full HLS preparation with embedded captions and scrub previews.
+- Reopen the AirPlay picker immediately on Play after dismissing it without an active receiver.
+- Reclaim temporary video buffers left behind by closed Beamly processes. Report low disk space without retrying the same preparation.
+
+**Apple TV 4K testing confirmed 4K HLG and HDR10 playback.** The HLG trial also confirmed AC-3 audio and full-timeline seeking. A separate H.264 MKV with seven Dolby tracks started in 2.84 seconds including receiver selection, and all seven tracks could be switched from the remote.
+
 # Beamly 1.0.12
 
 **4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**

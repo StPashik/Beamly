@@ -59,6 +59,41 @@ final class HEVCStreamingTests: XCTestCase {
     }
 
     @MainActor
+    func testHEVCUsesInBandParameterSetsWhenMatroskaHeaderHasNone() async throws {
+        let tools = mediaTestTools()
+        let ffmpeg = try XCTUnwrap(tools.ffmpegURL)
+        let generator = try XCTUnwrap(FFmpegTools().ffmpegURL)
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        let input = folder.appendingPathComponent("in-band.mkv")
+        let job = HLSJob(tools: tools)
+        defer { job.stop(); try? FileManager.default.removeItem(at: folder) }
+        _ = try run(generator, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10:duration=2",
+            "-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p10le",
+            "-x265-params", "pools=1:frame-threads=1:log-level=error:repeat-headers=1:colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc",
+            "-write_crc32", "0", input.path])
+
+        var data = try Data(contentsOf: input)
+        let size = try XCTUnwrap(data.range(of: Data([0x63, 0xa2]))).upperBound
+        let record = size + data[size].leadingZeroBitCount + 1
+        XCTAssertEqual(data[record], 1)
+        XCTAssertGreaterThan(data[record + 22], 0)
+        // Empty the hvcC array list in CodecPrivate without moving the Matroska cues.
+        data[record + 22] = 0
+        try data.write(to: input)
+
+        let info = try await tools.probe(url: input)
+        XCTAssertTrue(info.canCopyVideo)
+        let master = try await job.start(input: input, info: info, audioTrack: nil, subtitle: .none, hardwareEncoding: false)
+        XCTAssertTrue(job.isVideoCopied)
+        XCTAssertTrue(try String(contentsOf: master, encoding: .utf8).contains("VIDEO-RANGE=HLG"))
+        let video = master.deletingLastPathComponent().appendingPathComponent("stream_0.m3u8")
+        let originalFrames = try frameHashes(input, ffmpeg: ffmpeg)
+        XCTAssertEqual(originalFrames.count, 20)
+        XCTAssertEqual(try frameHashes(video, ffmpeg: ffmpeg), originalFrames)
+    }
+
+    @MainActor
     func testReal4KHDRCopySeekAudioSubtitlesAndHTTP() async throws {
         let tools = mediaTestTools()
         guard let ffmpeg = tools.ffmpegURL, let ffprobe = tools.ffprobeURL else { throw XCTSkip("FFmpeg is required") }
