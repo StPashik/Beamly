@@ -100,7 +100,7 @@ Allow local-network access and incoming connections if macOS asks. An AirPlay re
 
 1. Connect the Mac and receiver to the same network.
 2. Open Beamly and select your receiver from the AirPlay list. You can dismiss the list and reopen it anytime using **AirPlay** in the top-right corner.
-3. Drop a video or folder into the window, or press **⌘O**. Playback starts only after an AirPlay device is connected; disconnecting pauses the player. Pressing Play first prepares an already selected AirPlay route without starting local playback. If no connection becomes active within three seconds, it opens the device picker; playback begins after you connect a receiver.
+3. Drop a video or folder into the window, or press **⌘O**. Beamly plays on the selected receiver. **Clear** closes the player on Apple TV, and the next video uses the same receiver if it is still available.
 4. Use the audio and subtitles menus beside the timeline to choose tracks.
 
 Beamly finds SRT, ASS, SSA, and VTT files beside the video when their names match, for example `Movie.mkv` with `Movie.srt` or `Movie.ru.srt`. It selects an exact-basename match or the only matching file automatically. When several language files match, choose one in the subtitles menu.
