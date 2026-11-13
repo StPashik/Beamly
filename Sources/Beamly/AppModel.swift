@@ -677,7 +677,7 @@ final class AppModel: ObservableObject {
     }
 
     private func prepare(at start: Double, autoPlay: Bool, applyTrackPreferences: Bool = false,
-                         allowMP4Remux: Bool = true, allowDolbyAudio: Bool = true, allowEarlyHLS: Bool = true) {
+                         allowMP4: Bool = true, allowDolbyAudio: Bool = true, allowEarlyHLS: Bool = true) {
         guard let movie = current else { return }
         let showPicker = shouldShowAirPlayPicker
         cancelPlayback(keepingItem: true)
@@ -728,7 +728,7 @@ final class AppModel: ObservableObject {
                     }
                 }
                 var canPlayDirect = false
-                if ["mp4", "m4v", "mov"].contains(movie.url.pathExtension.lowercased()), externalSubtitle == nil,
+                if allowMP4, ["mp4", "m4v", "mov"].contains(movie.url.pathExtension.lowercased()), externalSubtitle == nil,
                    subtitleID == nil || subtitleDelay == 0, audioDelay == 0, preserveQuality {
                     canPlayDirect = (try? await asset.load(.isPlayable)) == true
                 }
@@ -739,7 +739,7 @@ final class AppModel: ObservableObject {
                 let playbackURL: URL
                 let retry: PlaybackRetry?
                 if canPlayDirect {
-                    retry = nil
+                    retry = .hls
                     isUsingHLS = false
                     isVideoCopied = false
                     sourceOffset = 0
@@ -769,9 +769,9 @@ final class AppModel: ObservableObject {
                         }
                     }
                     let earlyPlaylist: URL?
-                    if allowEarlyHLS, preserveQuality, allowDolbyAudio, choice == .none, audioDelay == 0 {
+                    if allowEarlyHLS, preserveQuality, allowDolbyAudio, audioDelay == 0 {
                         earlyPlaylist = try await newJob.prepareEarlyHLS(input: movie.url, info: metadata, audioTrack: audioID,
-                            startTime: start, subtitleDelay: captionDelay, onFailure: { [weak self] error in
+                            startTime: start, subtitle: choice, subtitleDelay: captionDelay, onFailure: { [weak self] error in
                                 if MediaPipelineError.isInsufficientSpace(error) {
                                     self?.playbackFailed(MediaPipelineError.insufficientSpace.localizedDescription, generation: generation, retry: nil)
                                 } else {
@@ -793,7 +793,7 @@ final class AppModel: ObservableObject {
                             }, onPendingTimeout: { [weak self] in
                                 Task { @MainActor in self?.playbackFailed(generation: generation, retry: .completeHLS) }
                             })
-                    } else if allowMP4Remux, preserveQuality, choice == .none, audioDelay == 0,
+                    } else if allowMP4, preserveQuality, choice == .none, audioDelay == 0,
                               let mp4 = try await newJob.prepareNativeMP4(input: movie.url, info: metadata, audioTrack: audioID,
                                                                         onFraction: reportFraction, progress: reportStage) {
                         try Task.checkCancellation()
@@ -874,7 +874,7 @@ final class AppModel: ObservableObject {
                             self.player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] completed in
                                 Task { @MainActor in
                                     guard let self, self.loadID == generation else { return }
-                                    if !completed, retry == .completeHLS {
+                                    if !completed, retry == .completeHLS || retry == .hls {
                                         self.playbackFailed(generation: generation, retry: retry)
                                         return
                                     }
@@ -927,7 +927,7 @@ final class AppModel: ObservableObject {
     private func playbackFailed(_ reason: String? = nil, generation: UUID, retry: PlaybackRetry?) {
         guard loadID == generation else { return }
         if let retry {
-            prepare(at: position, autoPlay: playRequested, allowMP4Remux: false, allowDolbyAudio: retry != .stereo, allowEarlyHLS: false)
+            prepare(at: position, autoPlay: playRequested, allowMP4: false, allowDolbyAudio: retry != .stereo, allowEarlyHLS: retry == .hls)
         } else {
             errorMessage = reason ?? NSLocalizedString("The video stream was interrupted.", comment: "")
             cancelPlayback()
