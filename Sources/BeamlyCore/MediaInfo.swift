@@ -17,6 +17,10 @@ public struct MediaTrack: Codable, Identifiable, Sendable, Equatable {
     public var isTextSubtitle: Bool { ["subrip", "ass", "ssa", "webvtt", "mov_text", "text"].contains(codec) }
     public var isBitmapSubtitle: Bool { ["hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub"].contains(codec) }
 
+    var isStereoAAC: Bool {
+        codec == "aac" && profile == "LC" && (channels ?? 0) <= 2
+    }
+
     public init(id: Int, codec: String, language: String? = nil, title: String? = nil, channels: Int? = nil, profile: String? = nil, disposition: [String: Int]? = nil) {
         self.id = id
         self.codec = codec

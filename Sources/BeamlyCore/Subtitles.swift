@@ -30,6 +30,13 @@ public func findSubtitleFiles(for video: URL) -> [URL] {
     }
 }
 
+struct CaptionRendition {
+    let choice: SubtitleChoice
+    let name: String
+    let language: String
+    let stem: String
+}
+
 enum SubtitleRendering {
     case text(String)
     case bitmap(Int)
