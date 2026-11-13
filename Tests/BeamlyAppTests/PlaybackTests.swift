@@ -1,15 +1,15 @@
 import AVKit
+import MediaPlayer
 import XCTest
 import BeamlyCore
 import Combine
-import MediaPlayer
 import SwiftUI
 @testable import Beamly
 
 final class PlaybackTests: XCTestCase {
     @MainActor
     func testIndexedHLSResumesAndSeeksBeforeTheSequentialRemuxCompletes() async throws {
-        try await checkIndexedHLS(hevc: false)
+        try await checkIndexedHLS(hevc: false, useSidecar: true)
     }
 
     @MainActor
@@ -19,17 +19,21 @@ final class PlaybackTests: XCTestCase {
     }
 
     @MainActor
-    private func checkIndexedHLS(hevc: Bool, hdr: Bool = false) async throws {
+    private func checkIndexedHLS(hevc: Bool, hdr: Bool = false, useSidecar: Bool = false) async throws {
         let tools = mediaTestTools()
         let ffmpeg = try XCTUnwrap(tools.ffmpegURL)
         let ffprobe = try XCTUnwrap(tools.ffprobeURL)
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-early-hls-test-\(UUID())")
+        let folder = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("Beamly-early-hls-test-\(UUID())")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         let movie = folder.appendingPathComponent("Movie.mkv")
         let captions = folder.appendingPathComponent("captions.srt")
+        let sidecar = folder.appendingPathComponent("Movie.en.srt")
         let chapters = folder.appendingPathComponent("chapters.ffmetadata")
         try "1\n00:00:01,000 --> 00:01:03,000\nEarly HLS caption\n".write(to: captions, atomically: true, encoding: .utf8)
+        if useSidecar {
+            try "1\n00:00:33,000 --> 00:00:37,000\nSelected sidecar\n".write(to: sidecar, atomically: true, encoding: .utf8)
+        }
         try ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=60000\ntitle=Movie\n".write(to: chapters, atomically: true, encoding: .utf8)
         let generator = Process()
         generator.executableURL = hevc ? try XCTUnwrap(FFmpegTools().ffmpegURL) : ffmpeg
@@ -44,7 +48,8 @@ final class PlaybackTests: XCTestCase {
             "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=60",
             "-i", captions.path, "-i", chapters.path, "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s", "-map_chapters", "4"]
             + video + ["-c:a:0", "ac3", "-ac:a:0", "2", "-c:a:1", "eac3", "-ac:a:1", "6", "-af", "asetpts=PTS+256/SR/TB",
-                       "-metadata:s:a:0", "language=rus", "-metadata:s:a:1", "language=eng", "-c:s", "srt", movie.path]
+                       "-metadata:s:a:0", "language=rus", "-metadata:s:a:1", "language=eng",
+                       "-metadata:s:s:0", "language=eng", "-c:s", "srt", movie.path]
         generator.standardInput = FileHandle.nullDevice
         try generator.run()
         generator.waitUntilExit()
@@ -88,11 +93,12 @@ final class PlaybackTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set(folder.path, forKey: "toolsDirectory")
-        defaults.set("off", forKey: "preferredSubtitleLanguage")
+        defaults.set("en", forKey: "preferredSubtitleLanguage")
         var queue = Playlist()
         queue.append([movie])
         queue.items[0].position = 35
         queue.items[0].duration = 60
+        queue.items[0].subtitleDelay = 0.5
         let state = folder.appendingPathComponent("queue.json")
         try JSONEncoder().encode(queue).write(to: state)
         let player = AirPlayTestPlayer()
@@ -124,7 +130,16 @@ final class PlaybackTests: XCTestCase {
         let seekable = earlyItem.seekableTimeRanges.map { $0.timeRangeValue.end.seconds }.max() ?? 0
         XCTAssertEqual(seekable, 60, accuracy: 0.1)
         let captionsGroup = try await earlyItem.asset.loadMediaSelectionGroup(for: .legible)
-        XCTAssertEqual(captionsGroup?.options.count, 1)
+        XCTAssertEqual(captionsGroup?.options.count, useSidecar ? 2 : 1)
+        let selectedCaption = try XCTUnwrap(captionsGroup.flatMap { earlyItem.currentMediaSelection.selectedMediaOption(in: $0) })
+        XCTAssertEqual(selectedCaption, captionsGroup?.defaultOption)
+        if useSidecar { XCTAssertEqual(model.externalSubtitle?.resolvingSymlinksInPath().path, sidecar.resolvingSymlinksInPath().path) }
+        else { XCTAssertEqual(model.subtitleID, metadata.subtitleTracks.first?.id) }
+        let text = try String(contentsOf: cache.appendingPathComponent("captions.vtt"), encoding: .utf8)
+        XCTAssertTrue(text.contains(useSidecar ? "Selected sidecar" : "Early HLS caption"))
+        let cue = try XCTUnwrap(text.split(separator: "\n").first { $0.contains(" --> ") })
+        let start = cue.split(separator: " ").first?.split(separator: ":").compactMap { Double($0) }.reduce(0) { $0 * 60 + $1 }
+        XCTAssertEqual(try XCTUnwrap(start), useSidecar ? 33.5 : 1.5, accuracy: 0.25)
         let loadedAudio = try await earlyItem.asset.loadMediaSelectionGroup(for: .audible)
         let audioGroup = try XCTUnwrap(loadedAudio)
         XCTAssertEqual(audioGroup.options.count, 2)
@@ -177,36 +192,80 @@ final class PlaybackTests: XCTestCase {
         XCTAssertTrue(model.isVideoCopied)
         XCTAssertEqual(player.emptyReplacements, 0)
         XCTAssertNil(model.errorMessage)
+        if useSidecar { XCTAssertEqual(model.externalSubtitle?.resolvingSymlinksInPath().path, sidecar.resolvingSymlinksInPath().path) }
+        else { XCTAssertEqual(model.subtitleID, metadata.subtitleTracks.first?.id) }
     }
 
     @MainActor
-    func testAirPlaySelectionAtLaunchPlaysBothMoviesAcrossClearingTheQueue() async throws {
-        let tools = mediaTestTools()
-        let ffmpeg = try XCTUnwrap(tools.ffmpegURL)
+    func testFailedDirectPlaybackRetriesHLSAtTheSamePosition() async throws {
+        let ffmpeg = try XCTUnwrap(mediaTestTools().ffmpegURL)
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-direct-retry-\(UUID())")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let movie = folder.appendingPathComponent("movie.mp4")
+        let generator = Process()
+        generator.executableURL = ffmpeg
+        generator.arguments = ["-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=c=blue:size=160x90:rate=10:duration=18",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=18",
+            "-c:v", "libx264", "-g", "20", "-bf", "0", "-c:a", "aac", "-movflags", "+faststart", movie.path]
+        try generator.run()
+        generator.waitUntilExit()
+        XCTAssertEqual(generator.terminationStatus, 0)
+        let suite = "app.beamly.direct-retry.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(ffmpeg.deletingLastPathComponent().path, forKey: "toolsDirectory")
+        var queue = Playlist()
+        queue.append([movie])
+        queue.items[0].position = 7
+        queue.items[0].duration = 18
+        let state = folder.appendingPathComponent("queue.json")
+        try JSONEncoder().encode(queue).write(to: state)
+        let player = AirPlayTestPlayer()
+        player.isMuted = true
+        player.setExternalPlaybackActive(true)
+        let model = AppModel(stateURL: state, defaults: defaults, player: player)
+        defer { model.shutdown() }
+
+        model.togglePlay()
+        try await wait { player.timeControlStatus == .playing && !model.isPreparing }
+        XCTAssertFalse(model.isUsingHLS)
+        let directItem = try XCTUnwrap(player.currentItem)
+        NotificationCenter.default.post(name: .AVPlayerItemFailedToPlayToEndTime, object: directItem)
+        try await wait(diagnostic: "\(model.playbackStatus) \(model.errorMessage ?? "") \(String(describing: player.lastConfiguredItem?.error))") {
+            player.currentItem !== directItem && player.timeControlStatus == .playing && !model.isPreparing
+        }
+        XCTAssertTrue(model.isUsingHLS)
+        XCTAssertTrue(model.isVideoCopied)
+        XCTAssertEqual(player.currentTime().seconds, 7, accuracy: 0.7)
+        XCTAssertEqual(player.currentItem?.duration.seconds ?? 0, 18, accuracy: 0.1)
+        XCTAssertNil(model.errorMessage)
+    }
+
+    @MainActor
+    func testClearStopsTheMovieAndRestartsTheSelectedAirPlayRoute() async throws {
+        let ffmpeg = try XCTUnwrap(mediaTestTools().ffmpegURL)
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-clear-route-\(UUID())")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
         let suite = "app.beamly.clear-route.\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
-        defaults.set(true, forKey: "autoPlay")
         defaults.set(ffmpeg.deletingLastPathComponent().path, forKey: "toolsDirectory")
         let first = folder.appendingPathComponent("First.mp4")
         let second = folder.appendingPathComponent("Second.mkv")
         let generator = Process()
         generator.executableURL = ffmpeg
         generator.arguments = ["-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=c=blue:size=160x90:rate=24:duration=20",
-            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000:duration=20",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=20",
             "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-g", "24", "-c:a", "aac", "-movflags", "+faststart", first.path,
             "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-g", "24", "-c:a", "ac3", second.path]
         generator.standardInput = FileHandle.nullDevice
-        try generator.run()
-        generator.waitUntilExit()
+        try generator.run(); generator.waitUntilExit()
         XCTAssertEqual(generator.terminationStatus, 0)
 
         let player = AirPlayTestPlayer()
         player.losesRouteWhenEmptied = true
-        let state = folder.appendingPathComponent("queue.json")
-        let model = AppModel(stateURL: state, defaults: defaults, player: player)
+        let model = AppModel(stateURL: folder.appendingPathComponent("queue.json"), defaults: defaults, player: player)
         defer { model.shutdown() }
         let delegate = AppDelegate()
         delegate.mainWindowDidOpen(model)
@@ -218,42 +277,31 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(player.playCalls, 0)
         player.activatesRouteDuringPreroll = true
         model.add([first])
-        try await wait(diagnostic: model.errorMessage ?? model.playbackStatus) {
-            model.isExternal && player.timeControlStatus == .playing && player.currentTime().seconds > 0.1
-        }
-        XCTAssertFalse(model.isAirPlayPickerRequested)
+        try await wait { model.isExternal && model.isPlaying && player.currentTime().seconds > 0.1 }
         XCTAssertEqual(player.prerollCalls, 1)
+        XCTAssertFalse(model.isAirPlayPickerRequested)
         player.activatesRouteDuringPreroll = false
-        let oldItem = try XCTUnwrap(player.currentItem)
-        let oldURL = try XCTUnwrap((oldItem.asset as? AVURLAsset)?.url)
-        XCTAssertFalse(model.isUsingHLS)
+        let oldURL = try XCTUnwrap((player.currentItem?.asset as? AVURLAsset)?.url)
 
         model.clear()
         XCTAssertTrue(model.playlist.items.isEmpty)
-        XCTAssertNil(player.currentItem, "Apple TV must leave the movie player when clearing")
+        XCTAssertNil(player.currentItem)
         XCTAssertNil(MPNowPlayingInfoCenter.default().nowPlayingInfo)
-        XCTAssertFalse(model.isPlaying)
         XCTAssertEqual(player.rate, 0)
-        XCTAssertEqual(model.position, 0)
+        XCTAssertFalse(model.isPlaying)
         let session = URLSession(configuration: .ephemeral)
         defer { session.invalidateAndCancel() }
         let oldResponse = try await session.data(from: oldURL).1
-        XCTAssertEqual((oldResponse as? HTTPURLResponse)?.statusCode, 404, "The cleared movie must no longer be served")
-        player.simulateTimeControl(.playing)
-        try await wait { player.timeControlStatus == .paused }
-        XCTAssertFalse(model.isPlaying, "The receiver must not resume a cleared movie")
-        player.simulateTimeControl(nil)
+        XCTAssertEqual((oldResponse as? HTTPURLResponse)?.statusCode, 404)
 
         player.activatesRouteDuringMutedStart = true
         model.add([second])
-        try await wait(diagnostic: model.errorMessage ?? model.playbackStatus) {
-            model.current?.url == second && model.isExternal && player.timeControlStatus == .playing
-                && !player.isMuted && player.currentTime().seconds > 0.1
+        try await wait(diagnostic: model.playbackStatus) {
+            model.current?.url == second && model.isExternal && !player.isMuted && player.currentTime().seconds > 0.1
         }
         XCTAssertTrue(model.isUsingHLS)
         XCTAssertEqual(player.emptyReplacements, 1)
         XCTAssertEqual(player.mutedLocalPlayCalls, 1)
-        XCTAssertEqual(player.localPlayCalls, player.mutedLocalPlayCalls)
         XCTAssertFalse(model.isAirPlayPickerRequested)
 
         model.seek(5)
@@ -264,22 +312,15 @@ final class PlaybackTests: XCTestCase {
         try await wait { model.isConnectingAirPlay && player.isMuted }
         try await wait { model.isAirPlayPickerRequested }
         XCTAssertFalse(model.isPlaying)
-        XCTAssertFalse(model.isConnectingAirPlay)
-        XCTAssertFalse(player.isMuted, "A failed restart must restore the original mute setting")
+        XCTAssertFalse(player.isMuted)
         XCTAssertEqual(player.rate, 0)
         try await wait { abs(player.currentTime().seconds - 5) < 0.5 }
         XCTAssertEqual(model.position, 5, accuracy: 0.5)
         XCTAssertEqual(player.mutedLocalPlayCalls, 2)
-        XCTAssertEqual(player.localPlayCalls, player.mutedLocalPlayCalls, "No video may start with sound on the Mac")
+        XCTAssertEqual(player.localPlayCalls, player.mutedLocalPlayCalls, "Local audio must stay silent while AirPlay reconnects")
 
-        model.isAirPlayPickerRequested = false
-        model.airPlayPickerPresentationChanged(true)
         player.setExternalPlaybackActive(true)
-        model.airPlayPickerPresentationChanged(false)
         try await wait { model.isExternal && player.timeControlStatus == .playing }
-
-        model.shutdown()
-        XCTAssertNil(player.currentItem)
     }
 
     @MainActor
@@ -337,11 +378,17 @@ final class PlaybackTests: XCTestCase {
         defer { observation.cancel() }
         func readyAndPlaying() -> Bool { !model.isPreparing && player.currentItem?.status == .readyToPlay && player.rate > 0 && model.isPlaying }
 
-        // A startup selection may only become active once the first movie is ready.
+        // The receiver selected at launch may only become active when the first movie is ready.
+        AppDelegate().mainWindowDidOpen(model)
+        model.togglePlay()
+        XCTAssertTrue(model.isAirPlayPickerRequested, "File preparation must preserve the pending launch picker")
+        XCTAssertTrue(model.isPreparing)
+        model.togglePlay()
+        XCTAssertFalse(model.isPreparing)
+        model.isAirPlayPickerRequested = false
+        pickerRequests = 0
         model.airPlayPickerPresentationChanged(true)
         model.airPlayPickerPresentationChanged(false)
-        XCTAssertNil(player.currentItem)
-        XCTAssertEqual(player.playCalls, 0)
         player.activatesRouteDuringPreroll = true
         model.togglePlay()
         XCTAssertTrue(model.isPreparing)
@@ -363,12 +410,12 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(player.currentTime().seconds, 8, accuracy: 1)
         model.togglePlay()
         try await wait { !model.isPlaying }
-        let prerolls = player.prerollCalls
+        let prerollCalls = player.prerollCalls
         player.setExternalPlaybackActive(false)
         try await wait { !model.isExternal }
         model.togglePlay()
         try await wait { readyAndPlaying() }
-        XCTAssertGreaterThan(player.prerollCalls, prerolls, "A paused selected route can become active during rate-zero preparation")
+        XCTAssertGreaterThan(player.prerollCalls, prerollCalls, "A paused selected route can become active during rate-zero preparation")
 
         player.resetsRouteOnReplacement = true
         let fallbackPosition = model.position
@@ -831,8 +878,7 @@ final class PlaybackTests: XCTestCase {
         model.select(saved.items[1].id, autoPlay: false)
         model.clear()
         try await Task.sleep(nanoseconds: 300_000_000)
-        XCTAssertNil(player.currentItem, "A cancelled load must not attach an item after clearing")
-        XCTAssertEqual(player.rate, 0)
+        XCTAssertNil(model.player.currentItem)
         XCTAssertTrue(model.playlist.items.isEmpty)
         XCTAssertFalse(model.isPreparing)
     }

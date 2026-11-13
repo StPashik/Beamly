@@ -6,6 +6,30 @@ import XCTest
 @testable import Beamly
 
 final class PlaybackExtrasTests: XCTestCase {
+    func testPlaylistStoreKeepsTheOriginalBytesWhenTheQueueIsDamaged() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-queue-test-\(UUID())", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("playlist.json")
+        let store = PlaylistStore(url: url)
+        let original = Data("{broken queue".utf8)
+        try original.write(to: url)
+
+        XCTAssertThrowsError(try store.load())
+        let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+        let backup = try XCTUnwrap(files.first)
+        XCTAssertEqual(files.count, 1)
+        XCTAssertTrue(backup.lastPathComponent.hasPrefix("playlist.unreadable-"))
+        XCTAssertEqual(try Data(contentsOf: backup), original)
+        XCTAssertNil(try store.load())
+
+        var playlist = Playlist()
+        playlist.append([folder.appendingPathComponent("movie.mp4")])
+        try store.save(playlist)
+        XCTAssertEqual(try store.load(), playlist)
+        XCTAssertEqual(try Data(contentsOf: backup), original)
+    }
+
     @MainActor
     func testHistoryMigrationAudioCorrectionsRemovalAndResume() async throws {
         let tools = mediaTestTools()

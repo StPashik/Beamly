@@ -1,17 +1,5 @@
 import Foundation
-
-struct IndexedHLSSegment {
-    let name: String
-    let start: Double
-    let end: Double
-
-    var duration: Double { end - start }
-}
-
-struct IndexedHLSAudio {
-    let track: MediaTrack
-    let segments: [IndexedHLSSegment]
-}
+import AVFoundation
 
 /// Produces requested fragments independently of the sequential remux, on the same media clock.
 @MainActor
@@ -41,8 +29,7 @@ final class IndexedHLSRanges {
     private var cancelled = false
 
     init(tools: FFmpegTools, ffmpeg: URL, input: URL, directory: URL, generated: URL, isHEVC: Bool, audioTrack: Int?,
-         firstPTS: Double, firstAudioPTS: Double, keyframes: [Double], video: [IndexedHLSSegment], previews: [IndexedHLSSegment],
-         audio: [IndexedHLSAudio]) {
+         firstPTS: Double, firstAudioPTS: Double, keyframes: [Double], plan: IndexedHLSPlan) {
         self.tools = tools
         self.ffmpeg = ffmpeg
         self.input = input
@@ -52,22 +39,26 @@ final class IndexedHLSRanges {
         self.audioTrack = audioTrack
         self.firstPTS = firstPTS
         self.firstAudioPTS = firstAudioPTS
-        self.audio = audio
+        self.audio = plan.audio
         self.keyframes = keyframes
-        self.video = video
-        let entries = video.enumerated().map { ($1.name, Request(segment: $1, index: $0, isPreview: false)) }
-            + previews.enumerated().map { ($1.name, Request(segment: $1, index: $0, isPreview: true)) }
-        requests = Dictionary(uniqueKeysWithValues: entries + audio.flatMap { rendition in
+        self.video = plan.video
+        let entries = plan.video.enumerated().map { ($1.name, Request(segment: $1, index: $0, isPreview: false)) }
+            + plan.previews.enumerated().map { ($1.name, Request(segment: $1, index: $0, isPreview: true)) }
+        requests = Dictionary(uniqueKeysWithValues: entries + plan.audio.flatMap { rendition in
             rendition.segments.enumerated().map { ($1.name, Request(segment: $1, index: $0, audioTrack: rendition.track.id)) }
         })
     }
 
     func prepare(at position: Double) async throws {
-        for segments in [video] + audio.prefix(1).map(\.segments) {
-            let index = segments.lastIndex { $0.start <= position } ?? 0
-            for segment in segments[index..<min(index + 2, segments.count)] {
-                if !available(segment.name), let request = requests[segment.name] { try await produce(request) }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for segments in [video] + audio.prefix(1).map(\.segments) {
+                let index = segments.lastIndex { $0.start <= position } ?? 0
+                let needed = segments[index..<min(index + 2, segments.count)].compactMap { requests[$0.name] }
+                group.addTask { @MainActor in
+                    for request in needed { try await self.produce(request) }
+                }
             }
+            try await group.waitForAll()
         }
     }
 
@@ -151,6 +142,7 @@ final class IndexedHLSRanges {
                 arguments += ["-map", "0:\(audioTrack)", "-bsf:a", trim + ",setts=ts=PTS-\(firstAudioPTS)/TB"]
             }
         }
+        // Audio's shared initialization already applies the movie's origin to the fragment decode time.
         let offset = request.isPreview || request.audioTrack != nil ? 0 : firstPTS
         arguments += ["-output_ts_offset", String(offset), "-avoid_negative_ts", "disabled", "-f", "mp4",
                       "-movflags", "+delay_moov+dash+frag_discont+skip_trailer",
@@ -171,6 +163,49 @@ final class IndexedHLSRanges {
         catch {
             if !FileManager.default.fileExists(atPath: destination.path) { throw error }
         }
+    }
+
+    static func prepareSilentAudio(for rendition: IndexedHLSAudio, initialization: String, ffmpeg: URL, directory: URL) async throws {
+        guard let padding = rendition.padding else { return }
+        let original = try await ac3Format(in: directory.appendingPathComponent(initialization))
+        let work = directory.appendingPathComponent(".inputs")
+        let template = work.appendingPathComponent("silence-\(rendition.track.id).ac3")
+        defer { try? FileManager.default.removeItem(at: template) }
+        _ = try await ProcessRunner().run(executable: ffmpeg, arguments: [
+            "-v", "error", "-nostdin", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+            "-t", "6", "-c:a", "ac3", "-b:a", String(padding.bitrate), "-f", "ac3", template.path
+        ])
+        let bytes = try Data(contentsOf: template)
+        let frameSize = padding.bitrate / 250
+        for (index, segment) in padding.segments.enumerated() {
+            try Task.checkCancellation()
+            let count = Int((segment.duration / 0.032).rounded()) * frameSize
+            guard count > 0, count <= bytes.count else { throw CocoaError(.fileReadCorruptFile) }
+            let audio = work.appendingPathComponent("silence-\(segment.name).ac3")
+            let movie = audio.appendingPathExtension("mp4")
+            defer { try? FileManager.default.removeItem(at: audio); try? FileManager.default.removeItem(at: movie) }
+            try bytes.prefix(count).write(to: audio)
+            _ = try await ProcessRunner().run(executable: ffmpeg, arguments: [
+                "-v", "error", "-nostdin", "-f", "ac3", "-i", audio.path, "-c:a", "copy",
+                "-output_ts_offset", String(segment.start), "-avoid_negative_ts", "disabled", "-f", "mp4",
+                "-movflags", "+delay_moov+dash+frag_discont+skip_trailer", "-use_editlist", "0",
+                "-fragment_index", String(rendition.segments.count + index + 1), movie.path
+            ])
+            if index == 0, try await ac3Format(in: movie) != original { throw CocoaError(.fileReadCorruptFile) }
+            try copyFragment(from: movie, to: directory.appendingPathComponent(segment.name))
+        }
+    }
+
+    private nonisolated static func ac3Format(in url: URL) async throws -> Data {
+        let tracks = try await AVURLAsset(url: url).loadTracks(withMediaType: .audio)
+        guard let track = tracks.first, let format = try await track.load(.formatDescriptions).first else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        var size = 0
+        guard let cookie = CMAudioFormatDescriptionGetMagicCookie(format, sizeOut: &size), size > 0 else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return Data(bytes: cookie, count: size)
     }
 
     private nonisolated static func copyFragment(from source: URL, to destination: URL) throws {

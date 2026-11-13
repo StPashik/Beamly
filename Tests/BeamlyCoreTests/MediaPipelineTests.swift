@@ -259,7 +259,8 @@ final class MediaPipelineTests: XCTestCase {
     func testHLSPreservesExplicitAudioAndSubtitleTimingAfterSeek() {
         let url = URL(fileURLWithPath: "/tmp/a'quote:comma,file.mkv")
         let info = MediaInfo(duration: 100, width: 1920, height: 1080, videoCodec: "h264", audioTracks: [MediaTrack(id: 3, codec: "aac")])
-        let arguments = HLSJob.arguments(input: url, info: info, audioTrack: 7, subtitleRendering: .text("subtitles=filename=.inputs/subtitle.srt"), startTime: 30, hardwareEncoding: false)
+        let arguments = FFmpegArguments.compatibilityHLS(input: url, info: info, audioTrack: 7,
+            subtitleRendering: .text("subtitles=filename=.inputs/subtitle.srt"), startTime: 30, hardwareEncoding: false)
         XCTAssertEqual(arguments[arguments.firstIndex(of: "-i")! + 1], url.path)
         XCTAssertTrue(arguments.contains("0:7"))
         let filter = arguments[arguments.firstIndex(of: "-vf")! + 1]
@@ -272,8 +273,8 @@ final class MediaPipelineTests: XCTestCase {
     @MainActor
     func testBitmapSubtitlesMapTheSelectedGlobalStreamThroughOverlay() {
         let info = MediaInfo(duration: 100, width: 1920, height: 1080, videoCodec: "h264", audioTracks: [MediaTrack(id: 3, codec: "aac")])
-        let arguments = HLSJob.arguments(input: URL(fileURLWithPath: "/tmp/movie.mkv"), info: info, audioTrack: nil,
-                                           subtitleRendering: .bitmap(8), startTime: 30, hardwareEncoding: false)
+        let arguments = FFmpegArguments.compatibilityHLS(input: URL(fileURLWithPath: "/tmp/movie.mkv"), info: info, audioTrack: nil,
+            subtitleRendering: .bitmap(8), startTime: 30, hardwareEncoding: false)
         let graph = arguments[arguments.firstIndex(of: "-filter_complex")! + 1]
         XCTAssertTrue(graph.contains("[0:V:0][0:8]overlay="))
         XCTAssertTrue(graph.contains("eof_action=pass:repeatlast=0"))
@@ -281,7 +282,7 @@ final class MediaPipelineTests: XCTestCase {
         XCTAssertFalse(arguments.contains("-vf"))
         XCTAssertFalse(graph.contains("setpts="))
         for delay in [-1.5, 1.5] {
-            let shifted = HLSJob.arguments(input: URL(fileURLWithPath: "/tmp/movie.mkv"), info: info, audioTrack: nil,
+            let shifted = FFmpegArguments.compatibilityHLS(input: URL(fileURLWithPath: "/tmp/movie.mkv"), info: info, audioTrack: nil,
                 subtitleRendering: .bitmap(8), startTime: 30, hardwareEncoding: false, subtitleDelay: delay)
             let graph = shifted[shifted.firstIndex(of: "-filter_complex")! + 1]
             XCTAssertTrue(graph.contains("[0:8]setpts=PTS+(\(delay))/TB[caption];[0:V:0][caption]overlay="))

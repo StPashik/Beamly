@@ -24,6 +24,13 @@ final class WindowAppearanceTests: XCTestCase {
         model.isAirPlayPickerRequested = false
         delegate.mainWindowDidOpen(model)
         XCTAssertFalse(model.isAirPlayPickerRequested, "Reopening the main window must leave the picker closed")
+
+        let routedPlayer = AirPlayTestPlayer()
+        routedPlayer.setExternalPlaybackActive(true)
+        let routedModel = AppModel(stateURL: folder.appendingPathComponent("routed-queue.json"), player: routedPlayer)
+        defer { routedModel.shutdown() }
+        AppDelegate().mainWindowDidOpen(routedModel)
+        XCTAssertFalse(routedModel.isAirPlayPickerRequested, "An active receiver makes a launch picker unnecessary")
     }
 
     @MainActor

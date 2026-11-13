@@ -21,6 +21,7 @@ struct BeamlyApp: App {
             ContentView(model: model, onWindowReady: { delegate.mainWindowDidOpen(model) })
                 .environment(\.locale, Locale(identifier: language.rawValue))
                 .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
+                .onAppear { delegate.attach(model) }
         }
         .defaultSize(width: 674, height: 390)
         .windowResizability(.contentSize)
