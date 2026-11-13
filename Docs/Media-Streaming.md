@@ -60,7 +60,9 @@ During playback, Beamly observes both AVPlayer's `timeControlStatus` and `reason
 
 During an item replacement, the retained AVPlayer keeps its paused current item and the old stream available until the new item is ready and its source position has been restored. This avoids clearing the selected AirPlay route between audio/subtitle changes, seeks, and queue transitions. Superseded preparation is cancelled; Stop and shutdown also revoke the retained stream.
 
-When no receiver is known, a manual Play request opens the native AirPlay picker while the movie is preparing. Beamly can prime the ready player at rate zero for up to three seconds after a possible selection or when resuming a previously confirmed route. After the picker closes without an active receiver, pressing Play again reopens it immediately and reuses any prepared stream. `AVPlayer.isExternalPlaybackActive` must confirm the external route before Beamly calls `play()`. Genuine disconnection during playback pauses and clears play intent. A temporary route transition during preparation retains that intent.
+When no receiver is known, a manual Play request opens the native AirPlay picker while the movie is preparing. Beamly can prime the ready player at rate zero for up to three seconds after a possible selection or when resuming a previously confirmed route. After the picker closes without an active receiver, pressing Play again reopens it immediately and reuses any prepared stream. Genuine disconnection during playback pauses and clears play intent. A temporary route transition during preparation retains that intent.
+
+Clear closes the Apple TV player and revokes the old stream. After clearing an active AirPlay session, Beamly can start the next item muted for up to three seconds so AVPlayer can reactivate the selected receiver. Audio resumes when AVPlayer reports active external playback. If the receiver is unavailable, Beamly pauses, restores the starting position, and opens the picker.
 
 ## Chapters and seek previews
 
