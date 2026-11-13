@@ -53,9 +53,10 @@ final class AppModel: ObservableObject {
     private var job: HLSJob?
     private var preparation: Task<Void, Never>?
     private var routePreparation: Task<Void, Never>?
+    private var muteBeforeRouteRestart: Bool?
     private var shouldShowAirPlayPicker = false
     private var isAirPlayPickerPresented = false
-    private enum AirPlayRouteHint { case none, pickerSelection, confirmed }
+    private enum AirPlayRouteHint { case none, pickerSelection, confirmed, stopped }
     private var airPlayRouteHint = AirPlayRouteHint.none
     private var previewTask: Task<Void, Never>?
     private var seekPreviewTask: Task<Void, Never>?
@@ -102,8 +103,8 @@ final class AppModel: ObservableObject {
         player.allowsExternalPlayback = true
         routeDetector.isRouteDetectionEnabled = true
         observations = [
-            player.observe(\.isExternalPlaybackActive, options: [.initial, .new]) { [weak self] player, _ in
-                if !player.isExternalPlaybackActive, player.timeControlStatus != .paused { player.pause() }
+            player.observe(\.isExternalPlaybackActive, options: [.initial, .old, .new]) { [weak self] player, change in
+                if change.oldValue == true, !player.isExternalPlaybackActive, player.timeControlStatus != .paused { player.pause() }
                 Task { @MainActor in
                     guard let self else { return }
                     let wasExternal = self.isExternal
@@ -119,10 +120,11 @@ final class AppModel: ObservableObject {
                 }
             },
             player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
-                if !player.isExternalPlaybackActive, player.timeControlStatus != .paused { player.pause() }
+                if !player.isExternalPlaybackActive, !player.isMuted, player.timeControlStatus != .paused { player.pause() }
                 Task { @MainActor in
                     guard let self else { return }
-                    if (self.current == nil || self.isPreparing), player.timeControlStatus != .paused { player.pause() }
+                    if (self.current == nil || self.isPreparing || (!player.isExternalPlaybackActive && self.muteBeforeRouteRestart == nil)),
+                       player.timeControlStatus != .paused { player.pause() }
                     self.refreshPlaybackState()
                 }
             },
@@ -135,7 +137,9 @@ final class AppModel: ObservableObject {
         ]
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor in
-                guard let self, self.current != nil, !self.isPreparing, self.player.currentItem != nil, time.seconds.isFinite else { return }
+                guard let self, self.current != nil, !self.isPreparing, self.muteBeforeRouteRestart == nil,
+                      self.player.currentItem != nil, time.seconds.isFinite else { return }
+                guard self.player.isExternalPlaybackActive || self.player.rate == 0 else { return }
                 if self.isExternal { self.refreshTrackChoices() }
                 self.position = min(self.duration, max(0, self.sourceOffset + time.seconds))
                 self.playlist.remember(position: self.position, duration: self.duration)
@@ -197,7 +201,9 @@ final class AppModel: ObservableObject {
     func clearHistory() { lastHistoryItem = current; playlist.history = []; save() }
     var networkAddress: String { server.host }
     // Leave Play available while a dismissed picker has yet to yield a confirmed receiver.
-    var isPlaying: Bool { playbackControlStatus != .paused || (isConnectingAirPlay && airPlayRouteHint == .confirmed) }
+    var isPlaying: Bool {
+        playbackControlStatus != .paused || (isConnectingAirPlay && (airPlayRouteHint == .confirmed || airPlayRouteHint == .stopped))
+    }
     var isBuffering: Bool {
         !isPreparing && isExternal && player.currentItem != nil &&
             playbackControlStatus == .waitingToPlayAtSpecifiedRate && waitingReason == .toMinimizeStalls
@@ -344,23 +350,28 @@ final class AppModel: ObservableObject {
         guard !isPreparing, player.status == .readyToPlay, player.currentItem?.status == .readyToPlay else { return }
         guard player.isExternalPlaybackActive else {
             guard airPlayRouteHint != .none, !isAirPlayPickerPresented, routePreparation == nil else { return }
-            // Preroll primes an already selected route at rate zero; discovery never authorizes local playback.
             isConnectingAirPlay = true
             let generation = loadID
             routePreparation = Task { [weak self] in
                 do { try await Task.sleep(for: .seconds(3)) }
                 catch { return }
                 guard let self, self.loadID == generation, self.playRequested else { return }
-                self.routePreparation = nil
-                self.player.cancelPendingPrerolls()
-                self.isConnectingAirPlay = false
                 if self.player.isExternalPlaybackActive { self.playIfConnected() }
                 else {
+                    self.cancelRoutePreparation()
                     self.airPlayRouteHint = .none
                     self.requestAirPlayPicker()
                 }
             }
-            player.preroll(atRate: 1, completionHandler: nil)
+            if airPlayRouteHint == .stopped {
+                // After removing an item, a muted start lets AVPlayer reactivate the last route.
+                shouldShowAirPlayPicker = true
+                muteBeforeRouteRestart = player.isMuted
+                player.isMuted = true
+                player.play()
+            } else {
+                player.preroll(atRate: 1, completionHandler: nil)
+            }
             return
         }
         cancelRoutePreparation()
@@ -375,6 +386,15 @@ final class AppModel: ObservableObject {
         routePreparation?.cancel()
         routePreparation = nil
         player.cancelPendingPrerolls()
+        if let muteBeforeRouteRestart {
+            if !player.isExternalPlaybackActive {
+                player.pause()
+                let target = CMTime(seconds: max(0, position - sourceOffset), preferredTimescale: 600)
+                player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+            }
+            self.muteBeforeRouteRestart = nil
+            player.isMuted = muteBeforeRouteRestart
+        }
         isConnectingAirPlay = false
     }
 
@@ -389,7 +409,7 @@ final class AppModel: ObservableObject {
     }
 
     private func refreshPlaybackState() {
-        playbackControlStatus = player.timeControlStatus
+        playbackControlStatus = muteBeforeRouteRestart == nil ? player.timeControlStatus : .paused
         waitingReason = player.reasonForWaitingToPlay
         updateActivity()
         updateNowPlaying()
@@ -570,8 +590,10 @@ final class AppModel: ObservableObject {
     func clear() {
         setSleepTimer(nil)
         remember()
-        // Keep the paused item and its stream alive so the next movie can reuse the AirPlay route.
-        cancelPlayback(keepingItem: player.isExternalPlaybackActive || airPlayRouteHint == .confirmed)
+        if player.isExternalPlaybackActive || (player.currentItem != nil && airPlayRouteHint == .confirmed) {
+            airPlayRouteHint = .stopped
+        }
+        cancelPlayback()
         playlist.items.removeAll()
         playlist.currentID = nil
         subtitleID = nil
@@ -972,7 +994,7 @@ final class AppModel: ObservableObject {
     }
 
     private func finished(generation: UUID) {
-        guard loadID == generation else { return }
+        guard loadID == generation, muteBeforeRouteRestart == nil else { return }
         playlist.remember(position: duration, duration: duration)
         rememberHistory()
         playlist.remember(position: 0, duration: duration)

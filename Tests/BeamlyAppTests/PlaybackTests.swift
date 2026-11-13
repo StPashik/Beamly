@@ -2,6 +2,7 @@ import AVKit
 import XCTest
 import BeamlyCore
 import Combine
+import MediaPlayer
 import SwiftUI
 @testable import Beamly
 
@@ -179,7 +180,7 @@ final class PlaybackTests: XCTestCase {
     }
 
     @MainActor
-    func testClearingAnActiveAirPlayQueueStopsTheMovieAndKeepsTheRouteForNewFiles() async throws {
+    func testClearingAnActiveAirPlayQueueStopsTheMovieAndRestartsTheSelectedRoute() async throws {
         let tools = mediaTestTools()
         let ffmpeg = try XCTUnwrap(tools.ffmpegURL)
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-clear-route-\(UUID())")
@@ -194,7 +195,7 @@ final class PlaybackTests: XCTestCase {
         let generator = Process()
         generator.executableURL = ffmpeg
         generator.arguments = ["-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=c=blue:size=160x90:rate=24:duration=20",
-            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=20",
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000:duration=20",
             "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-g", "24", "-c:a", "aac", "-movflags", "+faststart", first.path,
             "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-g", "24", "-c:a", "ac3", second.path]
         generator.standardInput = FileHandle.nullDevice
@@ -203,51 +204,71 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(generator.terminationStatus, 0)
 
         let player = AirPlayTestPlayer()
-        player.isMuted = true
         player.losesRouteWhenEmptied = true
         player.setExternalPlaybackActive(true)
-        let model = AppModel(stateURL: folder.appendingPathComponent("queue.json"), defaults: defaults, player: player)
+        let state = folder.appendingPathComponent("queue.json")
+        let model = AppModel(stateURL: state, defaults: defaults, player: player)
         defer { model.shutdown() }
         model.add([first])
         try await wait(diagnostic: model.errorMessage ?? model.playbackStatus) {
             model.isPlaying && player.currentTime().seconds > 0.1
         }
         let oldItem = try XCTUnwrap(player.currentItem)
+        let oldURL = try XCTUnwrap((oldItem.asset as? AVURLAsset)?.url)
         XCTAssertFalse(model.isUsingHLS)
 
         model.clear()
         XCTAssertTrue(model.playlist.items.isEmpty)
+        XCTAssertNil(player.currentItem, "Apple TV must leave the movie player when clearing")
+        XCTAssertNil(MPNowPlayingInfoCenter.default().nowPlayingInfo)
         XCTAssertFalse(model.isPlaying)
         XCTAssertEqual(player.rate, 0)
         XCTAssertEqual(model.position, 0)
-        let retainedItem = try XCTUnwrap(player.currentItem, "Clearing must keep a paused item for the selected route")
-        XCTAssertTrue(retainedItem === oldItem)
-        XCTAssertTrue(player.isExternalPlaybackActive)
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let oldResponse = try await session.data(from: oldURL).1
+        XCTAssertEqual((oldResponse as? HTTPURLResponse)?.statusCode, 404, "The cleared movie must no longer be served")
         player.simulateTimeControl(.playing)
         try await wait { player.timeControlStatus == .paused }
         XCTAssertFalse(model.isPlaying, "The receiver must not resume a cleared movie")
         player.simulateTimeControl(nil)
 
-        // AVPlayer can report an idle selected route as inactive until the next item's preroll.
-        player.setExternalPlaybackActive(false)
-        try await wait { !model.isExternal }
-        XCTAssertTrue(player.currentItem === oldItem)
-        player.resetsRouteOnReplacement = true
-        player.activatesRouteDuringPreroll = true
+        player.activatesRouteDuringMutedStart = true
         model.add([second])
         try await wait(diagnostic: model.errorMessage ?? model.playbackStatus) {
-            model.current?.url == second && player.currentItem !== oldItem && model.isPlaying
-                && player.currentTime().seconds > 0.1
+            model.current?.url == second && model.isExternal && player.timeControlStatus == .playing
+                && !player.isMuted && player.currentTime().seconds > 0.1
         }
-        XCTAssertGreaterThan(player.prerollCalls, 0)
         XCTAssertTrue(model.isUsingHLS)
-        XCTAssertEqual(player.emptyReplacements, 0)
-        XCTAssertEqual(player.localPlayCalls, 0)
+        XCTAssertEqual(player.emptyReplacements, 1)
+        XCTAssertEqual(player.mutedLocalPlayCalls, 1)
+        XCTAssertEqual(player.localPlayCalls, player.mutedLocalPlayCalls)
         XCTAssertFalse(model.isAirPlayPickerRequested)
 
+        model.seek(5)
+        try await wait { abs(player.currentTime().seconds - 5) < 0.5 }
         model.clear()
+        player.activatesRouteDuringMutedStart = false
+        model.add([second])
+        try await wait { model.isConnectingAirPlay && player.isMuted }
+        try await wait { model.isAirPlayPickerRequested }
+        XCTAssertFalse(model.isPlaying)
+        XCTAssertFalse(model.isConnectingAirPlay)
+        XCTAssertFalse(player.isMuted, "A failed restart must restore the original mute setting")
+        XCTAssertEqual(player.rate, 0)
+        try await wait { abs(player.currentTime().seconds - 5) < 0.5 }
+        XCTAssertEqual(model.position, 5, accuracy: 0.5)
+        XCTAssertEqual(player.mutedLocalPlayCalls, 2)
+        XCTAssertEqual(player.localPlayCalls, player.mutedLocalPlayCalls, "No video may start with sound on the Mac")
+
+        model.isAirPlayPickerRequested = false
+        model.airPlayPickerPresentationChanged(true)
+        player.setExternalPlaybackActive(true)
+        model.airPlayPickerPresentationChanged(false)
+        try await wait { model.isExternal && player.timeControlStatus == .playing }
+
         model.shutdown()
-        XCTAssertNil(player.currentItem, "Shutdown must dispose of the paused item held for AirPlay")
+        XCTAssertNil(player.currentItem)
     }
 
     @MainActor
@@ -790,11 +811,10 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(model.current?.position ?? -1, 2, accuracy: 0.6)
         XCTAssertEqual(model.player.currentTime().seconds, 2, accuracy: 0.6)
         XCTAssertTrue(FileManager.default.fileExists(atPath: first.path))
-        let pausedItem = try XCTUnwrap(player.currentItem)
         model.select(saved.items[1].id, autoPlay: false)
         model.clear()
         try await Task.sleep(nanoseconds: 300_000_000)
-        XCTAssertTrue(player.currentItem === pausedItem, "A cancelled load must not replace the paused AirPlay item")
+        XCTAssertNil(player.currentItem, "A cancelled load must not attach an item after clearing")
         XCTAssertEqual(player.rate, 0)
         XCTAssertTrue(model.playlist.items.isEmpty)
         XCTAssertFalse(model.isPreparing)
@@ -977,11 +997,13 @@ final class AirPlayTestPlayer: AVPlayer, @unchecked Sendable {
     private var simulatedReason: AVPlayer.WaitingReason?
     private(set) var playCalls = 0
     private(set) var localPlayCalls = 0
+    private(set) var mutedLocalPlayCalls = 0
     private(set) var emptyReplacements = 0
     private(set) var prerollCalls = 0
     var losesRouteWhenEmptied = false
     var resetsRouteOnReplacement = false
     var activatesRouteDuringPreroll = false
+    var activatesRouteDuringMutedStart = false
     private(set) var lastConfiguredItem: AVPlayerItem?
 
     override func replaceCurrentItem(with item: AVPlayerItem?) {
@@ -1052,7 +1074,13 @@ final class AirPlayTestPlayer: AVPlayer, @unchecked Sendable {
 
     override func play() {
         playCalls += 1
-        if !isExternalPlaybackActive { localPlayCalls += 1 }
+        if !isExternalPlaybackActive {
+            localPlayCalls += 1
+            if isMuted {
+                mutedLocalPlayCalls += 1
+                if activatesRouteDuringMutedStart { setExternalPlaybackActive(true) }
+            }
+        }
         super.play()
     }
 }
