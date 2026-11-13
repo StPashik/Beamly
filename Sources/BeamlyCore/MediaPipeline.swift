@@ -94,9 +94,7 @@ public final class HLSJob {
             let cache = try await createBuffer("MP4", generation: currentGeneration)
             let file = cache.appendingPathComponent("movie.mp4")
             progress(.originalStream)
-            // A front index lets AVPlayer seek anywhere through the existing HTTP range server.
-            let arguments = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", input.path,
-                             "-map", "0:V:0", "-map", "0:\(audio.id)", "-c", "copy", "-movflags", "+faststart", file.lastPathComponent]
+            let arguments = FFmpegArguments.nativeMP4(input: input, audioTrack: audio.id, output: file.lastPathComponent)
             try await mux(ffmpeg, arguments: arguments, directory: cache, generation: currentGeneration,
                           duration: info.duration, frameRate: info.frameRate, onFraction: onFraction)
             let (playable, duration) = try await AVURLAsset(url: file).load(.isPlayable, .duration)
@@ -176,12 +174,18 @@ public final class HLSJob {
                     try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: true)
                     sharedOutputs = SubtitlePreparation.extractionArguments(embeddedCaptions, in: inputs)
                 }
-                sharedOutputs += Self.iFrameArguments(duration: info.duration, discardBefore: keyTime)
+                sharedOutputs += FFmpegArguments.iFrameOutput(duration: info.duration, discardBefore: keyTime)
             }
             func package(systemAAC: Bool) async throws {
-                let arguments = isVideoCopied ? Self.copyArguments(input: input, info: info, audioTracks: audioTracks, keyTime: keyTime,
-                    audioDelay: audioDelay, copyDolby: copyDolby, systemAAC: systemAAC) : Self.arguments(input: input, info: info, audioTrack: audioTrack,
-                    subtitleRendering: rendering, startTime: startTime, hardwareEncoding: hardwareEncoding, subtitleDelay: subtitleDelay, audioDelay: audioDelay)
+                let arguments: [String]
+                if isVideoCopied {
+                    arguments = FFmpegArguments.copiedHLS(input: input, info: info, audioTracks: audioTracks,
+                        keyTime: keyTime, audioDelay: audioDelay, copyDolby: copyDolby, systemAAC: systemAAC)
+                } else {
+                    arguments = FFmpegArguments.compatibilityHLS(input: input, info: info, audioTrack: audioTrack,
+                        subtitleRendering: rendering, startTime: startTime, hardwareEncoding: hardwareEncoding,
+                        subtitleDelay: subtitleDelay, audioDelay: audioDelay)
+                }
                 // Publish only after EOF so AirPlay sees the entire seekable timeline on its first request.
                 do {
                     try await mux(ffmpeg, arguments: arguments + sharedOutputs, directory: cache, generation: currentGeneration,
@@ -358,29 +362,13 @@ public final class HLSJob {
         }
         let extraction = captionExtraction
 
-        var args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-copyts", "-i", input.path, "-map", "0:V:0"]
-        if let audio { args += ["-map", "0:\(audio.id)"] }
-        for rendition in audioRenditions { args += ["-map", "0:\(rendition.track.id)"] }
-        if isHEVC { args += ["-bsf:v", "hevc_mp4toannexb"] }
-        args += ["-c", "copy", "-tag:v", isHEVC ? "hvc1" : "avc1", "-sn", "-dn", "-avoid_negative_ts", "make_zero", "-f", "hls",
-                 "-hls_segment_type", "fmp4", "-hls_time", String(segmentLength), "-hls_list_size", "0",
-                 "-hls_playlist_type", "vod", "-hls_flags", "temp_file+independent_segments",
-                 "-hls_fmp4_init_filename", audioRenditions.isEmpty ? "init_0.mp4" : "init_%v.mp4",
-                 "-hls_segment_filename", audioRenditions.isEmpty ? ".generated/segment_0_%06d.m4s" : ".generated/segment_%v_%06d.m4s"]
-        if audioRenditions.isEmpty {
-            args += [".rendered.m3u8"]
-        } else {
-            let variants = ["v:0"] + audioRenditions.indices.map { "a:\($0)" }
-            args += ["-var_stream_map", variants.joined(separator: " "), ".rendered_%v.m3u8"]
-        }
-        if !frames.isEmpty {
-            args += Self.iFrameArguments(duration: videoDuration, playlist: ".rendered-iframe.m3u8", segmentPattern: ".generated/iframe-%06d.m4s")
-        }
-
-        let packaging = Task { [weak self, args] in
+        let arguments = FFmpegArguments.indexedHLS(input: input, isHEVC: isHEVC, audioTrack: audio?.id,
+                                                   audioRenditionIDs: audioRenditions.map(\.track.id), segmentLength: segmentLength,
+                                                   previewDuration: frames.isEmpty ? nil : videoDuration)
+        let packaging = Task { [weak self, arguments] in
             guard let self else { throw CancellationError() }
             do {
-                try await self.mux(ffmpeg, arguments: args, directory: cache, generation: generation,
+                try await self.mux(ffmpeg, arguments: arguments, directory: cache, generation: generation,
                                    duration: videoDuration, frameRate: info.frameRate, onFraction: nil)
             } catch {
                 if self.generation == generation { self.runner?.cancel() }
@@ -619,54 +607,6 @@ public final class HLSJob {
         }
     }
 
-    private static func copyArguments(input: URL, info: MediaInfo, audioTracks: [MediaTrack], keyTime: Double,
-                                      audioDelay: Double, copyDolby: Bool, systemAAC: Bool) -> [String] {
-        // Read preroll with original timestamps, then discard packets before the selected random-access picture.
-        var args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-copyts", "-ss", String(max(0, keyTime - 2)),
-                    "-seek_timestamp", "1", "-i", input.path]
-        // A second input shifts only audio, retaining copied video, HDR metadata, and surround packets.
-        if !audioTracks.isEmpty, audioDelay != 0 {
-            args += ["-ss", String(max(0, keyTime - audioDelay - 2)), "-seek_timestamp", "1", "-itsoffset", String(audioDelay), "-i", input.path]
-        }
-        let audioInput = audioDelay == 0 ? 0 : 1
-        // Annex B lets the MP4 muxer build hvcC from in-band VPS/SPS/PPS when the MKV header lacks them.
-        let annexB = info.videoCodec == "hevc" ? "hevc_mp4toannexb," : ""
-        args += ["-map", "0:V:0", "-c:v", "copy", "-bsf:v", annexB + "noise=amount=0:drop=lt(pts*tb\\,\(keyTime - 0.000001))"]
-        // hvc1 keeps HEVC parameter sets in the initialization segment, as Apple requires.
-        args += ["-tag:v", info.videoCodec == "hevc" ? "hvc1" : "avc1"]
-        var variants = "v:0"
-        if let audio = audioTracks.first {
-            for track in audioTracks { args += ["-map", "\(audioInput):\(track.id)"] }
-            if copyDolby || audio.isStereoAAC {
-                args += ["-c:a", "copy"]
-            } else {
-                args += systemAAC ? ["-c:a:0", "aac_at", "-aac_at_quality:a:0", "2"] : ["-c:a:0", "aac", "-aac_coder:a:0", "fast"]
-                args += ["-b:a:0", "192k", "-ac:a:0", "2", "-ar:a:0", "48000"]
-            }
-            for index in audioTracks.indices { variants += " a:\(index)" }
-            let end = audioDelay == 0 ? "" : "+gte(pts*tb\\,\(info.startTime + info.duration))"
-            args += ["-bsf:a", "noise=amount=0:drop=lt(pts*tb\\,\(keyTime - 0.1))\(end)"]
-        }
-        // FFmpeg leaves %v literal in the initialization filename when there is only one variant.
-        let initialization = audioTracks.isEmpty ? "init_0.mp4" : "init_%v.mp4"
-        args += ["-sn", "-dn", "-output_ts_offset", String(-keyTime), "-avoid_negative_ts", "make_zero", "-f", "hls", "-hls_segment_type", "fmp4",
-                 "-hls_time", "6", "-hls_list_size", "0", "-hls_playlist_type", "vod", "-hls_flags", "temp_file",
-                 "-hls_fmp4_init_filename", initialization, "-hls_segment_filename", "segment_%v_%06d.m4s",
-                 "-var_stream_map", variants, "stream_%v.m3u8"]
-        return args
-    }
-
-    private static func iFrameArguments(duration: Double, discardBefore: Double? = nil, playlist: String = "iframe.m3u8",
-                                        segmentPattern: String = "iframe-%06d.m4s") -> [String] {
-        let preroll = discardBefore.map { "+lt(pts*tb\\,\($0 - 0.000001))" } ?? ""
-        // Hold each keyframe until the next one. The last fragment covers the end of the timeline.
-        let filter = "noise=amount=0:drop=not(key)\(preroll),setts=ts=PTS-STARTPTS:duration=if(gt(NEXT_PTS\\,PTS)\\,NEXT_PTS-PTS\\,max(DURATION\\,\(duration)/TB-(PTS-STARTPTS)))"
-        return ["-map", "0:V:0", "-c:v", "copy", "-tag:v", "avc1", "-bsf:v", filter,
-                "-f", "hls", "-hls_segment_type", "fmp4", "-hls_time", "0.001", "-hls_list_size", "0",
-                "-hls_playlist_type", "vod", "-hls_flags", "iframes_only+independent_segments+temp_file",
-                "-hls_fmp4_init_filename", "iframe-init.mp4", "-hls_segment_filename", segmentPattern, playlist]
-    }
-
     private static func removeIFrames(in cache: URL) {
         let files = (try? FileManager.default.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil)) ?? []
         for file in files where file.lastPathComponent.hasPrefix("iframe") {
@@ -677,8 +617,7 @@ public final class HLSJob {
     private func prepareIFrames(from video: URL, duration: Double, ffmpeg: URL, generation currentGeneration: UUID) async throws -> HLSPlaylist.Bandwidth? {
         guard duration > 0 else { return nil }
         let cache = video.deletingLastPathComponent()
-        let arguments = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", video.lastPathComponent]
-            + Self.iFrameArguments(duration: duration)
+        let arguments = FFmpegArguments.previewHLS(input: video, duration: duration)
         do {
             try await mux(ffmpeg, arguments: arguments, directory: cache, generation: currentGeneration,
                           duration: duration, frameRate: 0, onFraction: nil)
@@ -730,59 +669,5 @@ public final class HLSJob {
                 try? FileManager.default.removeItem(at: cache)
             }
         }
-    }
-
-    static func arguments(input: URL, info: MediaInfo, audioTrack: Int?, subtitleRendering: SubtitleRendering?,
-                          startTime: Double, hardwareEncoding: Bool, subtitleDelay: Double = 0, audioDelay: Double = 0) -> [String] {
-        var arguments = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
-        var inputSeek = startTime
-        if case .bitmap = subtitleRendering { inputSeek = max(0, startTime - max(0, subtitleDelay)) }
-        if inputSeek > 0 { arguments += ["-ss", String(inputSeek)] }
-        arguments += ["-i", input.path]
-        let audio = audioDelay != 0 && (audioDelay >= info.duration || startTime >= info.duration + audioDelay) ? nil : audioTrack ?? info.defaultAudioTrack?.id
-        if audio != nil, audioDelay != 0 {
-            let audioSeek = inputSeek - audioDelay
-            if audioSeek > 0 { arguments += ["-ss", String(audioSeek)] }
-            if audioSeek < 0 { arguments += ["-itsoffset", String(-audioSeek)] }
-            arguments += ["-i", input.path]
-        }
-        let preroll = startTime - inputSeek
-        // Trim both media streams after rendering any bitmap cue carried across the seek point.
-        if preroll > 0 { arguments += ["-ss", String(preroll)] }
-        var filters = [String]()
-        if case .text(let subtitleFilter) = subtitleRendering {
-            // Sample captions on the shifted movie clock, then restore video/audio synchronization.
-            let clock = startTime - subtitleDelay
-            if clock != 0 { filters.append("setpts=PTS+(\(clock))/TB") }
-            filters.append(subtitleFilter)
-            if clock != 0 { filters.append("setpts=PTS-(\(clock))/TB") }
-        }
-        filters.append("scale=w='min(1920,iw)':h='min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2")
-        if info.isHDR {
-            filters.insert("zscale=t=linear:npl=100,format=gbrpf32le,tonemap=tonemap=mobius:desat=0,zscale=p=bt709:t=bt709:m=bt709:r=tv,format=yuv420p", at: 0)
-            arguments += ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
-        }
-        if case .bitmap(let index) = subtitleRendering {
-            let source = "[0:\(index)]"
-            let shift = subtitleDelay == 0 ? "" : "\(source)setpts=PTS+(\(subtitleDelay))/TB[caption];"
-            let caption = subtitleDelay == 0 ? source : "[caption]"
-            arguments += ["-filter_complex", "\(shift)[0:V:0]\(caption)overlay=eof_action=pass:repeatlast=0,\(filters.joined(separator: ","))[rendered]", "-map", "[rendered]"]
-        } else {
-            arguments += ["-map", "0:V:0", "-vf", filters.joined(separator: ",")]
-        }
-        if let audio { arguments += ["-map", "\(audioDelay == 0 ? 0 : 1):\(audio)"] }
-        if audioDelay != 0 { arguments += ["-t", String(max(0.01, info.duration - startTime))] }
-        arguments += ["-pix_fmt", "yuv420p", "-c:v", hardwareEncoding ? "h264_videotoolbox" : "libx264"]
-        if hardwareEncoding {
-            arguments += ["-b:v", "6000k", "-allow_sw", "1"]
-        } else {
-            arguments += ["-preset", "veryfast", "-crf", "20"]
-        }
-        // shortcut: event playlists retain the encoded movie until stop; use on-demand bounded segments for huge movies.
-        arguments += ["-flags", "+cgop", "-g", "60", "-force_key_frames", "expr:gte(t,n_forced*2)",
-                      "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000", "-sn", "-dn",
-                      "-f", "hls", "-hls_time", "2", "-hls_list_size", "0", "-hls_playlist_type", "event",
-                      "-hls_flags", "independent_segments+temp_file", "-hls_segment_filename", "segment%06d.ts", "stream.m3u8"]
-        return arguments
     }
 }
