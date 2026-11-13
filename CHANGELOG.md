@@ -1,3 +1,12 @@
+# Beamly 1.1.0
+
+- Open the AirPlay device picker when Beamly's main window first appears. Choose an Apple TV before adding a video.
+- Close the player on Apple TV when you clear the queue. The next video reuses the selected receiver if it is still available.
+- Start eligible MKV files quickly when a Dolby audio track starts slightly late or ends before the video. Beamly can pad supported short stereo AC-3 tracks with silence and keep the original Dolby audio.
+- Refactor playback preparation, HLS, queue storage, and the player controls.
+
+On Apple TV 4K, the startup picker and playback after clearing the queue passed. A nature clip in HDR10 MKV played without hanging. Some synthetic 4K HDR10 MKV samples stalled when starting through HLS. A matching HDR10 MP4 played with picture and sound. The TV's HDR output mode was not independently verified in the MP4 trial.
+
 # Beamly 1.0.13
 
 - Start eligible H.264 and HEVC MKV files from the beginning or the saved position while showing the full seekable timeline. Prepare missing video fragments and H.264 scrub previews on demand while the rest of the stream is generated. Use regular preparation for other files or if early playback fails.
