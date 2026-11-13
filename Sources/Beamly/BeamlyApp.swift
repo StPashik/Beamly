@@ -9,6 +9,7 @@ struct BeamlyApp: App {
     private let language: AppLanguage
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @AppStorage("appearance") private var appearance = "system"
+    @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
 
     init() {
         language = AppLanguage.configureAtLaunch()
@@ -65,13 +66,17 @@ struct BeamlyApp: App {
         .defaultSize(width: 674, height: 460)
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
-        MenuBarExtra("Beamly", systemImage: "play.rectangle") {
+        MenuBarExtra("Beamly", systemImage: "play.rectangle", isInserted: $showMenuBarIcon) {
             MenuBarRemote(model: model)
                 .environment(\.locale, Locale(identifier: language.rawValue))
                 .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
                 .onAppear { delegate.attach(model) }
         }.menuBarExtraStyle(.window)
-        Settings { SettingsView(updater: updater).environment(\.locale, Locale(identifier: language.rawValue)).preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil) }
+        Settings {
+            SettingsView(updater: updater, showMenuBarIcon: $showMenuBarIcon)
+                .environment(\.locale, Locale(identifier: language.rawValue))
+                .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
+        }
     }
 }
 
