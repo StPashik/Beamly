@@ -22,6 +22,8 @@ The app's audio menu chooses the source track by its global stream index. When a
 
 Beamly copies compatible AAC-LC and converts other formats to stereo AAC. When conversion is needed in original-quality HLS, FFmpeg tries AudioToolbox first and then its built-in AAC encoder if AudioToolbox fails. DTS/TrueHD/Atmos conversion or passthrough is not promised. Audio conversion is independent of video and preserves its resolution.
 
+The fast HLS path can fill a missing tail of up to two minutes on compatible 48 kHz stereo AC-3 tracks. The added fragments contain silence in the same format, and the source audio packets are copied unchanged. Tracks that cannot use this path fall back to regular preparation.
+
 Apple TV and Beamly can switch between the audio tracks published in the current HLS stream. Choosing a track that requires conversion in Beamly prepares a new stream at the current position. Source files are read in place.
 
 Beamly updates its audio and subtitle menus when AVPlayer reports a selection made on the receiver. This also applies to files played directly through AVPlayer.

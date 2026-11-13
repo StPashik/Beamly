@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 
 struct IndexedHLSSegment {
     let name: String
@@ -11,6 +12,14 @@ struct IndexedHLSSegment {
 struct IndexedHLSAudio {
     let track: MediaTrack
     let segments: [IndexedHLSSegment]
+    var padding: Padding?
+
+    struct Padding {
+        let bitrate: Int
+        let segments: [IndexedHLSSegment]
+    }
+
+    var playlistSegments: [IndexedHLSSegment] { segments + (padding?.segments ?? []) }
 }
 
 /// Produces requested fragments independently of the sequential remux, on the same media clock.
@@ -171,6 +180,49 @@ final class IndexedHLSRanges {
         catch {
             if !FileManager.default.fileExists(atPath: destination.path) { throw error }
         }
+    }
+
+    static func prepareSilentAudio(for rendition: IndexedHLSAudio, initialization: String, ffmpeg: URL, directory: URL) async throws {
+        guard let padding = rendition.padding else { return }
+        let original = try await ac3Format(in: directory.appendingPathComponent(initialization))
+        let work = directory.appendingPathComponent(".inputs")
+        let template = work.appendingPathComponent("silence-\(rendition.track.id).ac3")
+        defer { try? FileManager.default.removeItem(at: template) }
+        _ = try await ProcessRunner().run(executable: ffmpeg, arguments: [
+            "-v", "error", "-nostdin", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+            "-t", "6", "-c:a", "ac3", "-b:a", String(padding.bitrate), "-f", "ac3", template.path
+        ])
+        let bytes = try Data(contentsOf: template)
+        let frameSize = padding.bitrate / 250
+        for (index, segment) in padding.segments.enumerated() {
+            try Task.checkCancellation()
+            let count = Int((segment.duration / 0.032).rounded()) * frameSize
+            guard count > 0, count <= bytes.count else { throw CocoaError(.fileReadCorruptFile) }
+            let audio = work.appendingPathComponent("silence-\(segment.name).ac3")
+            let movie = audio.appendingPathExtension("mp4")
+            defer { try? FileManager.default.removeItem(at: audio); try? FileManager.default.removeItem(at: movie) }
+            try bytes.prefix(count).write(to: audio)
+            _ = try await ProcessRunner().run(executable: ffmpeg, arguments: [
+                "-v", "error", "-nostdin", "-f", "ac3", "-i", audio.path, "-c:a", "copy",
+                "-output_ts_offset", String(segment.start), "-avoid_negative_ts", "disabled", "-f", "mp4",
+                "-movflags", "+delay_moov+dash+frag_discont+skip_trailer", "-use_editlist", "0",
+                "-fragment_index", String(rendition.segments.count + index + 1), movie.path
+            ])
+            if index == 0, try await ac3Format(in: movie) != original { throw CocoaError(.fileReadCorruptFile) }
+            try copyFragment(from: movie, to: directory.appendingPathComponent(segment.name))
+        }
+    }
+
+    private nonisolated static func ac3Format(in url: URL) async throws -> Data {
+        let tracks = try await AVURLAsset(url: url).loadTracks(withMediaType: .audio)
+        guard let track = tracks.first, let format = try await track.load(.formatDescriptions).first else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        var size = 0
+        guard let cookie = CMAudioFormatDescriptionGetMagicCookie(format, sizeOut: &size), size > 0 else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return Data(bytes: cookie, count: size)
     }
 
     private nonisolated static func copyFragment(from source: URL, to destination: URL) throws {
