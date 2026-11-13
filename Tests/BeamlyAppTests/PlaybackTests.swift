@@ -12,12 +12,13 @@ final class PlaybackTests: XCTestCase {
     }
 
     @MainActor
-    func testIndexedHDR10HEVCResumesAndSeeksBeforeTheSequentialRemuxCompletes() async throws {
+    func testIndexedHEVCResumesAndSeeksBeforeTheSequentialRemuxCompletes() async throws {
         try await checkIndexedHLS(hevc: true)
+        if AVPlayer.eligibleForHDRPlayback { try await checkIndexedHLS(hevc: true, hdr: true) }
     }
 
     @MainActor
-    private func checkIndexedHLS(hevc: Bool) async throws {
+    private func checkIndexedHLS(hevc: Bool, hdr: Bool = false) async throws {
         let tools = mediaTestTools()
         let ffmpeg = try XCTUnwrap(tools.ffmpegURL)
         let ffprobe = try XCTUnwrap(tools.ffprobeURL)
@@ -31,8 +32,11 @@ final class PlaybackTests: XCTestCase {
         try ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=60000\ntitle=Movie\n".write(to: chapters, atomically: true, encoding: .utf8)
         let generator = Process()
         generator.executableURL = hevc ? try XCTUnwrap(FFmpegTools().ffmpegURL) : ffmpeg
+        let colors = hdr
+            ? "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,400"
+            : "colorprim=bt709:transfer=bt709:colormatrix=bt709"
         let video = hevc ? ["-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p10le",
-            "-x265-params", "pools=2:frame-threads=2:keyint=104:min-keyint=104:scenecut=0:open-gop=0:bframes=2:repeat-headers=1:log-level=error:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,400"]
+            "-x265-params", "pools=2:frame-threads=2:keyint=104:min-keyint=104:scenecut=0:open-gop=0:bframes=2:repeat-headers=1:log-level=error:\(colors)"]
             : ["-c:v", "libx264", "-g", "104", "-sc_threshold", "0", "-bf", "0"]
         generator.arguments = ["-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=c=blue:size=160x90:rate=10:duration=60",
             "-f", "lavfi", "-i", hevc ? "anullsrc=r=48000:cl=stereo:d=60" : "anullsrc=r=48000:cl=5.1:d=60",
@@ -104,7 +108,7 @@ final class PlaybackTests: XCTestCase {
         let cache = URL(fileURLWithPath: cachePath, isDirectory: true)
         if hevc {
             let master = try String(contentsOf: cache.appendingPathComponent("master.m3u8"), encoding: .utf8)
-            XCTAssertTrue(master.contains("VIDEO-RANGE=PQ"))
+            XCTAssertTrue(master.contains("VIDEO-RANGE=\(hdr ? "PQ" : "SDR")"))
             XCTAssertTrue(master.contains("hvc1.2."))
             XCTAssertTrue(master.contains("ac-3"))
         }
