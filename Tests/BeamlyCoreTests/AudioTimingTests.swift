@@ -16,11 +16,13 @@ final class AudioTimingTests: XCTestCase {
         try "1\n00:00:21,000 --> 00:00:23,000\nCredits\n".write(to: captions, atomically: true, encoding: .utf8)
         _ = try run(ffmpeg, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10:duration=24.1",
             "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=14.976",
-            "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=24.096", "-i", captions.path,
-            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s",
+            "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=23.072",
+            "-f", "lavfi", "-i", "sine=frequency=330:sample_rate=48000:duration=16.000", "-i", captions.path,
+            "-map", "0:v", "-map", "1:a", "-map", "3:a", "-map", "2:a", "-map", "4:s",
             "-c:v", "libx264", "-g", "10", "-bf", "0", "-sc_threshold", "0",
-            "-c:a:0", "ac3", "-ac:a:0", "2", "-b:a:0", "384k", "-c:a:1", "eac3", "-ac:a:1", "6",
-            "-af", "asetpts=PTS+256/SR/TB", "-c:s", "srt", input.path])
+            "-c:a:0", "ac3", "-ac:a:0", "2", "-b:a:0", "384k", "-c:a:1", "eac3", "-ac:a:1", "6", "-c:a:2", "eac3", "-ac:a:2", "6",
+            "-filter:a:0", "asetpts=PTS+256/SR/TB", "-filter:a:1", "asetpts=PTS+256/SR/TB",
+            "-filter:a:2", "asetpts=PTS+256/SR/TB+1.024/TB", "-c:s", "srt", input.path])
         let info = try await tools.probe(url: input)
         var fallback: Error?
         let playlist = try await job.prepareEarlyHLS(input: input, info: info, audioTrack: nil, startTime: 21, subtitleDelay: 0,
@@ -29,8 +31,8 @@ final class AudioTimingTests: XCTestCase {
         let cache = master.deletingLastPathComponent()
         XCTAssertTrue(job.isVideoCopied)
         XCTAssertTrue(job.usesOriginalDolby)
-        XCTAssertEqual(Set(job.audioNames.keys), Set(info.audioTracks.map(\.id)))
-        let credits = cache.appendingPathComponent("captions-3.vtt")
+        XCTAssertEqual(Set(job.audioNames.keys), [1, 3], "A short unsupported alternate must not block the selected dub or the late-starting original")
+        let credits = cache.appendingPathComponent("captions-4.vtt")
         let deadline = ContinuousClock.now.advanced(by: .seconds(10))
         while fallback == nil, !FileManager.default.fileExists(atPath: credits.path), .now < deadline {
             try await Task.sleep(for: .milliseconds(50))
@@ -78,6 +80,9 @@ final class AudioTimingTests: XCTestCase {
                 .map { abs(Int(bytes.loadUnaligned(fromByteOffset: $0, as: Int16.self))) }.max() ?? Int.max
         }
         XCTAssertLessThanOrEqual(peak, 2, "Allow for the decoder's one-bit dither when rendering digital silence")
+        let incomplete = try await job.prepareEarlyHLS(input: input, info: info, audioTrack: 2, subtitleDelay: 0,
+            onFailure: { fallback = $0 }, progress: { _ in })
+        XCTAssertNil(incomplete, "A selected track that cannot be repaired must use regular preparation")
     }
 
     @MainActor

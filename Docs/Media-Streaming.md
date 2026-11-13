@@ -6,7 +6,7 @@ Beamly uses AVPlayer and the system AirPlay picker. The quality-preserving path 
 
 ## Playback paths
 
-With **Preserve video quality** enabled (the default), compatible MP4/M4V/MOV files are published unchanged. For supported HEVC or H.264 files that use HLS, FFmpeg copies the compressed video into fragmented MP4 segments. No video encoder, resizing, color conversion, or subtitle filter runs in this path. The interface reports **Original video quality**; the metadata row describes the source file.
+With **Preserve video quality** enabled (the default), compatible MP4/M4V/MOV files are published unchanged. A player error on the direct stream retries through HLS at the current position. For supported HEVC or H.264 files that use HLS, FFmpeg copies the compressed video into fragmented MP4 segments. No video encoder, resizing, color conversion, or subtitle filter runs in this path. The interface reports **Original video quality**; the metadata row describes the source file.
 
 On the regular preparation path, Beamly can prepare a temporary MP4 for a supported H.264 MKV with a selected Dolby Digital or Dolby Digital Plus surround track when the file has no embedded text captions or compatible alternate audio, subtitles are off, and audio timing is unadjusted. FFmpeg copies the video and selected audio. The MP4 index gives AVPlayer the full movie and the saved position is applied as a seek. If the MP4 cannot be prepared or played, Beamly uses HLS.
 
@@ -22,7 +22,7 @@ The app's audio menu chooses the source track by its global stream index. When a
 
 Beamly copies compatible AAC-LC and converts other formats to stereo AAC. When conversion is needed in original-quality HLS, FFmpeg tries AudioToolbox first and then its built-in AAC encoder if AudioToolbox fails. DTS/TrueHD/Atmos conversion or passthrough is not promised. Audio conversion is independent of video and preserves its resolution.
 
-The fast HLS path can fill a missing tail of up to two minutes on compatible 48 kHz stereo AC-3 tracks. The added fragments contain silence in the same format, and the source audio packets are copied unchanged. Tracks that cannot use this path fall back to regular preparation.
+The fast HLS path checks the start and end of each Dolby track independently. It keeps the timing of compatible tracks that start slightly late and can fill a missing tail of up to two minutes on compatible 48 kHz stereo AC-3 tracks. The added fragments contain silence in the same format, and the source audio packets are copied unchanged. If an alternate track does not fit the fast path, it remains available in Beamly's audio menu. Selecting it uses regular preparation at the current position.
 
 Apple TV and Beamly can switch between the audio tracks published in the current HLS stream. Choosing a track that requires conversion in Beamly prepares a new stream at the current position. Source files are read in place.
 
@@ -36,7 +36,7 @@ Beamly updates its audio and subtitle menus when AVPlayer reports a selection ma
 
 Original-quality HLS includes each readable embedded text subtitle track and any selected external SRT/ASS/SSA/WebVTT file as separate named WebVTT renditions. Apple TV can switch among these tracks or turn captions off during playback. Each WebVTT file includes `X-TIMESTAMP-MAP`, keeping captions available across the full timeline. Video packets are copied. WebVTT simplifies ASS animation, fonts, and complex positioning. Bitmap formats such as PGS/VobSub require the explicit compatibility conversion and burn-in.
 
-Beamly extracts embedded text tracks in one pass. With early HLS, the caption tracks appear at startup and their contents become available when extraction finishes. Subtitle intermediates stay in the private `.inputs` directory. Beamly sets the initial caption selection in AVPlayer using the app's preferences.
+Early HLS supports selected text captions and their timing corrections. Beamly extracts embedded text tracks alongside video preparation, and reads an external subtitle file independently. If an optional caption fails to extract, Beamly preserves the advertised timeline and the movie continues. Subtitle intermediates stay in the private `.inputs` directory. Beamly sets the initial caption selection in AVPlayer using the app's preferences.
 
 When selecting a video, Beamly scans only its containing folder for readable SRT, ASS, SSA, and VTT files. Names must match the video basename exactly or append a dot-separated suffix, such as `Movie.ru.srt`; similarly prefixed movies do not match. An exact-basename file takes priority, and a single match is selected automatically. Multiple language files remain available in the subtitle menu without guessing a preferred language.
 

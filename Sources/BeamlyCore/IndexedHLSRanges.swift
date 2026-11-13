@@ -72,11 +72,15 @@ final class IndexedHLSRanges {
     }
 
     func prepare(at position: Double) async throws {
-        for segments in [video] + audio.prefix(1).map(\.segments) {
-            let index = segments.lastIndex { $0.start <= position } ?? 0
-            for segment in segments[index..<min(index + 2, segments.count)] {
-                if !available(segment.name), let request = requests[segment.name] { try await produce(request) }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for segments in [video] + audio.prefix(1).map(\.segments) {
+                let index = segments.lastIndex { $0.start <= position } ?? 0
+                let needed = segments[index..<min(index + 2, segments.count)].compactMap { requests[$0.name] }
+                group.addTask { @MainActor in
+                    for request in needed { try await self.produce(request) }
+                }
             }
+            try await group.waitForAll()
         }
     }
 
@@ -160,6 +164,7 @@ final class IndexedHLSRanges {
                 arguments += ["-map", "0:\(audioTrack)", "-bsf:a", trim + ",setts=ts=PTS-\(firstAudioPTS)/TB"]
             }
         }
+        // Audio's shared initialization already applies the movie's origin to the fragment decode time.
         let offset = request.isPreview || request.audioTrack != nil ? 0 : firstPTS
         arguments += ["-output_ts_offset", String(offset), "-avoid_negative_ts", "disabled", "-f", "mp4",
                       "-movflags", "+delay_moov+dash+frag_discont+skip_trailer",
