@@ -99,7 +99,7 @@ Allow local-network access and incoming connections if macOS asks. An AirPlay re
 ## Use
 
 1. Connect the Mac and receiver to the same network.
-2. Click **AirPlay** in the top-right corner and select the receiver.
+2. Open Beamly and select your receiver from the AirPlay list. You can dismiss the list and reopen it anytime using **AirPlay** in the top-right corner.
 3. Drop a video or folder into the window, or press **⌘O**. Playback starts only after an AirPlay device is connected; disconnecting pauses the player. Pressing Play first prepares an already selected AirPlay route without starting local playback. If no connection becomes active within three seconds, it opens the device picker; playback begins after you connect a receiver.
 4. Use the audio and subtitles menus beside the timeline to choose tracks.
 

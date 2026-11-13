@@ -55,7 +55,7 @@ final class AppModel: ObservableObject {
     private var routePreparation: Task<Void, Never>?
     private var shouldShowAirPlayPicker = false
     private var isAirPlayPickerPresented = false
-    private enum AirPlayRouteHint { case none, pickerSelection, confirmed }
+    private enum AirPlayRouteHint { case none, pickerSelection, selectionBeforePlay, confirmed }
     private var airPlayRouteHint = AirPlayRouteHint.none
     private var previewTask: Task<Void, Never>?
     private var seekPreviewTask: Task<Void, Never>?
@@ -317,7 +317,7 @@ final class AppModel: ObservableObject {
         isAirPlayPickerPresented = isPresented
         if isPresented {
             // AVKit reports presentation without saying whether the user selected a route.
-            airPlayRouteHint = .pickerSelection
+            airPlayRouteHint = player.currentItem == nil && !playRequested ? .selectionBeforePlay : .pickerSelection
             shouldShowAirPlayPicker = false
             if routePreparation != nil { cancelRoutePreparation() }
         } else if playRequested {
@@ -345,6 +345,7 @@ final class AppModel: ObservableObject {
         guard player.isExternalPlaybackActive else {
             guard airPlayRouteHint != .none, !isAirPlayPickerPresented, routePreparation == nil else { return }
             // Preroll primes an already selected route at rate zero; discovery never authorizes local playback.
+            if airPlayRouteHint == .selectionBeforePlay { airPlayRouteHint = .pickerSelection }
             isConnectingAirPlay = true
             let generation = loadID
             routePreparation = Task { [weak self] in
