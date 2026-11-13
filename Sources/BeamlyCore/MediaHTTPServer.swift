@@ -96,7 +96,7 @@ public final class MediaHTTPServer: @unchecked Sendable {
         try queue.sync {
             let directory = directory.standardizedFileURL.resolvingSymlinksInPath()
             let values = try directory.resourceValues(forKeys: [.isDirectoryKey])
-            guard values.isDirectory == true, Self.isMediaName(playlist) else {
+            guard values.isDirectory == true, MediaHTTPRequest.isMediaName(playlist) else {
                 throw ServerError("The HLS directory or playlist name is invalid.")
             }
             let generated = generatedDirectory?.standardizedFileURL.resolvingSymlinksInPath()
@@ -180,24 +180,11 @@ public final class MediaHTTPServer: @unchecked Sendable {
     }
 
     private func handle(_ client: Client, header: Data.SubSequence) {
-        guard let text = String(data: Data(header), encoding: .utf8) else { respond(client, status: 400); return }
-        let lines = text.components(separatedBy: "\r\n")
-        let request = lines[0].split(separator: " ")
-        guard request.count == 3, request[2] == "HTTP/1.1" || request[2] == "HTTP/1.0" else {
-            respond(client, status: 400); return
+        switch MediaHTTPRequest.parse(header) {
+        case .invalid: respond(client, status: 400)
+        case .unsupportedMethod: respond(client, status: 405, fields: ["Allow": "GET, HEAD"])
+        case .request(let method, let target, let range): serveFile(client, target: target, method: method, range: range)
         }
-        let method = String(request[0])
-        guard method == "GET" || method == "HEAD" else {
-            respond(client, status: 405, fields: ["Allow": "GET, HEAD"]); return
-        }
-        var headers: [String: String] = [:]
-        for line in lines.dropFirst() {
-            guard let colon = line.firstIndex(of: ":") else { respond(client, status: 400); return }
-            let key = line[..<colon].lowercased()
-            guard headers[key] == nil else { respond(client, status: 400); return }
-            headers[key] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-        }
-        serveFile(client, target: String(request[1]), method: method, range: headers["range"])
     }
 
     private func serveFile(_ client: Client, target: String, method: String, range: String?, waitUntil: DispatchTime? = nil) {
@@ -237,9 +224,9 @@ public final class MediaHTTPServer: @unchecked Sendable {
             var first: UInt64 = 0
             var length = size
             var status = 200
-            var fields = ["Accept-Ranges": "bytes", "Content-Type": Self.mimeType(file), "Cache-Control": "no-store"]
+            var fields = ["Accept-Ranges": "bytes", "Content-Type": MediaHTTPRequest.mimeType(file), "Cache-Control": "no-store"]
             if let range {
-                guard let bytes = Self.byteRange(range, size: size) else {
+                guard let bytes = MediaHTTPRequest.byteRange(range, size: size) else {
                     respond(client, status: 416, fields: ["Content-Range": "bytes */\(size)"]); return
                 }
                 first = bytes.lowerBound
@@ -271,7 +258,7 @@ public final class MediaHTTPServer: @unchecked Sendable {
             guard name == expected else { return nil }
             return PublishedFile(url: published)
         case .directory(let directory, let pendingFiles, let generatedDirectory, let onPendingRequest, let onPendingTimeout):
-            guard Self.isMediaName(name) else { return nil }
+            guard MediaHTTPRequest.isMediaName(name) else { return nil }
             let file = directory.appendingPathComponent(name)
             // Resolve symlinks before confinement checks; .inputs must never be served.
             guard file.resolvingSymlinksInPath().deletingLastPathComponent().path == directory.path else { return nil }
@@ -279,28 +266,6 @@ public final class MediaHTTPServer: @unchecked Sendable {
             return PublishedFile(url: file, canWait: canWait, generatedURL: canWait ? generatedDirectory?.appendingPathComponent(name) : nil,
                                  onPendingRequest: onPendingRequest, onPendingTimeout: onPendingTimeout)
         }
-    }
-
-    static func byteRange(_ value: String, size: UInt64) -> ClosedRange<UInt64>? {
-        guard value.hasPrefix("bytes="), size > 0 else { return nil }
-        let values = value.dropFirst(6).split(separator: "-", omittingEmptySubsequences: false)
-        guard values.count == 2 else { return nil }
-        func number(_ text: Substring) -> UInt64? {
-            guard !text.isEmpty, text.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
-            return UInt64(text)
-        }
-        if values[0].isEmpty {
-            guard let suffix = number(values[1]), suffix > 0 else { return nil }
-            return (size - min(suffix, size))...(size - 1)
-        }
-        guard let first = number(values[0]), first < size else { return nil }
-        let last: UInt64
-        if values[1].isEmpty { last = size - 1 }
-        else {
-            guard let requested = number(values[1]), requested >= first else { return nil }
-            last = min(requested, size - 1)
-        }
-        return first...last
     }
 
     private func respond(_ client: Client, status: Int, fields: [String: String] = [:]) {
@@ -346,24 +311,6 @@ public final class MediaHTTPServer: @unchecked Sendable {
         client.file = nil
         client.connection.stateUpdateHandler = nil
         client.connection.cancel()
-    }
-
-    private static func isMediaName(_ name: String) -> Bool {
-        guard !name.isEmpty, !name.hasPrefix("."), !name.contains("/"), !name.contains("\\"), !name.contains("\0") else { return false }
-        return ["m3u8", "ts", "m4s", "mp4", "m4v", "mov", "vtt", "aac"].contains(URL(fileURLWithPath: name).pathExtension.lowercased())
-    }
-
-    private static func mimeType(_ file: URL) -> String {
-        switch file.pathExtension.lowercased() {
-        case "m3u8": return "application/vnd.apple.mpegurl"
-        case "ts": return "video/mp2t"
-        case "mp4", "m4v": return "video/mp4"
-        case "mov": return "video/quicktime"
-        case "m4s": return "video/iso.segment"
-        case "vtt": return "text/vtt; charset=utf-8"
-        case "aac": return "audio/aac"
-        default: return "application/octet-stream"
-        }
     }
 
     private static func lanIPv4() -> String {

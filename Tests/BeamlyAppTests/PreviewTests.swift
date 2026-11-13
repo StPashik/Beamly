@@ -55,7 +55,7 @@ final class PreviewTests: XCTestCase {
             XCTAssertEqual(metadata.chapters?.map(\.title), ["Red intro", "Blue chapter"])
             XCTAssertEqual(metadata.chapters?.map(\.start), [0, 2])
             if movie == mp4 {
-                let native = await AppModel.nativeChapters(in: AVURLAsset(url: mp4), duration: 12)
+                let native = await PlaybackMedia.nativeChapters(in: AVURLAsset(url: mp4), duration: 12)
                 XCTAssertEqual(native.map(\.title), ["Red intro", "Blue chapter"])
             }
             let name = "app.beamly.preview-tests.\(UUID())"
