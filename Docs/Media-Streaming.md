@@ -2,7 +2,7 @@
 
 Beamly uses AVPlayer and the system AirPlay picker. The quality-preserving path targets Apple TV 4K. Receiver generations, tvOS versions, display capabilities, and network bandwidth still affect playback. A 4K output mode on the television does not by itself prove that its input stream is 4K.
 
-**4K/HDR over AirPlay has not been tested on physical receivers. Playback may be unstable or incompatible with some devices or network configurations.**
+**4K HLG and HDR10 playback were tested on Apple TV 4K.** The HLG trial also confirmed AC-3 audio and seeking across the full timeline. Other receivers and source profiles may behave differently.
 
 ## Playback paths
 
