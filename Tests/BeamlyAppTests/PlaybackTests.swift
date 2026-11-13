@@ -1,4 +1,5 @@
 import AVKit
+import MediaPlayer
 import XCTest
 import BeamlyCore
 import Combine
@@ -239,6 +240,76 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(player.currentTime().seconds, 7, accuracy: 0.7)
         XCTAssertEqual(player.currentItem?.duration.seconds ?? 0, 18, accuracy: 0.1)
         XCTAssertNil(model.errorMessage)
+    }
+
+    @MainActor
+    func testClearStopsTheMovieAndRestartsTheSelectedAirPlayRoute() async throws {
+        let ffmpeg = try XCTUnwrap(mediaTestTools().ffmpegURL)
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-clear-route-\(UUID())")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        let suite = "app.beamly.clear-route.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        defaults.set(ffmpeg.deletingLastPathComponent().path, forKey: "toolsDirectory")
+        let first = folder.appendingPathComponent("First.mp4")
+        let second = folder.appendingPathComponent("Second.mkv")
+        let generator = Process()
+        generator.executableURL = ffmpeg
+        generator.arguments = ["-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=c=blue:size=160x90:rate=24:duration=20",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=20",
+            "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-g", "24", "-c:a", "aac", "-movflags", "+faststart", first.path,
+            "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-g", "24", "-c:a", "ac3", second.path]
+        generator.standardInput = FileHandle.nullDevice
+        try generator.run(); generator.waitUntilExit()
+        XCTAssertEqual(generator.terminationStatus, 0)
+
+        let player = AirPlayTestPlayer()
+        player.losesRouteWhenEmptied = true
+        player.setExternalPlaybackActive(true)
+        let model = AppModel(stateURL: folder.appendingPathComponent("queue.json"), defaults: defaults, player: player)
+        defer { model.shutdown() }
+        model.add([first])
+        try await wait { model.isExternal && model.isPlaying && player.currentTime().seconds > 0.1 }
+        let oldURL = try XCTUnwrap((player.currentItem?.asset as? AVURLAsset)?.url)
+
+        model.clear()
+        XCTAssertTrue(model.playlist.items.isEmpty)
+        XCTAssertNil(player.currentItem)
+        XCTAssertNil(MPNowPlayingInfoCenter.default().nowPlayingInfo)
+        XCTAssertEqual(player.rate, 0)
+        XCTAssertFalse(model.isPlaying)
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let oldResponse = try await session.data(from: oldURL).1
+        XCTAssertEqual((oldResponse as? HTTPURLResponse)?.statusCode, 404)
+
+        player.activatesRouteDuringMutedStart = true
+        model.add([second])
+        try await wait(diagnostic: model.playbackStatus) {
+            model.current?.url == second && model.isExternal && !player.isMuted && player.currentTime().seconds > 0.1
+        }
+        XCTAssertTrue(model.isUsingHLS)
+        XCTAssertEqual(player.emptyReplacements, 1)
+        XCTAssertEqual(player.mutedLocalPlayCalls, 1)
+        XCTAssertFalse(model.isAirPlayPickerRequested)
+
+        model.seek(5)
+        try await wait { abs(player.currentTime().seconds - 5) < 0.5 }
+        model.clear()
+        player.activatesRouteDuringMutedStart = false
+        model.add([second])
+        try await wait { model.isConnectingAirPlay && player.isMuted }
+        try await wait { model.isAirPlayPickerRequested }
+        XCTAssertFalse(model.isPlaying)
+        XCTAssertFalse(player.isMuted)
+        XCTAssertEqual(player.rate, 0)
+        try await wait { abs(player.currentTime().seconds - 5) < 0.5 }
+        XCTAssertEqual(model.position, 5, accuracy: 0.5)
+        XCTAssertEqual(player.mutedLocalPlayCalls, 2)
+        XCTAssertEqual(player.localPlayCalls, player.mutedLocalPlayCalls, "Local audio must stay silent while AirPlay reconnects")
+
+        player.setExternalPlaybackActive(true)
+        try await wait { model.isExternal && player.timeControlStatus == .playing }
     }
 
     @MainActor
@@ -966,11 +1037,13 @@ final class AirPlayTestPlayer: AVPlayer, @unchecked Sendable {
     private var simulatedReason: AVPlayer.WaitingReason?
     private(set) var playCalls = 0
     private(set) var localPlayCalls = 0
+    private(set) var mutedLocalPlayCalls = 0
     private(set) var emptyReplacements = 0
     private(set) var prerollCalls = 0
     var losesRouteWhenEmptied = false
     var resetsRouteOnReplacement = false
     var activatesRouteDuringPreroll = false
+    var activatesRouteDuringMutedStart = false
     private(set) var lastConfiguredItem: AVPlayerItem?
 
     override func replaceCurrentItem(with item: AVPlayerItem?) {
@@ -1041,7 +1114,13 @@ final class AirPlayTestPlayer: AVPlayer, @unchecked Sendable {
 
     override func play() {
         playCalls += 1
-        if !isExternalPlaybackActive { localPlayCalls += 1 }
+        if !isExternalPlaybackActive {
+            localPlayCalls += 1
+            if isMuted {
+                mutedLocalPlayCalls += 1
+                if activatesRouteDuringMutedStart { setExternalPlaybackActive(true) }
+            }
+        }
         super.play()
     }
 }
