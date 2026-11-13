@@ -1,27 +1,6 @@
 import Foundation
 import AVFoundation
 
-struct IndexedHLSSegment {
-    let name: String
-    let start: Double
-    let end: Double
-
-    var duration: Double { end - start }
-}
-
-struct IndexedHLSAudio {
-    let track: MediaTrack
-    let segments: [IndexedHLSSegment]
-    var padding: Padding?
-
-    struct Padding {
-        let bitrate: Int
-        let segments: [IndexedHLSSegment]
-    }
-
-    var playlistSegments: [IndexedHLSSegment] { segments + (padding?.segments ?? []) }
-}
-
 /// Produces requested fragments independently of the sequential remux, on the same media clock.
 @MainActor
 final class IndexedHLSRanges {
@@ -50,8 +29,7 @@ final class IndexedHLSRanges {
     private var cancelled = false
 
     init(tools: FFmpegTools, ffmpeg: URL, input: URL, directory: URL, generated: URL, isHEVC: Bool, audioTrack: Int?,
-         firstPTS: Double, firstAudioPTS: Double, keyframes: [Double], video: [IndexedHLSSegment], previews: [IndexedHLSSegment],
-         audio: [IndexedHLSAudio]) {
+         firstPTS: Double, firstAudioPTS: Double, keyframes: [Double], plan: IndexedHLSPlan) {
         self.tools = tools
         self.ffmpeg = ffmpeg
         self.input = input
@@ -61,12 +39,12 @@ final class IndexedHLSRanges {
         self.audioTrack = audioTrack
         self.firstPTS = firstPTS
         self.firstAudioPTS = firstAudioPTS
-        self.audio = audio
+        self.audio = plan.audio
         self.keyframes = keyframes
-        self.video = video
-        let entries = video.enumerated().map { ($1.name, Request(segment: $1, index: $0, isPreview: false)) }
-            + previews.enumerated().map { ($1.name, Request(segment: $1, index: $0, isPreview: true)) }
-        requests = Dictionary(uniqueKeysWithValues: entries + audio.flatMap { rendition in
+        self.video = plan.video
+        let entries = plan.video.enumerated().map { ($1.name, Request(segment: $1, index: $0, isPreview: false)) }
+            + plan.previews.enumerated().map { ($1.name, Request(segment: $1, index: $0, isPreview: true)) }
+        requests = Dictionary(uniqueKeysWithValues: entries + plan.audio.flatMap { rendition in
             rendition.segments.enumerated().map { ($1.name, Request(segment: $1, index: $0, audioTrack: rendition.track.id)) }
         })
     }

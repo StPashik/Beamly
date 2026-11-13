@@ -316,9 +316,7 @@ public final class HLSJob {
         } onCancel: { indexing.cancel() }
         try Task.checkCancellation()
         guard self.generation == generation else { throw CancellationError() }
-        let segmentLength = 6
-        let maximumKeyframeInterval = 12.0
-        let maximumSegmentDuration = Double(segmentLength) + maximumKeyframeInterval
+        let maximumKeyframeInterval = IndexedHLSPlan.maximumKeyframeInterval
         guard keyframes.first == 0, let last = keyframes.last, last < info.duration,
               info.duration - last <= 2 * maximumKeyframeInterval else { return nil }
         let videoDuration = try await tools.videoEnd(url: input, lastKeyframe: last, maxInterval: maximumKeyframeInterval + 1)
@@ -329,21 +327,7 @@ public final class HLSJob {
         let audioRenditions = try await tools.indexedDolbyAudio(url: input, tracks: renditions, lastKeyframe: last, videoDuration: videoDuration)
         try Task.checkCancellation()
         guard self.generation == generation else { throw CancellationError() }
-        // The HLS muxer cuts on the first keyframe at or beyond each successive time threshold.
-        var starts = [0.0]
-        for time in keyframes.dropFirst() where time >= Double(segmentLength * starts.count) {
-            starts.append(time)
-        }
-        guard starts.count >= 2 else { return nil }
-        func segments(_ times: [Double], prefix: String) -> [IndexedHLSSegment] {
-            zip(times, Array(times.dropFirst()) + [videoDuration]).enumerated().map { index, pair in
-                IndexedHLSSegment(name: prefix + String(format: "%06d.m4s", index), start: pair.0, end: pair.1)
-            }
-        }
-        let videoSegments = segments(starts, prefix: "segment_0_")
-        let frames = isHEVC ? [] : segments(keyframes, prefix: "iframe-")
-        guard zip(keyframes, keyframes.dropFirst() + [videoDuration]).allSatisfy({ (0.001...maximumKeyframeInterval).contains($1 - $0) }),
-              videoSegments.allSatisfy({ (0.01...maximumSegmentDuration).contains($0.duration) }) else {
+        guard let plan = IndexedHLSPlan(keyframes: keyframes, duration: videoDuration, isHEVC: isHEVC, audio: audioRenditions) else {
             return nil
         }
 
@@ -353,7 +337,7 @@ public final class HLSJob {
         try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: false)
         try FileManager.default.createDirectory(at: generated, withIntermediateDirectories: false)
         isVideoCopied = true
-        usesOriginalDolby = !audioRenditions.isEmpty
+        usesOriginalDolby = !plan.audio.isEmpty
         progress(.originalStream)
 
         // Read embedded captions separately so a damaged caption cannot abort the video producer.
@@ -363,8 +347,8 @@ public final class HLSJob {
         let extraction = captionExtraction
 
         let arguments = FFmpegArguments.indexedHLS(input: input, isHEVC: isHEVC, audioTrack: audio?.id,
-                                                   audioRenditionIDs: audioRenditions.map(\.track.id), segmentLength: segmentLength,
-                                                   previewDuration: frames.isEmpty ? nil : videoDuration)
+                                                   audioRenditionIDs: plan.audio.map(\.track.id), segmentLength: IndexedHLSPlan.segmentLength,
+                                                   previewDuration: plan.previews.isEmpty ? nil : videoDuration)
         let packaging = Task { [weak self, arguments] in
             guard let self else { throw CancellationError() }
             do {
@@ -375,10 +359,10 @@ public final class HLSJob {
                 throw error
             }
         }
-        let firstSegments = videoSegments.prefix(2).map(\.name) + frames.prefix(1).map(\.name)
-            + audioRenditions.flatMap { $0.segments.prefix(2).map(\.name) }
-        let audioInits = audioRenditions.indices.map { "init_\($0 + 1).mp4" }
-        let firstFiles = ["init_0.mp4"] + audioInits + (frames.isEmpty ? [] : ["iframe-init.mp4"]) + firstSegments.map { ".generated/" + $0 }
+        let firstSegments = plan.firstSegmentNames
+        let audioInits = plan.audioInitializationNames
+        let firstFiles = ["init_0.mp4"] + audioInits + (plan.previews.isEmpty ? [] : ["iframe-init.mp4"])
+            + firstSegments.map { ".generated/" + $0 }
         func firstSegmentsReady() -> Bool {
             firstFiles.allSatisfy { FileManager.default.fileExists(atPath: cache.appendingPathComponent($0).path) }
         }
@@ -399,13 +383,13 @@ public final class HLSJob {
             try FileManager.default.linkItem(at: generated.appendingPathComponent(name), to: cache.appendingPathComponent(name))
         }
 
-        let targetDuration = Int(ceil(videoSegments.map(\.duration).max() ?? 1))
+        let targetDuration = plan.targetDuration
         // Measure the muxer's clock against the first closed fragment while the rest is being written.
         let first = cache.appendingPathComponent(".first.m3u8")
-        try HLSPlaylist.writeIndexed(to: first, initialization: "init_0.mp4", segments: [videoSegments[0]], targetDuration: targetDuration)
+        try HLSPlaylist.writeIndexed(to: first, initialization: "init_0.mp4", segments: [plan.video[0]], targetDuration: targetDuration)
         let firstPTS = try await tools.firstVideoTimestamp(url: first)
         let firstAudioPTS = audio == nil ? 0 : try await tools.firstAudioTimestamp(url: first)
-        for (index, rendition) in audioRenditions.enumerated() {
+        for (index, rendition) in plan.audio.enumerated() {
             let firstAudio = cache.appendingPathComponent(".first-audio-\(index).m3u8")
             try HLSPlaylist.writeIndexed(to: firstAudio, initialization: audioInits[index],
                                          segments: [rendition.segments[0]], targetDuration: targetDuration)
@@ -415,7 +399,7 @@ public final class HLSJob {
             }
         }
         try await withThrowingTaskGroup(of: Void.self) { group in
-            for (index, rendition) in audioRenditions.enumerated() where rendition.padding != nil {
+            for (index, rendition) in plan.audio.enumerated() where rendition.padding != nil {
                 let initialization = audioInits[index]
                 group.addTask {
                     try await IndexedHLSRanges.prepareSilentAudio(for: rendition, initialization: initialization, ffmpeg: ffmpeg, directory: cache)
@@ -431,7 +415,7 @@ public final class HLSJob {
         sourceOffset = -firstPTS
         let ranges = IndexedHLSRanges(tools: tools, ffmpeg: ffmpeg, input: input, directory: cache, generated: generated, isHEVC: isHEVC,
                                       audioTrack: audio?.id, firstPTS: firstPTS, firstAudioPTS: firstAudioPTS,
-                                      keyframes: keyframes, video: videoSegments, previews: frames, audio: audioRenditions)
+                                      keyframes: keyframes, plan: plan)
         indexedRanges = ranges
         if startTime > 0 { try await ranges.prepare(at: min(startTime, videoDuration)) }
         if let selectedCaption = captions.first(where: { $0.choice == subtitle }) {
@@ -448,14 +432,14 @@ public final class HLSJob {
         try Task.checkCancellation()
         guard self.generation == generation else { throw CancellationError() }
         try HLSPlaylist.writeIndexed(to: cache.appendingPathComponent("stream_0.m3u8"), initialization: "init_0.mp4",
-                                     segments: videoSegments, targetDuration: targetDuration)
-        for (index, rendition) in audioRenditions.enumerated() {
+                                     segments: plan.video, targetDuration: targetDuration)
+        for (index, rendition) in plan.audio.enumerated() {
             try HLSPlaylist.writeIndexed(to: cache.appendingPathComponent("stream_\(index + 1).m3u8"), initialization: audioInits[index],
                                          segments: rendition.playlistSegments, targetDuration: targetDuration)
         }
-        if !frames.isEmpty {
+        if !plan.previews.isEmpty {
             try HLSPlaylist.writeIndexed(to: cache.appendingPathComponent("iframe.m3u8"), initialization: "iframe-init.mp4",
-                                         segments: frames, targetDuration: targetDuration, iFrames: true)
+                                         segments: plan.previews, targetDuration: targetDuration, iFrames: true)
         }
         let backgroundCaptions = embedded.filter { $0.choice != subtitle }
         for caption in backgroundCaptions { try HLSPlaylist.writeCaptionPlaylist(caption, duration: videoDuration - sourceOffset, in: cache) }
@@ -464,17 +448,16 @@ public final class HLSJob {
         // Estimate bandwidth for the single variant before the final fragment sizes are known.
         let average = max(1, Int(min(1_000_000_000, Double(size) * 8 / videoDuration)))
         let video = (peak: average * 3, average: average, duration: videoDuration)
-        let previews: HLSPlaylist.Bandwidth? = frames.isEmpty ? nil : (peak: average, average: max(1, average / 8), duration: videoDuration)
+        let previews: HLSPlaylist.Bandwidth? = plan.previews.isEmpty ? nil : (peak: average, average: max(1, average / 8), duration: videoDuration)
         let names = try await HLSPlaylist.writeMaster(directory: cache, codec: videoCodec + audioCodec, info: info, video: video, iFrames: previews,
-                                                     iFrameCodec: videoCodec, audioTracks: audioRenditions.map(\.track),
+                                                     iFrameCodec: videoCodec, audioTracks: plan.audio.map(\.track),
                                                      copyDolby: usesOriginalDolby, captions: captions, selectedSubtitle: subtitle,
-                                                     indexedAudio: !audioRenditions.isEmpty)
+                                                     indexedAudio: !plan.audio.isEmpty)
         try Task.checkCancellation()
         guard self.generation == generation else { throw CancellationError() }
         subtitleNames = Dictionary(uniqueKeysWithValues: captions.map { ($0.choice, $0.name) })
         audioNames = names
-        pendingHLSFiles = Set(videoSegments.map(\.name) + frames.map(\.name) + backgroundCaptions.map { $0.stem + ".vtt" }
-                              + audioRenditions.flatMap { $0.segments.map(\.name) })
+        pendingHLSFiles = Set(plan.pendingSegmentNames + backgroundCaptions.map { $0.stem + ".vtt" })
         earlyHLSVideoDuration = videoDuration
 
         if let extraction, !backgroundCaptions.isEmpty {
@@ -496,13 +479,13 @@ public final class HLSJob {
             do {
                 try await packaging.value
                 guard self.generation == generation else { return }
-                let renderedVideo = cache.appendingPathComponent(audioRenditions.isEmpty ? ".rendered.m3u8" : ".rendered_0.m3u8")
+                let renderedVideo = cache.appendingPathComponent(plan.audio.isEmpty ? ".rendered.m3u8" : ".rendered_0.m3u8")
                 let renderedPreviews = cache.appendingPathComponent(".rendered-iframe.m3u8")
-                guard try HLSPlaylist.matchesIndexed(renderedVideo, plan: videoSegments),
-                      try (frames.isEmpty || HLSPlaylist.matchesIndexed(renderedPreviews, plan: frames, iFrames: true)) else {
+                guard try HLSPlaylist.matchesIndexed(renderedVideo, plan: plan.video),
+                      try (plan.previews.isEmpty || HLSPlaylist.matchesIndexed(renderedPreviews, plan: plan.previews, iFrames: true)) else {
                     throw CocoaError(.fileReadCorruptFile)
                 }
-                for (index, rendition) in audioRenditions.enumerated() {
+                for (index, rendition) in plan.audio.enumerated() {
                     let renderedAudio = cache.appendingPathComponent(".rendered_\(index + 1).m3u8")
                     guard try HLSPlaylist.matchesIndexed(renderedAudio, plan: rendition.segments) else {
                         throw CocoaError(.fileReadCorruptFile)
