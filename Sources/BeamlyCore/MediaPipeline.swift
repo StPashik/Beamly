@@ -145,7 +145,7 @@ public final class HLSJob {
         isVideoCopied = preserveQuality && info.canCopyVideo
         let rendering: SubtitleRendering?
         if !isVideoCopied, subtitle != .none { progress(.subtitles) }
-        do { rendering = isVideoCopied ? nil : try subtitleRendering(subtitle, input: input, info: info, directory: cache) }
+        do { rendering = isVideoCopied ? nil : try SubtitlePreparation.rendering(subtitle, input: input, info: info, directory: cache) }
         catch {
             diagnostic = error.localizedDescription
             stop()
@@ -166,7 +166,7 @@ public final class HLSJob {
                 if copyDolby { return Self.dolbyTracks(startingWith: track, in: info.audioTracks) }
                 return isVideoCopied && track.isStereoAAC ? Self.matchingAudioTracks(for: track, in: info.audioTracks) : [track]
             } ?? []
-            let embeddedCaptions = isVideoCopied ? try Self.embeddedCaptions(subtitle, info: info) : []
+            let embeddedCaptions = isVideoCopied ? try SubtitlePreparation.embeddedRenditions(subtitle, info: info) : []
             var sharedOutputs: [String] = []
             // With a zero-based MKV timeline, both captions and preview frames can use the main input.
             if isVideoCopied, info.videoCodec == "h264", input.pathExtension.lowercased() == "mkv",
@@ -174,7 +174,7 @@ public final class HLSJob {
                 if !embeddedCaptions.isEmpty {
                     let inputs = cache.appendingPathComponent(".inputs", isDirectory: true)
                     try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: true)
-                    sharedOutputs = Self.captionArguments(embeddedCaptions, in: inputs)
+                    sharedOutputs = SubtitlePreparation.extractionArguments(embeddedCaptions, in: inputs)
                 }
                 sharedOutputs += Self.iFrameArguments(duration: info.duration, discardBefore: keyTime)
             }
@@ -235,8 +235,10 @@ public final class HLSJob {
                     }
                 }
                 if subtitle != .none || info.subtitleTracks.contains(where: \.isTextSubtitle) { progress(.subtitles) }
-                let captions = try await prepareCaptions(subtitle, embedded: embeddedCaptions, alreadyExtracted: !sharedOutputs.isEmpty,
-                    input: input, info: info, cache: cache, subtitleDelay: subtitleDelay, ffmpeg: ffmpeg)
+                let renditions = try await SubtitlePreparation.extractRenditions(subtitle, embedded: embeddedCaptions,
+                    alreadyExtracted: !sharedOutputs.isEmpty, input: input, cache: cache, ffmpeg: ffmpeg)
+                let captions = try SubtitlePreparation.writeRenditions(renditions, selected: subtitle, info: info,
+                    cache: cache, sourceOffset: sourceOffset, subtitleDelay: subtitleDelay)
                 let codec = try await HLSCodec.identifier(at: cache.appendingPathComponent("init_0.mp4"))
                 try Task.checkCancellation()
                 guard generation == currentGeneration else { throw CancellationError() }
@@ -301,9 +303,9 @@ public final class HLSJob {
                                    subtitle: SubtitleChoice, subtitleDelay: Double,
                                    ffmpeg: URL, generation: UUID, onFailure: @escaping @MainActor (Error) -> Void,
                                    progress: @MainActor (PlaybackPreparationStage) -> Void) async throws -> URL? {
-        let embedded = try Self.embeddedCaptions(subtitle, info: info)
+        let embedded = try SubtitlePreparation.embeddedRenditions(subtitle, info: info)
         var captions = embedded
-        if case .external(let url) = subtitle { captions.append(try Self.externalCaption(url, after: embedded)) }
+        if case .external(let url) = subtitle { captions.append(try SubtitlePreparation.externalRendition(url, after: embedded)) }
         let indexing = Task.detached(priority: .userInitiated) { try MatroskaCueIndex.videoKeyframes(in: input) }
         let keyframes = try await withTaskCancellationHandler {
             try await indexing.value
@@ -352,7 +354,7 @@ public final class HLSJob {
 
         // Read embedded captions separately so a damaged caption cannot abort the video producer.
         if !embedded.isEmpty {
-            captionExtraction = Task { try await Self.extractEmbeddedCaptions(embedded, selected: subtitle, input: input, ffmpeg: ffmpeg, in: inputs) }
+            captionExtraction = Task { try await SubtitlePreparation.extractEmbedded(embedded, selected: subtitle, input: input, ffmpeg: ffmpeg, in: inputs) }
         }
         let extraction = captionExtraction
 
@@ -446,13 +448,14 @@ public final class HLSJob {
         if startTime > 0 { try await ranges.prepare(at: min(startTime, videoDuration)) }
         if let selectedCaption = captions.first(where: { $0.choice == subtitle }) {
             if case .external(let url) = subtitle {
-                try await Self.extractCaptions([selectedCaption], from: url, ffmpeg: ffmpeg, in: inputs)
+                try await SubtitlePreparation.extract([selectedCaption], from: url, ffmpeg: ffmpeg, in: inputs)
             } else if let extraction {
                 _ = try await withTaskCancellationHandler { try await extraction.value } onCancel: { extraction.cancel() }
             }
             try Task.checkCancellation()
             guard self.generation == generation else { throw CancellationError() }
-            try writePreparedCaption(selectedCaption, info: info, cache: cache, subtitleDelay: subtitleDelay, videoDuration: videoDuration)
+            try SubtitlePreparation.writeRendition(selectedCaption, info: info, cache: cache, sourceOffset: sourceOffset,
+                                          subtitleDelay: subtitleDelay, videoDuration: videoDuration)
         }
         try Task.checkCancellation()
         guard self.generation == generation else { throw CancellationError() }
@@ -495,15 +498,9 @@ public final class HLSJob {
                     return
                 } catch { ready = [] }
                 guard let self, self.generation == generation else { return }
-                for caption in backgroundCaptions {
-                    if ready.contains(where: { $0.choice == caption.choice }),
-                       (try? self.writePreparedCaption(caption, info: info, cache: cache, subtitleDelay: subtitleDelay, videoDuration: videoDuration)) != nil {
-                        continue
-                    }
-                    // Preserve an already advertised timeline even when an optional caption is unreadable.
-                    try? "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0\n\n".write(
-                        to: cache.appendingPathComponent(caption.stem + ".vtt"), atomically: true, encoding: .utf8)
-                }
+                SubtitlePreparation.writeOptionalRenditions(backgroundCaptions, extracted: ready, info: info, cache: cache,
+                                                           sourceOffset: self.sourceOffset, subtitleDelay: subtitleDelay,
+                                                           videoDuration: videoDuration)
             }
         }
         Task { [weak self] in
@@ -659,104 +656,6 @@ public final class HLSJob {
         return args
     }
 
-    private static func embeddedCaptions(_ selected: SubtitleChoice, info: MediaInfo) throws -> [CaptionRendition] {
-        if case .embedded(let id) = selected {
-            guard let track = info.subtitleTracks.first(where: { $0.id == id }) else {
-                throw MediaPipelineError.invalidMedia(NSLocalizedString("The selected subtitle track is missing from the file.", comment: ""))
-            }
-            guard track.isTextSubtitle else {
-                throw MediaPipelineError.invalidMedia(NSLocalizedString("Bitmap subtitles require video conversion. Choose text subtitles or turn off Preserve video quality.", comment: ""))
-            }
-        }
-        var names: Set<String> = []
-        return info.subtitleTracks.filter(\.isTextSubtitle).map { track in
-            let choice = SubtitleChoice.embedded(track.id)
-            let language = MediaLanguages.normalized(track.language) ?? "und"
-            let name = track.title ?? Locale(identifier: "en").localizedString(forLanguageCode: language) ?? "Subtitles"
-            return CaptionRendition(choice: choice, name: HLSPlaylist.uniqueRenditionName(name, fallback: "Subtitles", names: &names), language: language,
-                                    stem: choice == selected ? "captions" : "captions-\(track.id)")
-        }
-    }
-
-    private static func captionArguments(_ renditions: [CaptionRendition], in directory: URL) -> [String] {
-        renditions.flatMap { rendition in
-            let stream: String
-            if case .embedded(let id) = rendition.choice { stream = "0:\(id)" }
-            else { stream = "0:s:0" }
-            return ["-map", stream, "-c:s", "webvtt", directory.appendingPathComponent(rendition.stem + ".vtt").path]
-        }
-    }
-
-    private static func extractCaptions(_ renditions: [CaptionRendition], from source: URL, ffmpeg: URL, in directory: URL) async throws {
-        guard !renditions.isEmpty else { return }
-        let arguments = ["-v", "error", "-nostdin", "-y", "-copyts", "-i", source.path] + captionArguments(renditions, in: directory)
-        _ = try await ProcessRunner().run(executable: ffmpeg, arguments: arguments)
-    }
-
-    private static func extractEmbeddedCaptions(_ embedded: [CaptionRendition], selected: SubtitleChoice,
-                                                input: URL, ffmpeg: URL, in directory: URL) async throws -> [CaptionRendition] {
-        do {
-            try await extractCaptions(embedded, from: input, ffmpeg: ffmpeg, in: directory)
-            return embedded
-        } catch where !MediaPipelineError.isInsufficientSpace(error) {
-            try Task.checkCancellation()
-            let required = embedded.filter { $0.choice == selected }
-            try await extractCaptions(required, from: input, ffmpeg: ffmpeg, in: directory)
-            return required
-        }
-    }
-
-    private static func externalCaption(_ url: URL, after embedded: [CaptionRendition]) throws -> CaptionRendition {
-        try validateLocalFile(url)
-        guard ["srt", "ass", "ssa", "vtt", "webvtt", "sub", "txt", "mpl", "mpl2"].contains(url.pathExtension.lowercased()) else {
-            throw MediaPipelineError.invalidMedia(NSLocalizedString("SRT, ASS, SSA and VTT text subtitles are supported.", comment: ""))
-        }
-        var names = Set(embedded.map(\.name))
-        let name = HLSPlaylist.uniqueRenditionName(url.lastPathComponent, fallback: "Subtitles", names: &names)
-        return CaptionRendition(choice: .external(url), name: name, language: "und", stem: "captions")
-    }
-
-    private func writePreparedCaption(_ rendition: CaptionRendition, info: MediaInfo, cache: URL, subtitleDelay: Double,
-                                      videoDuration: Double?) throws {
-        let duration = max(0.01, (videoDuration ?? info.duration) - sourceOffset)
-        let raw = cache.appendingPathComponent(".inputs").appendingPathComponent(rendition.stem + ".vtt")
-        let size = try raw.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        guard size <= 16 * 1024 * 1024 else { throw MediaPipelineError.invalidMedia(NSLocalizedString("The subtitle file is too large.", comment: "")) }
-        let origin: Double
-        if case .embedded = rendition.choice { origin = sourceOffset + info.startTime }
-        else { origin = sourceOffset }
-        let captions = try WebVTTCaptions.retimed(String(contentsOf: raw, encoding: .utf8), offset: origin - subtitleDelay, duration: duration)
-        try captions.write(to: cache.appendingPathComponent(rendition.stem + ".vtt"), atomically: true, encoding: .utf8)
-        try HLSPlaylist.writeCaptionPlaylist(rendition, duration: duration, in: cache)
-    }
-
-    private func prepareCaptions(_ selected: SubtitleChoice, embedded: [CaptionRendition], alreadyExtracted: Bool,
-                                 input: URL, info: MediaInfo, cache: URL, subtitleDelay: Double, ffmpeg: URL,
-                                 videoDuration: Double? = nil) async throws -> [CaptionRendition] {
-        guard !embedded.isEmpty || selected != .none else { return [] }
-        let privateFolder = cache.appendingPathComponent(".inputs")
-        try FileManager.default.createDirectory(at: privateFolder, withIntermediateDirectories: true)
-        var renditions = embedded
-        if !alreadyExtracted {
-            renditions = try await Self.extractEmbeddedCaptions(embedded, selected: selected, input: input, ffmpeg: ffmpeg, in: privateFolder)
-        }
-        if case .external(let url) = selected {
-            let rendition = try Self.externalCaption(url, after: embedded)
-            try await Self.extractCaptions([rendition], from: url, ffmpeg: ffmpeg, in: privateFolder)
-            renditions.append(rendition)
-        }
-        return try renditions.filter { rendition in
-            try Task.checkCancellation()
-            do {
-                try writePreparedCaption(rendition, info: info, cache: cache, subtitleDelay: subtitleDelay, videoDuration: videoDuration)
-                return true
-            } catch {
-                if rendition.choice == selected { throw error }
-                return false
-            }
-        }
-    }
-
     private static func iFrameArguments(duration: Double, discardBefore: Double? = nil, playlist: String = "iframe.m3u8",
                                         segmentPattern: String = "iframe-%06d.m4s") -> [String] {
         let preroll = discardBefore.map { "+lt(pts*tb\\,\($0 - 0.000001))" } ?? ""
@@ -830,34 +729,6 @@ public final class HLSJob {
                 _ = await captions?.result
                 try? FileManager.default.removeItem(at: cache)
             }
-        }
-    }
-
-    private func subtitleRendering(_ subtitle: SubtitleChoice, input: URL, info: MediaInfo, directory: URL) throws -> SubtitleRendering? {
-        guard subtitle != .none else { return nil }
-        let inputs = directory.appendingPathComponent(".inputs", isDirectory: true)
-        try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: true)
-        switch subtitle {
-        case .none: return nil
-        case .embedded(let index):
-            guard let ordinal = info.subtitleTracks.firstIndex(where: { $0.id == index }) else {
-                throw MediaPipelineError.invalidMedia(NSLocalizedString("The selected subtitle track is missing from the file.", comment: ""))
-            }
-            if info.subtitleTracks[ordinal].isBitmapSubtitle {
-                return .bitmap(index)
-            }
-            // Fixed relative symlinks keep filenames out of FFmpeg's filter expression parser.
-            try FileManager.default.createSymbolicLink(at: inputs.appendingPathComponent("source"), withDestinationURL: input)
-            return .text("subtitles=filename=.inputs/source:si=\(ordinal)")
-        case .external(let url):
-            try validateLocalFile(url)
-            let ext = url.pathExtension.lowercased()
-            guard ["srt", "ass", "ssa", "vtt", "webvtt", "sub", "txt", "mpl", "mpl2"].contains(ext) else {
-                throw MediaPipelineError.invalidMedia(NSLocalizedString("SRT, ASS, SSA and VTT text subtitles are supported.", comment: ""))
-            }
-            let name = "subtitle.\(ext)"
-            try FileManager.default.createSymbolicLink(at: inputs.appendingPathComponent(name), withDestinationURL: url)
-            return .text("subtitles=filename=.inputs/\(name)")
         }
     }
 
