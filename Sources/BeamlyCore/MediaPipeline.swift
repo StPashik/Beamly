@@ -320,6 +320,37 @@ public struct FFmpegTools: Sendable {
         return value
     }
 
+    func indexedDolbyAudio(url: URL, tracks: [MediaTrack], lastKeyframe: Double, videoDuration: Double) async throws -> [IndexedHLSAudio] {
+        guard !tracks.isEmpty else { return [] }
+        guard let ffprobe = ffprobeURL else { throw MediaPipelineError.missingTool("ffprobe") }
+        let output = try await ProcessRunner().run(executable: ffprobe, arguments: [
+            "-v", "error", "-select_streams", "a", "-read_intervals", "%+0.5,\(lastKeyframe)%",
+            "-show_entries", "packet=stream_index,pts_time,duration_time", "-of", "json", url.path
+        ], outputLimit: 4 * 1024 * 1024)
+        let packets = try JSONDecoder().decode(PacketList.self, from: output.stdout).packets
+        let streams = Dictionary(grouping: packets, by: \.stream_index)
+        return try tracks.enumerated().map { index, track in
+            guard let packets = streams[track.id], let first = packets.first?.pts_time.flatMap(Double.init),
+                  let last = packets.last?.pts_time.flatMap(Double.init), abs(first) < 0.5, abs(last - videoDuration) < 0.5,
+                  packets.allSatisfy({ $0.duration_time.flatMap(Double.init) == 0.032 }) else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            // FFmpeg cuts audio-only HLS at the first packet on or after each six-second boundary.
+            // shortcut: only indexed Dolby tracks with a 32 ms cadence, extend when other packet clocks can be validated.
+            let frames = ((last - first) / 0.032).rounded()
+            guard frames >= 0, frames < 3_000_000, abs(first + frames * 0.032 - last) < 0.001 else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            let duration = (Int(frames) + 1) * 32
+            let starts = stride(from: 0, to: duration, by: 6000).map { ($0 + 31) / 32 * 32 }.filter { $0 < duration }
+            let times = (starts + [duration]).map { first + Double($0) / 1000 }
+            let segments = zip(times, times.dropFirst()).enumerated().map { offset, pair in
+                IndexedHLSSegment(name: String(format: "segment_%d_%06d.m4s", index + 1, offset), start: pair.0, end: pair.1)
+            }
+            return IndexedHLSAudio(track: track, segments: segments)
+        }
+    }
+
     private func firstPacket(url: URL, stream: String, seek: Double?) async throws -> PacketList.Packet? {
         guard let executable = ffprobeURL else { throw MediaPipelineError.missingTool("ffprobe") }
         var arguments = ["-v", "error", "-select_streams", stream]
@@ -376,6 +407,7 @@ public struct FFmpegTools: Sendable {
 
     private struct PacketList: Decodable {
         struct Packet: Decodable {
+            let stream_index: Int?
             let pts_time: String?
             let dts_time: String?
             let duration_time: String?
@@ -634,7 +666,7 @@ public final class HLSJob {
         guard input.pathExtension.lowercased() == "mkv", info.canCopyVideo, info.videoCodec == "h264",
               !info.subtitleTracks.contains(where: \.isTextSubtitle),
               info.duration.isFinite, info.duration > 0, let audio, Self.hasSurround(audio),
-              Self.matchingAudioTracks(for: audio, in: info.audioTracks).count == 1,
+              Self.dolbyTracks(startingWith: audio, in: info.audioTracks).count == 1,
               let ffmpeg = tools.ffmpegURL else { return nil }
         try validateLocalFile(input)
         stop()
@@ -710,10 +742,11 @@ public final class HLSJob {
             // Corrections can move all audio outside the remaining video, which must still play silently.
             let audio = audioDelay != 0 && (audioDelay >= info.duration || sourceOffset >= info.duration + audioDelay) ? nil :
                 info.audioTracks.first { $0.id == audioTrack } ?? info.defaultAudioTrack
-            let copyDolby = isVideoCopied && allowDolbyAudio && Self.hasSurround(audio)
+            let copyDolby = isVideoCopied && allowDolbyAudio && Self.hasDolby(audio)
             let useSystemAAC = isVideoCopied && !copyDolby && audio.map { !Self.isStereoAAC($0) } == true
-            var audioTracks = audio.map { track in
-                isVideoCopied && (copyDolby || Self.isStereoAAC(track)) ? Self.matchingAudioTracks(for: track, in: info.audioTracks) : [track]
+            var audioTracks = audio.map { track -> [MediaTrack] in
+                if copyDolby { return Self.dolbyTracks(startingWith: track, in: info.audioTracks) }
+                return isVideoCopied && Self.isStereoAAC(track) ? Self.matchingAudioTracks(for: track, in: info.audioTracks) : [track]
             } ?? []
             let embeddedCaptions = isVideoCopied ? try Self.embeddedCaptions(subtitle, info: info) : []
             var sharedOutputs: [String] = []
@@ -822,19 +855,20 @@ public final class HLSJob {
               (12...86_400).contains(info.duration), startTime.isFinite, startTime >= 0, subtitleDelay.isFinite,
               let ffmpeg = tools.ffmpegURL else { return nil }
         let audio = info.audioTracks.first { $0.id == audioTrack } ?? info.defaultAudioTrack
-        if let audio {
-            // Dolby Digital Plus uses the regular audio rendition so it can signal JOC.
-            guard (audio.codec == "ac3" && (info.videoCodec == "hevc" || Self.hasSurround(audio))) || Self.isStereoAAC(audio),
-                  Self.matchingAudioTracks(for: audio, in: info.audioTracks).count == 1 else { return nil }
+        let separateDolby = Self.hasDolby(audio)
+        if let audio, !separateDolby {
+            guard info.audioTracks.count == 1, Self.isStereoAAC(audio) else { return nil }
         }
+        let renditions = separateDolby ? audio.map { Self.dolbyTracks(startingWith: $0, in: info.audioTracks) } ?? [] : []
 
         try validateLocalFile(input)
         stop()
         diagnostic = nil
         let generation = self.generation
         do {
-            return try await prepareIndexedHLS(input: input, info: info, audio: audio, startTime: startTime, subtitleDelay: subtitleDelay,
-                                               ffmpeg: ffmpeg, generation: generation, onFailure: onFailure, progress: progress)
+            return try await prepareIndexedHLS(input: input, info: info, audio: separateDolby ? nil : audio, renditions: renditions,
+                                               startTime: startTime, subtitleDelay: subtitleDelay, ffmpeg: ffmpeg,
+                                               generation: generation, onFailure: onFailure, progress: progress)
         } catch {
             guard self.generation == generation else { throw CancellationError() }
             stop()
@@ -844,7 +878,7 @@ public final class HLSJob {
         }
     }
 
-    private func prepareIndexedHLS(input: URL, info: MediaInfo, audio: MediaTrack?, startTime: Double, subtitleDelay: Double,
+    private func prepareIndexedHLS(input: URL, info: MediaInfo, audio: MediaTrack?, renditions: [MediaTrack], startTime: Double, subtitleDelay: Double,
                                    ffmpeg: URL, generation: UUID, onFailure: @escaping @MainActor (Error) -> Void,
                                    progress: @MainActor (PlaybackPreparationStage) -> Void) async throws -> URL? {
         let indexing = Task.detached(priority: .userInitiated) { try MatroskaCueIndex.videoKeyframes(in: input) }
@@ -862,6 +896,9 @@ public final class HLSJob {
         try Task.checkCancellation()
         guard self.generation == generation else { throw CancellationError() }
         guard videoDuration <= info.duration + 0.5, info.duration - videoDuration <= maximumKeyframeInterval else { return nil }
+        let audioRenditions = try await tools.indexedDolbyAudio(url: input, tracks: renditions, lastKeyframe: last, videoDuration: videoDuration)
+        try Task.checkCancellation()
+        guard self.generation == generation else { throw CancellationError() }
         // The HLS muxer cuts on the first keyframe at or beyond each successive time threshold.
         var starts = [0.0]
         for time in keyframes.dropFirst() where time >= Double(segmentLength * starts.count) {
@@ -887,17 +924,25 @@ public final class HLSJob {
         try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: false)
         try FileManager.default.createDirectory(at: generated, withIntermediateDirectories: false)
         isVideoCopied = true
-        usesOriginalDolby = audio?.codec == "ac3"
+        usesOriginalDolby = !audioRenditions.isEmpty
         progress(.originalStream)
         let captions = try Self.embeddedCaptions(.none, info: info)
 
         var args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-copyts", "-i", input.path, "-map", "0:V:0"]
         if let audio { args += ["-map", "0:\(audio.id)"] }
+        for rendition in audioRenditions { args += ["-map", "0:\(rendition.track.id)"] }
         if isHEVC { args += ["-bsf:v", "hevc_mp4toannexb"] }
         args += ["-c", "copy", "-tag:v", isHEVC ? "hvc1" : "avc1", "-sn", "-dn", "-avoid_negative_ts", "make_zero", "-f", "hls",
                  "-hls_segment_type", "fmp4", "-hls_time", String(segmentLength), "-hls_list_size", "0",
                  "-hls_playlist_type", "vod", "-hls_flags", "temp_file+independent_segments",
-                 "-hls_fmp4_init_filename", "init_0.mp4", "-hls_segment_filename", ".generated/segment_0_%06d.m4s", ".rendered.m3u8"]
+                 "-hls_fmp4_init_filename", audioRenditions.isEmpty ? "init_0.mp4" : "init_%v.mp4",
+                 "-hls_segment_filename", audioRenditions.isEmpty ? ".generated/segment_0_%06d.m4s" : ".generated/segment_%v_%06d.m4s"]
+        if audioRenditions.isEmpty {
+            args += [".rendered.m3u8"]
+        } else {
+            let variants = ["v:0"] + audioRenditions.indices.map { "a:\($0)" }
+            args += ["-var_stream_map", variants.joined(separator: " "), ".rendered_%v.m3u8"]
+        }
         if !frames.isEmpty {
             args += Self.iFrameArguments(duration: videoDuration, playlist: ".rendered-iframe.m3u8", segmentPattern: ".generated/iframe-%06d.m4s")
         }
@@ -914,7 +959,9 @@ public final class HLSJob {
             }
         }
         let firstSegments = videoSegments.prefix(2).map(\.name) + frames.prefix(1).map(\.name)
-        let firstFiles = ["init_0.mp4"] + (frames.isEmpty ? [] : ["iframe-init.mp4"]) + firstSegments.map { ".generated/" + $0 }
+            + audioRenditions.flatMap { $0.segments.prefix(2).map(\.name) }
+        let audioInits = audioRenditions.indices.map { "init_\($0 + 1).mp4" }
+        let firstFiles = ["init_0.mp4"] + audioInits + (frames.isEmpty ? [] : ["iframe-init.mp4"]) + firstSegments.map { ".generated/" + $0 }
         func firstSegmentsReady() -> Bool {
             firstFiles.allSatisfy { FileManager.default.fileExists(atPath: cache.appendingPathComponent($0).path) }
         }
@@ -954,6 +1001,14 @@ public final class HLSJob {
         try write(first.lastPathComponent, initialization: "init_0.mp4", segments: [videoSegments[0]])
         let firstPTS = try await tools.firstVideoTimestamp(url: first)
         let firstAudioPTS = audio == nil ? 0 : try await tools.firstAudioTimestamp(url: first)
+        for (index, rendition) in audioRenditions.enumerated() {
+            let firstAudio = ".first-audio-\(index).m3u8"
+            try write(firstAudio, initialization: audioInits[index], segments: [rendition.segments[0]])
+            let timestamp = try await tools.firstAudioTimestamp(url: cache.appendingPathComponent(firstAudio))
+            guard let planned = rendition.segments.first?.start, abs(timestamp - firstPTS - planned) < 0.002 else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+        }
         let videoCodec = try await HLSCodec.identifier(at: cache.appendingPathComponent("init_0.mp4"))
         try Task.checkCancellation()
         guard self.generation == generation, abs(firstPTS) < 0.5, abs(firstAudioPTS) < 0.5 else {
@@ -962,12 +1017,15 @@ public final class HLSJob {
         sourceOffset = -firstPTS
         let ranges = IndexedHLSRanges(tools: tools, ffmpeg: ffmpeg, input: input, directory: cache, generated: generated, isHEVC: isHEVC,
                                       audioTrack: audio?.id, firstPTS: firstPTS, firstAudioPTS: firstAudioPTS,
-                                      keyframes: keyframes, video: videoSegments, previews: frames)
+                                      keyframes: keyframes, video: videoSegments, previews: frames, audio: audioRenditions)
         indexedRanges = ranges
         if startTime > 0 { try await ranges.prepare(at: min(startTime, videoDuration)) }
         try Task.checkCancellation()
         guard self.generation == generation else { throw CancellationError() }
         try write("stream_0.m3u8", initialization: "init_0.mp4", segments: videoSegments)
+        for (index, rendition) in audioRenditions.enumerated() {
+            try write("stream_\(index + 1).m3u8", initialization: audioInits[index], segments: rendition.segments)
+        }
         if !frames.isEmpty { try write("iframe.m3u8", initialization: "iframe-init.mp4", segments: frames, iFrames: true) }
         for caption in captions { try Self.writeCaptionPlaylist(caption, duration: videoDuration - sourceOffset, in: cache) }
         let audioCodec = audio.map { $0.codec == "ac3" ? ",ac-3" : ",mp4a.40.2" } ?? ""
@@ -976,12 +1034,15 @@ public final class HLSJob {
         let average = max(1, Int(min(1_000_000_000, Double(size) * 8 / videoDuration)))
         let video = (peak: average * 3, average: average, duration: videoDuration)
         let previews: Bandwidth? = frames.isEmpty ? nil : (peak: average, average: max(1, average / 8), duration: videoDuration)
-        _ = try await Self.writeMaster(directory: cache, codec: videoCodec + audioCodec, info: info, video: video, iFrames: previews,
-                                       iFrameCodec: videoCodec, audioTracks: [], copyDolby: usesOriginalDolby, captions: captions, selectedSubtitle: .none)
+        let names = try await Self.writeMaster(directory: cache, codec: videoCodec + audioCodec, info: info, video: video, iFrames: previews,
+                                               iFrameCodec: videoCodec, audioTracks: renditions, copyDolby: usesOriginalDolby, captions: captions,
+                                               selectedSubtitle: .none, indexedAudio: !audioRenditions.isEmpty)
         try Task.checkCancellation()
         guard self.generation == generation else { throw CancellationError() }
         subtitleNames = Dictionary(uniqueKeysWithValues: captions.map { ($0.choice, $0.name) })
-        pendingHLSFiles = Set(videoSegments.map(\.name) + frames.map(\.name) + captions.map { $0.stem + ".vtt" })
+        audioNames = names
+        pendingHLSFiles = Set(videoSegments.map(\.name) + frames.map(\.name) + captions.map { $0.stem + ".vtt" }
+                              + audioRenditions.flatMap { $0.segments.map(\.name) })
         earlyHLSVideoDuration = videoDuration
 
         Task { [weak self] in
@@ -1001,9 +1062,15 @@ public final class HLSJob {
                                 ((isIFramePlaylist && isLast) || abs(pair.0.duration - pair.1.duration) <= (isLast ? 0.5 : 0.002))
                         }
                 }
-                guard try matches(".rendered.m3u8", plan: videoSegments),
+                let renderedVideo = audioRenditions.isEmpty ? ".rendered.m3u8" : ".rendered_0.m3u8"
+                guard try matches(renderedVideo, plan: videoSegments),
                       try (frames.isEmpty || matches(".rendered-iframe.m3u8", plan: frames, isIFramePlaylist: true)) else {
                     throw CocoaError(.fileReadCorruptFile)
+                }
+                for (index, rendition) in audioRenditions.enumerated() {
+                    guard try matches(".rendered_\(index + 1).m3u8", plan: rendition.segments) else {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
                 }
                 let readyCaptions = try await self.prepareCaptions(.none, embedded: captions, alreadyExtracted: true, input: input,
                     info: info, cache: cache, subtitleDelay: subtitleDelay, ffmpeg: ffmpeg, videoDuration: videoDuration)
@@ -1088,8 +1155,16 @@ public final class HLSJob {
     }
 
     private static func hasSurround(_ audio: MediaTrack?) -> Bool {
+        Self.hasDolby(audio) && (audio?.channels ?? 0) > 2
+    }
+
+    private static func hasDolby(_ audio: MediaTrack?) -> Bool {
         guard let audio else { return false }
-        return ["ac3", "eac3"].contains(audio.codec) && (audio.channels ?? 0) > 2
+        return ["ac3", "eac3"].contains(audio.codec)
+    }
+
+    private static func dolbyTracks(startingWith selected: MediaTrack, in tracks: [MediaTrack]) -> [MediaTrack] {
+        [selected] + tracks.filter { $0.id != selected.id && hasDolby($0) }
     }
 
     private static func isStereoAAC(_ audio: MediaTrack) -> Bool {
@@ -1316,28 +1391,25 @@ public final class HLSJob {
 
     private static func writeMaster(directory: URL, codec: String, info: MediaInfo, video: Bandwidth, iFrames: Bandwidth?,
                                     iFrameCodec: String? = nil, audioTracks: [MediaTrack], copyDolby: Bool, captions: [CaptionRendition],
-                                    selectedSubtitle: SubtitleChoice) async throws -> [Int: String] {
+                                    selectedSubtitle: SubtitleChoice, indexedAudio: Bool = false) async throws -> [Int: String] {
         var master = "#EXTM3U\n#EXT-X-VERSION:7\n"
         for caption in captions {
             let isDefault = caption.choice == selectedSubtitle ? "YES" : "NO"
             master += "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"\(caption.name)\",LANGUAGE=\"\(caption.language)\",DEFAULT=\(isDefault),AUTOSELECT=\(isDefault),URI=\"\(caption.stem).m3u8\"\n"
         }
-        var sound = (peak: 0, average: 0)
-        var codecs = codec
-        let group = copyDolby ? "surround" : "stereo"
+        var groups: [(id: String, codec: String, peak: Int, average: Int)] = []
         var audioNames: [Int: String] = [:]
         var names: Set<String> = []
         var selectedDuration = 0.0
-        if let selected = audioTracks.first {
-            let audioCodec = copyDolby ? (selected.codec == "ac3" ? "ac-3" : "ec-3") : "mp4a.40.2"
-            codecs += ",\(audioCodec)"
-        }
         for (index, audio) in audioTracks.enumerated() {
             let number = index + 1
             let file = "stream_\(number).m3u8"
             let url = directory.appendingPathComponent(file)
             let measured: Bandwidth
-            if index == 0 {
+            if indexedAudio {
+                // The source-based estimate already includes every audio track.
+                measured = (peak: 0, average: 0, duration: video.duration)
+            } else if index == 0 {
                 measured = try bandwidth(of: url)
                 selectedDuration = measured.duration
             } else {
@@ -1345,25 +1417,39 @@ public final class HLSJob {
                       abs(alternate.duration - selectedDuration) <= 0.5 else { continue }
                 measured = alternate
             }
-            sound.peak = max(sound.peak, measured.peak)
-            sound.average = max(sound.average, measured.average)
             let language = MediaLanguages.normalized(audio.language) ?? "und"
             let title = audio.title ?? Locale(identifier: "en").localizedString(forLanguageCode: language) ?? "Audio"
             let name = uniqueRenditionName(title, fallback: "Audio", names: &names)
             audioNames[audio.id] = name
-            var channels = String(copyDolby || isStereoAAC(audio) ? audio.channels ?? 2 : 2)
+            let count = copyDolby || isStereoAAC(audio) ? audio.channels ?? 2 : 2
+            var channels = String(count)
             if copyDolby, audio.codec == "eac3",
                let complexity = await HLSCodec.jocComplexity(at: directory.appendingPathComponent("init_\(number).mp4")) {
                 channels = "\(complexity)/JOC"
             }
-            let isDefault = index == 0 ? "YES" : "NO"
+            let audioCodec = copyDolby ? (audio.codec == "ac3" ? "ac-3" : "ec-3") : "mp4a.40.2"
+            let group = "\(audioCodec)-\(count)"
+            let isDefault: String
+            if let groupIndex = groups.firstIndex(where: { $0.id == group }) {
+                groups[groupIndex].peak = max(groups[groupIndex].peak, measured.peak)
+                groups[groupIndex].average = max(groups[groupIndex].average, measured.average)
+                isDefault = "NO"
+            } else {
+                groups.append((group, audioCodec, measured.peak, measured.average))
+                isDefault = "YES"
+            }
             master += "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"\(group)\",NAME=\"\(name)\",LANGUAGE=\"\(language)\",CHANNELS=\"\(channels)\",DEFAULT=\(isDefault),AUTOSELECT=\(isDefault),URI=\"\(file)\"\n"
         }
-        master += "#EXT-X-STREAM-INF:BANDWIDTH=\(video.peak + sound.peak),AVERAGE-BANDWIDTH=\(video.average + sound.average),RESOLUTION=\(info.width)x\(info.height),CODECS=\"\(codecs)\",VIDEO-RANGE=\(info.videoRange)"
-        if info.frameRate > 0 { master += String(format: ",FRAME-RATE=%.3f", locale: Locale(identifier: "en_US_POSIX"), info.frameRate) }
-        if !audioNames.isEmpty { master += ",AUDIO=\"\(group)\"" }
-        if !captions.isEmpty { master += ",SUBTITLES=\"subs\"" }
-        master += ",CLOSED-CAPTIONS=NONE\nstream_0.m3u8\n"
+        func variant(group: String?, codecs: String, peak: Int = 0, average: Int = 0) -> String {
+            var line = "#EXT-X-STREAM-INF:BANDWIDTH=\(video.peak + peak),AVERAGE-BANDWIDTH=\(video.average + average),RESOLUTION=\(info.width)x\(info.height),CODECS=\"\(codecs)\",VIDEO-RANGE=\(info.videoRange)"
+            if info.frameRate > 0 { line += String(format: ",FRAME-RATE=%.3f", locale: Locale(identifier: "en_US_POSIX"), info.frameRate) }
+            if let group { line += ",AUDIO=\"\(group)\"" }
+            if !captions.isEmpty { line += ",SUBTITLES=\"subs\"" }
+            return line + ",CLOSED-CAPTIONS=NONE\nstream_0.m3u8\n"
+        }
+        master += groups.isEmpty ? variant(group: nil, codecs: codec) : groups.map {
+            variant(group: $0.id, codecs: codec + "," + $0.codec, peak: $0.peak, average: $0.average)
+        }.joined()
         if let iFrames {
             master += "#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=\(iFrames.peak),AVERAGE-BANDWIDTH=\(iFrames.average),RESOLUTION=\(info.width)x\(info.height),CODECS=\"\(iFrameCodec ?? codec)\",VIDEO-RANGE=SDR,URI=\"iframe.m3u8\"\n"
         }

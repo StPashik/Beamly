@@ -39,9 +39,11 @@ final class PlaybackTests: XCTestCase {
             "-x265-params", "pools=2:frame-threads=2:keyint=104:min-keyint=104:scenecut=0:open-gop=0:bframes=2:repeat-headers=1:log-level=error:\(colors)"]
             : ["-c:v", "libx264", "-g", "104", "-sc_threshold", "0", "-bf", "0"]
         generator.arguments = ["-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=c=blue:size=160x90:rate=10:duration=60",
-            "-f", "lavfi", "-i", hevc ? "anullsrc=r=48000:cl=stereo:d=60" : "anullsrc=r=48000:cl=5.1:d=60",
-            "-i", captions.path, "-i", chapters.path, "-map", "0:v", "-map", "1:a", "-map", "2:s", "-map_chapters", "3"]
-            + video + ["-c:a", "ac3", "-af", "asetpts=PTS+256/SR/TB", "-c:s", "srt", movie.path]
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=60",
+            "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=60",
+            "-i", captions.path, "-i", chapters.path, "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s", "-map_chapters", "4"]
+            + video + ["-c:a:0", "ac3", "-ac:a:0", "2", "-c:a:1", "eac3", "-ac:a:1", "6", "-af", "asetpts=PTS+256/SR/TB",
+                       "-metadata:s:a:0", "language=rus", "-metadata:s:a:1", "language=eng", "-c:s", "srt", movie.path]
         generator.standardInput = FileHandle.nullDevice
         try generator.run()
         generator.waitUntilExit()
@@ -57,16 +59,16 @@ final class PlaybackTests: XCTestCase {
             set -e
             tools_dir="$(dirname "$0")"
             case " $* " in
-              *" .rendered.m3u8 "*)
+              *" .rendered_%v.m3u8 "*)
                 pwd > "$tools_dir/early-cache"
                 mkdir -p .staged/.generated
                 (cd .staged && "$tools_dir/real-ffmpeg" "$@")
-                mv .staged/init_0.mp4 .
+                mv .staged/init_*.mp4 .
                 if [ -f .staged/iframe-init.mp4 ]; then
                     mv .staged/iframe-init.mp4 .
                     mv .staged/.generated/iframe-000000.m4s .generated
                 fi
-                mv .staged/.generated/segment_0_000000.m4s .staged/.generated/segment_0_000001.m4s .generated
+                mv .staged/.generated/segment_*_000000.m4s .staged/.generated/segment_*_000001.m4s .generated
                 attempts=0
                 until [ -f "$tools_dir/finish-early" ]; do
                     attempts=$((attempts + 1))
@@ -74,7 +76,7 @@ final class PlaybackTests: XCTestCase {
                     sleep 0.05
                 done
                 mv .staged/.generated/*.m4s .generated
-                mv .staged/.rendered.m3u8 .
+                mv .staged/.rendered_*.m3u8 .
                 if [ -f .staged/.rendered-iframe.m3u8 ]; then mv .staged/.rendered-iframe.m3u8 .; fi
                 exit 0 ;;
             esac
@@ -106,12 +108,11 @@ final class PlaybackTests: XCTestCase {
         let cachePath = try String(contentsOf: folder.appendingPathComponent("early-cache"), encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let cache = URL(fileURLWithPath: cachePath, isDirectory: true)
-        if hevc {
-            let master = try String(contentsOf: cache.appendingPathComponent("master.m3u8"), encoding: .utf8)
-            XCTAssertTrue(master.contains("VIDEO-RANGE=\(hdr ? "PQ" : "SDR")"))
-            XCTAssertTrue(master.contains("hvc1.2."))
-            XCTAssertTrue(master.contains("ac-3"))
-        }
+        let master = try String(contentsOf: cache.appendingPathComponent("master.m3u8"), encoding: .utf8)
+        XCTAssertTrue(master.contains("VIDEO-RANGE=\(hdr ? "PQ" : "SDR")"))
+        XCTAssertTrue(master.contains(hevc ? "hvc1.2." : "avc1."))
+        XCTAssertTrue(master.contains("ac-3"))
+        XCTAssertTrue(master.contains("ec-3"))
         let manifest = try String(contentsOf: cache.appendingPathComponent("stream_0.m3u8"), encoding: .utf8)
         let last = try XCTUnwrap(manifest.split(separator: "\n").last { $0.hasSuffix(".m4s") })
         XCTAssertFalse(FileManager.default.fileExists(atPath: cache.appendingPathComponent(String(last)).path))
@@ -123,6 +124,13 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(seekable, 60, accuracy: 0.1)
         let captionsGroup = try await earlyItem.asset.loadMediaSelectionGroup(for: .legible)
         XCTAssertEqual(captionsGroup?.options.count, 1)
+        let loadedAudio = try await earlyItem.asset.loadMediaSelectionGroup(for: .audible)
+        let audioGroup = try XCTUnwrap(loadedAudio)
+        XCTAssertEqual(audioGroup.options.count, 2)
+        let english = try XCTUnwrap(audioGroup.options.first { MediaLanguages.normalized($0.extendedLanguageTag) == "en" })
+        earlyItem.select(english, in: audioGroup)
+        try await wait { model.audioID == 2 }
+        XCTAssertTrue(player.currentItem === earlyItem)
 
         let lastSegment = cache.appendingPathComponent(String(last))
         model.seek(58)
@@ -130,11 +138,15 @@ final class PlaybackTests: XCTestCase {
             FileManager.default.fileExists(atPath: lastSegment.path)
                 && player.currentTime().seconds >= 58.15 && player.timeControlStatus == .playing
         }
-        XCTAssertFalse(FileManager.default.fileExists(atPath: cache.appendingPathComponent(".rendered.m3u8").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cache.appendingPathComponent(".rendered_0.m3u8").path))
         XCTAssertTrue(player.currentItem === earlyItem)
-        if hevc {
-            let initialization = try Data(contentsOf: cache.appendingPathComponent("init_0.mp4"))
-            let sequential = cache.appendingPathComponent(".staged/.generated").appendingPathComponent(String(last))
+        let audioManifest = try String(contentsOf: cache.appendingPathComponent("stream_2.m3u8"), encoding: .utf8)
+        let lastAudioName = try XCTUnwrap(audioManifest.split(separator: "\n").last { $0.hasSuffix(".m4s") })
+        let lastAudio = cache.appendingPathComponent(String(lastAudioName))
+        try await wait { FileManager.default.fileExists(atPath: lastAudio.path) }
+        for (index, segment) in [(0, lastSegment), (2, lastAudio)] {
+            let initialization = try Data(contentsOf: cache.appendingPathComponent("init_\(index).mp4"))
+            let sequential = cache.appendingPathComponent(".staged/.generated").appendingPathComponent(segment.lastPathComponent)
             let probeInput = folder.appendingPathComponent("fragment.mp4")
             func packets(_ segment: URL) throws -> [Substring] {
                 try (initialization + Data(contentsOf: segment)).write(to: probeInput)
@@ -150,7 +162,7 @@ final class PlaybackTests: XCTestCase {
                 XCTAssertEqual(probe.terminationStatus, 0)
                 return String(decoding: rows, as: UTF8.self).split(separator: "\n").sorted()
             }
-            XCTAssertTrue(try packets(lastSegment) == packets(sequential), "Priority HEVC and AC-3 packets must match the sequential remux")
+            XCTAssertTrue(try packets(segment) == packets(sequential), "Priority packets must match the sequential remux")
         }
         model.seek(0)
         try await wait { player.currentTime().seconds < 1 && player.timeControlStatus == .playing }
