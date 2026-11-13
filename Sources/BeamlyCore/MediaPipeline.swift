@@ -325,13 +325,14 @@ public struct FFmpegTools: Sendable {
         guard let ffprobe = ffprobeURL else { throw MediaPipelineError.missingTool("ffprobe") }
         let output = try await ProcessRunner().run(executable: ffprobe, arguments: [
             "-v", "error", "-select_streams", "a", "-read_intervals", "%+0.5,\(lastKeyframe)%",
-            "-show_entries", "packet=stream_index,pts_time,duration_time", "-of", "json", url.path
+            "-show_entries", "packet=stream_index,pts_time,duration_time,size", "-of", "json", url.path
         ], outputLimit: 4 * 1024 * 1024)
         let packets = try JSONDecoder().decode(PacketList.self, from: output.stdout).packets
         let streams = Dictionary(grouping: packets, by: \.stream_index)
         return try tracks.enumerated().map { index, track in
             guard let packets = streams[track.id], let first = packets.first?.pts_time.flatMap(Double.init),
-                  let last = packets.last?.pts_time.flatMap(Double.init), abs(first) < 0.5, abs(last - videoDuration) < 0.5,
+                  let last = packets.last?.pts_time.flatMap(Double.init), first.isFinite, abs(first) < 0.5,
+                  last.isFinite, last - videoDuration < 0.5,
                   packets.allSatisfy({ $0.duration_time.flatMap(Double.init) == 0.032 }) else {
                 throw CocoaError(.fileReadCorruptFile)
             }
@@ -344,10 +345,24 @@ public struct FFmpegTools: Sendable {
             let duration = (Int(frames) + 1) * 32
             let starts = stride(from: 0, to: duration, by: 6000).map { ($0 + 31) / 32 * 32 }.filter { $0 < duration }
             let times = (starts + [duration]).map { first + Double($0) / 1000 }
-            let segments = zip(times, times.dropFirst()).enumerated().map { offset, pair in
-                IndexedHLSSegment(name: String(format: "segment_%d_%06d.m4s", index + 1, offset), start: pair.0, end: pair.1)
+            func segment(_ offset: Int, from start: Double, to end: Double) -> IndexedHLSSegment {
+                IndexedHLSSegment(name: String(format: "segment_%d_%06d.m4s", index + 1, offset), start: start, end: end)
             }
-            return IndexedHLSAudio(track: track, segments: segments)
+            let segments = zip(times, times.dropFirst()).enumerated().map { segment($0, from: $1.0, to: $1.1) }
+            guard videoDuration - last >= 0.5 else { return IndexedHLSAudio(track: track, segments: segments) }
+            let missing = videoDuration - last - 0.032
+            // shortcut: pad at most two minutes of fixed-rate stereo AC-3, extend after verifying other Dolby formats.
+            guard track.codec == "ac3", track.channels == 2, duration >= 12_032, missing <= 120,
+                  let size = packets.first?.size.flatMap(Int.init), (128...2560).contains(size),
+                  packets.allSatisfy({ $0.size.flatMap(Int.init) == size }) else { throw CocoaError(.fileReadCorruptFile) }
+            let paddedDuration = duration + Int(ceil(missing / 0.032)) * 32
+            // Start padding at EOF and keep every boundary on a complete 32 ms frame.
+            let paddingTimes = stride(from: duration, to: paddedDuration, by: 5984).map { first + Double($0) / 1000 }
+                + [first + Double(paddedDuration) / 1000]
+            let silent = zip(paddingTimes, paddingTimes.dropFirst()).enumerated().map {
+                segment(segments.count + $0, from: $1.0, to: $1.1)
+            }
+            return IndexedHLSAudio(track: track, segments: segments, padding: .init(bitrate: size * 250, segments: silent))
         }
     }
 
@@ -412,6 +427,7 @@ public struct FFmpegTools: Sendable {
             let dts_time: String?
             let duration_time: String?
             let flags: String?
+            let size: String?
         }
         let packets: [Packet]
     }
@@ -982,8 +998,9 @@ public final class HLSJob {
             try FileManager.default.linkItem(at: generated.appendingPathComponent(name), to: cache.appendingPathComponent(name))
         }
 
+        let targetDuration = Int(ceil(videoSegments.map(\.duration).max() ?? 1))
         func write(_ name: String, initialization: String, segments: [IndexedHLSSegment], iFrames: Bool = false) throws {
-            let target = Int(ceil(segments.map(\.duration).max() ?? 1))
+            let target = iFrames ? Int(ceil(segments.map(\.duration).max() ?? 1)) : targetDuration
             var lines = ["#EXTM3U", "#EXT-X-VERSION:7", "#EXT-X-TARGETDURATION:\(target)", "#EXT-X-PLAYLIST-TYPE:VOD",
                          "#EXT-X-MEDIA-SEQUENCE:0", "#EXT-X-INDEPENDENT-SEGMENTS", "#EXT-X-MAP:URI=\"\(initialization)\""]
             if iFrames { lines.append("#EXT-X-I-FRAMES-ONLY") }
@@ -1009,6 +1026,15 @@ public final class HLSJob {
                 throw CocoaError(.fileReadCorruptFile)
             }
         }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for (index, rendition) in audioRenditions.enumerated() where rendition.padding != nil {
+                let initialization = audioInits[index]
+                group.addTask {
+                    try await IndexedHLSRanges.prepareSilentAudio(for: rendition, initialization: initialization, ffmpeg: ffmpeg, directory: cache)
+                }
+            }
+            try await group.waitForAll()
+        }
         let videoCodec = try await HLSCodec.identifier(at: cache.appendingPathComponent("init_0.mp4"))
         try Task.checkCancellation()
         guard self.generation == generation, abs(firstPTS) < 0.5, abs(firstAudioPTS) < 0.5 else {
@@ -1024,7 +1050,7 @@ public final class HLSJob {
         guard self.generation == generation else { throw CancellationError() }
         try write("stream_0.m3u8", initialization: "init_0.mp4", segments: videoSegments)
         for (index, rendition) in audioRenditions.enumerated() {
-            try write("stream_\(index + 1).m3u8", initialization: audioInits[index], segments: rendition.segments)
+            try write("stream_\(index + 1).m3u8", initialization: audioInits[index], segments: rendition.playlistSegments)
         }
         if !frames.isEmpty { try write("iframe.m3u8", initialization: "iframe-init.mp4", segments: frames, iFrames: true) }
         for caption in captions { try Self.writeCaptionPlaylist(caption, duration: videoDuration - sourceOffset, in: cache) }
