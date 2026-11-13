@@ -122,6 +122,7 @@ final class AppModel: ObservableObject {
                 if !player.isExternalPlaybackActive, player.timeControlStatus != .paused { player.pause() }
                 Task { @MainActor in
                     guard let self else { return }
+                    if (self.current == nil || self.isPreparing), player.timeControlStatus != .paused { player.pause() }
                     self.refreshPlaybackState()
                 }
             },
@@ -134,7 +135,7 @@ final class AppModel: ObservableObject {
         ]
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor in
-                guard let self, !self.isPreparing, self.player.currentItem != nil, time.seconds.isFinite else { return }
+                guard let self, self.current != nil, !self.isPreparing, self.player.currentItem != nil, time.seconds.isFinite else { return }
                 if self.isExternal { self.refreshTrackChoices() }
                 self.position = min(self.duration, max(0, self.sourceOffset + time.seconds))
                 self.playlist.remember(position: self.position, duration: self.duration)
@@ -292,6 +293,7 @@ final class AppModel: ObservableObject {
     }
 
     func togglePlay() {
+        guard let id = current?.id else { openFiles(); return }
         if isPreparing {
             setSleepTimer(nil)
             remember()
@@ -300,10 +302,8 @@ final class AppModel: ObservableObject {
             return
         }
         if player.currentItem == nil {
-            if let id = playlist.currentID {
-                select(id)
-                playIfConnected(showPicker: true)
-            } else { openFiles() }
+            select(id)
+            playIfConnected(showPicker: true)
         } else if isPlaying || (playRequested && (isAirPlayPickerRequested || isAirPlayPickerPresented)) {
             pausePlayback()
         } else {
@@ -570,7 +570,8 @@ final class AppModel: ObservableObject {
     func clear() {
         setSleepTimer(nil)
         remember()
-        cancelPlayback()
+        // Keep the paused item and its stream alive so the next movie can reuse the AirPlay route.
+        cancelPlayback(keepingItem: player.isExternalPlaybackActive || airPlayRouteHint == .confirmed)
         playlist.items.removeAll()
         playlist.currentID = nil
         subtitleID = nil
@@ -1089,7 +1090,11 @@ final class AppModel: ObservableObject {
     }
 
     private func updateNowPlaying() {
-        guard let current else { MPNowPlayingInfoCenter.default().nowPlayingInfo = nil; return }
+        guard let current else {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            MPNowPlayingInfoCenter.default().playbackState = .stopped
+            return
+        }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = [
             MPMediaItemPropertyTitle: current.title,
             MPMediaItemPropertyPlaybackDuration: duration,
@@ -1102,9 +1107,15 @@ final class AppModel: ObservableObject {
 
     private func configureRemoteCommands() {
         let commands = MPRemoteCommandCenter.shared()
-        commands.playCommand.addTarget { [weak self] _ in Task { @MainActor in if self?.isPlaying == false { self?.togglePlay() } }; return .success }
+        commands.playCommand.addTarget { [weak self] _ in
+            Task { @MainActor in if let self, self.current != nil, !self.isPlaying { self.togglePlay() } }
+            return .success
+        }
         commands.pauseCommand.addTarget { [weak self] _ in Task { @MainActor in self?.pausePlayback() }; return .success }
-        commands.togglePlayPauseCommand.addTarget { [weak self] _ in Task { @MainActor in self?.togglePlay() }; return .success }
+        commands.togglePlayPauseCommand.addTarget { [weak self] _ in
+            Task { @MainActor in if let self, self.current != nil { self.togglePlay() } }
+            return .success
+        }
         commands.nextTrackCommand.addTarget { [weak self] _ in Task { @MainActor in self?.next() }; return .success }
         commands.previousTrackCommand.addTarget { [weak self] _ in Task { @MainActor in self?.previous() }; return .success }
         commands.changePlaybackPositionCommand.addTarget { [weak self] event in

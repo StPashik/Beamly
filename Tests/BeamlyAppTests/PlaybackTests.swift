@@ -179,6 +179,78 @@ final class PlaybackTests: XCTestCase {
     }
 
     @MainActor
+    func testClearingAnActiveAirPlayQueueStopsTheMovieAndKeepsTheRouteForNewFiles() async throws {
+        let tools = mediaTestTools()
+        let ffmpeg = try XCTUnwrap(tools.ffmpegURL)
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-clear-route-\(UUID())")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        let suite = "app.beamly.clear-route.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        defaults.set(true, forKey: "autoPlay")
+        defaults.set(ffmpeg.deletingLastPathComponent().path, forKey: "toolsDirectory")
+        let first = folder.appendingPathComponent("First.mp4")
+        let second = folder.appendingPathComponent("Second.mkv")
+        let generator = Process()
+        generator.executableURL = ffmpeg
+        generator.arguments = ["-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=c=blue:size=160x90:rate=24:duration=20",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=20",
+            "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-g", "24", "-c:a", "aac", "-movflags", "+faststart", first.path,
+            "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-g", "24", "-c:a", "ac3", second.path]
+        generator.standardInput = FileHandle.nullDevice
+        try generator.run()
+        generator.waitUntilExit()
+        XCTAssertEqual(generator.terminationStatus, 0)
+
+        let player = AirPlayTestPlayer()
+        player.isMuted = true
+        player.losesRouteWhenEmptied = true
+        player.setExternalPlaybackActive(true)
+        let model = AppModel(stateURL: folder.appendingPathComponent("queue.json"), defaults: defaults, player: player)
+        defer { model.shutdown() }
+        model.add([first])
+        try await wait(diagnostic: model.errorMessage ?? model.playbackStatus) {
+            model.isPlaying && player.currentTime().seconds > 0.1
+        }
+        let oldItem = try XCTUnwrap(player.currentItem)
+        XCTAssertFalse(model.isUsingHLS)
+
+        model.clear()
+        XCTAssertTrue(model.playlist.items.isEmpty)
+        XCTAssertFalse(model.isPlaying)
+        XCTAssertEqual(player.rate, 0)
+        XCTAssertEqual(model.position, 0)
+        let retainedItem = try XCTUnwrap(player.currentItem, "Clearing must keep a paused item for the selected route")
+        XCTAssertTrue(retainedItem === oldItem)
+        XCTAssertTrue(player.isExternalPlaybackActive)
+        player.simulateTimeControl(.playing)
+        try await wait { player.timeControlStatus == .paused }
+        XCTAssertFalse(model.isPlaying, "The receiver must not resume a cleared movie")
+        player.simulateTimeControl(nil)
+
+        // AVPlayer can report an idle selected route as inactive until the next item's preroll.
+        player.setExternalPlaybackActive(false)
+        try await wait { !model.isExternal }
+        XCTAssertTrue(player.currentItem === oldItem)
+        player.resetsRouteOnReplacement = true
+        player.activatesRouteDuringPreroll = true
+        model.add([second])
+        try await wait(diagnostic: model.errorMessage ?? model.playbackStatus) {
+            model.current?.url == second && player.currentItem !== oldItem && model.isPlaying
+                && player.currentTime().seconds > 0.1
+        }
+        XCTAssertGreaterThan(player.prerollCalls, 0)
+        XCTAssertTrue(model.isUsingHLS)
+        XCTAssertEqual(player.emptyReplacements, 0)
+        XCTAssertEqual(player.localPlayCalls, 0)
+        XCTAssertFalse(model.isAirPlayPickerRequested)
+
+        model.clear()
+        model.shutdown()
+        XCTAssertNil(player.currentItem, "Shutdown must dispose of the paused item held for AirPlay")
+    }
+
+    @MainActor
     func testSelectedAirPlayRouteSurvivesStartTrackChangesAndReconnection() async throws {
         let tools = mediaTestTools()
         let ffmpeg = try XCTUnwrap(tools.ffmpegURL)
@@ -718,10 +790,12 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(model.current?.position ?? -1, 2, accuracy: 0.6)
         XCTAssertEqual(model.player.currentTime().seconds, 2, accuracy: 0.6)
         XCTAssertTrue(FileManager.default.fileExists(atPath: first.path))
+        let pausedItem = try XCTUnwrap(player.currentItem)
         model.select(saved.items[1].id, autoPlay: false)
         model.clear()
         try await Task.sleep(nanoseconds: 300_000_000)
-        XCTAssertNil(model.player.currentItem)
+        XCTAssertTrue(player.currentItem === pausedItem, "A cancelled load must not replace the paused AirPlay item")
+        XCTAssertEqual(player.rate, 0)
         XCTAssertTrue(model.playlist.items.isEmpty)
         XCTAssertFalse(model.isPreparing)
     }
