@@ -7,6 +7,178 @@ import SwiftUI
 
 final class PlaybackTests: XCTestCase {
     @MainActor
+    func testIndexedHLSResumesAndSeeksBeforeTheSequentialRemuxCompletes() async throws {
+        try await checkIndexedHLS(hevc: false)
+    }
+
+    @MainActor
+    func testIndexedHEVCResumesAndSeeksBeforeTheSequentialRemuxCompletes() async throws {
+        try await checkIndexedHLS(hevc: true)
+        if AVPlayer.eligibleForHDRPlayback { try await checkIndexedHLS(hevc: true, hdr: true) }
+    }
+
+    @MainActor
+    private func checkIndexedHLS(hevc: Bool, hdr: Bool = false) async throws {
+        let tools = mediaTestTools()
+        let ffmpeg = try XCTUnwrap(tools.ffmpegURL)
+        let ffprobe = try XCTUnwrap(tools.ffprobeURL)
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-early-hls-test-\(UUID())")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let movie = folder.appendingPathComponent("Movie.mkv")
+        let captions = folder.appendingPathComponent("captions.srt")
+        let chapters = folder.appendingPathComponent("chapters.ffmetadata")
+        try "1\n00:00:01,000 --> 00:01:03,000\nEarly HLS caption\n".write(to: captions, atomically: true, encoding: .utf8)
+        try ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=60000\ntitle=Movie\n".write(to: chapters, atomically: true, encoding: .utf8)
+        let generator = Process()
+        generator.executableURL = hevc ? try XCTUnwrap(FFmpegTools().ffmpegURL) : ffmpeg
+        let colors = hdr
+            ? "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,400"
+            : "colorprim=bt709:transfer=bt709:colormatrix=bt709"
+        let video = hevc ? ["-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p10le",
+            "-x265-params", "pools=2:frame-threads=2:keyint=104:min-keyint=104:scenecut=0:open-gop=0:bframes=2:repeat-headers=1:log-level=error:\(colors)"]
+            : ["-c:v", "libx264", "-g", "104", "-sc_threshold", "0", "-bf", "0"]
+        generator.arguments = ["-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=c=blue:size=160x90:rate=10:duration=60",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=60",
+            "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=60",
+            "-i", captions.path, "-i", chapters.path, "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s", "-map_chapters", "4"]
+            + video + ["-c:a:0", "ac3", "-ac:a:0", "2", "-c:a:1", "eac3", "-ac:a:1", "6", "-af", "asetpts=PTS+256/SR/TB",
+                       "-metadata:s:a:0", "language=rus", "-metadata:s:a:1", "language=eng", "-c:s", "srt", movie.path]
+        generator.standardInput = FileHandle.nullDevice
+        try generator.run()
+        generator.waitUntilExit()
+        XCTAssertEqual(generator.terminationStatus, 0)
+        let metadata = try await tools.probe(url: movie)
+        XCTAssertGreaterThan(metadata.duration, 62)
+
+        try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("real-ffmpeg"), withDestinationURL: ffmpeg)
+        try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("ffprobe"), withDestinationURL: ffprobe)
+        let shim = folder.appendingPathComponent("ffmpeg")
+        try """
+            #!/bin/sh
+            set -e
+            tools_dir="$(dirname "$0")"
+            case " $* " in
+              *" .rendered_%v.m3u8 "*)
+                pwd > "$tools_dir/early-cache"
+                mkdir -p .staged/.generated
+                (cd .staged && "$tools_dir/real-ffmpeg" "$@")
+                mv .staged/init_*.mp4 .
+                if [ -f .staged/iframe-init.mp4 ]; then
+                    mv .staged/iframe-init.mp4 .
+                    mv .staged/.generated/iframe-000000.m4s .generated
+                fi
+                mv .staged/.generated/segment_*_000000.m4s .staged/.generated/segment_*_000001.m4s .generated
+                attempts=0
+                until [ -f "$tools_dir/finish-early" ]; do
+                    attempts=$((attempts + 1))
+                    [ "$attempts" -lt 200 ] || exit 1
+                    sleep 0.05
+                done
+                mv .staged/.generated/*.m4s .generated
+                mv .staged/.rendered_*.m3u8 .
+                if [ -f .staged/.rendered-iframe.m3u8 ]; then mv .staged/.rendered-iframe.m3u8 .; fi
+                exit 0 ;;
+            esac
+            exec "$tools_dir/real-ffmpeg" "$@"
+            """.write(to: shim, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shim.path)
+        let suite = "app.beamly.early-hls-test.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(folder.path, forKey: "toolsDirectory")
+        defaults.set("off", forKey: "preferredSubtitleLanguage")
+        var queue = Playlist()
+        queue.append([movie])
+        queue.items[0].position = 35
+        queue.items[0].duration = 60
+        let state = folder.appendingPathComponent("queue.json")
+        try JSONEncoder().encode(queue).write(to: state)
+        let player = AirPlayTestPlayer()
+        player.isMuted = true
+        player.setExternalPlaybackActive(true)
+        let model = AppModel(stateURL: state, defaults: defaults, player: player)
+        defer { model.shutdown() }
+
+        model.togglePlay()
+        try await wait(diagnostic: model.errorMessage ?? model.playbackStatus) {
+            player.timeControlStatus == .playing && !model.isPreparing
+        }
+        let earlyItem = try XCTUnwrap(player.currentItem)
+        let cachePath = try String(contentsOf: folder.appendingPathComponent("early-cache"), encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let cache = URL(fileURLWithPath: cachePath, isDirectory: true)
+        let master = try String(contentsOf: cache.appendingPathComponent("master.m3u8"), encoding: .utf8)
+        XCTAssertTrue(master.contains("VIDEO-RANGE=\(hdr ? "PQ" : "SDR")"))
+        XCTAssertTrue(master.contains(hevc ? "hvc1.2." : "avc1."))
+        XCTAssertTrue(master.contains("ac-3"))
+        XCTAssertTrue(master.contains("ec-3"))
+        let manifest = try String(contentsOf: cache.appendingPathComponent("stream_0.m3u8"), encoding: .utf8)
+        let last = try XCTUnwrap(manifest.split(separator: "\n").last { $0.hasSuffix(".m4s") })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cache.appendingPathComponent(String(last)).path))
+        XCTAssertTrue(manifest.contains("#EXT-X-ENDLIST"))
+        XCTAssertEqual(player.currentTime().seconds, 35, accuracy: 0.6)
+        XCTAssertEqual(earlyItem.duration.seconds, 60, accuracy: 0.1)
+        XCTAssertEqual(model.duration, 60, accuracy: 0.1)
+        let seekable = earlyItem.seekableTimeRanges.map { $0.timeRangeValue.end.seconds }.max() ?? 0
+        XCTAssertEqual(seekable, 60, accuracy: 0.1)
+        let captionsGroup = try await earlyItem.asset.loadMediaSelectionGroup(for: .legible)
+        XCTAssertEqual(captionsGroup?.options.count, 1)
+        let loadedAudio = try await earlyItem.asset.loadMediaSelectionGroup(for: .audible)
+        let audioGroup = try XCTUnwrap(loadedAudio)
+        XCTAssertEqual(audioGroup.options.count, 2)
+        let english = try XCTUnwrap(audioGroup.options.first { MediaLanguages.normalized($0.extendedLanguageTag) == "en" })
+        earlyItem.select(english, in: audioGroup)
+        try await wait { model.audioID == 2 }
+        XCTAssertTrue(player.currentItem === earlyItem)
+
+        let lastSegment = cache.appendingPathComponent(String(last))
+        model.seek(58)
+        try await wait {
+            FileManager.default.fileExists(atPath: lastSegment.path)
+                && player.currentTime().seconds >= 58.15 && player.timeControlStatus == .playing
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cache.appendingPathComponent(".rendered_0.m3u8").path))
+        XCTAssertTrue(player.currentItem === earlyItem)
+        let audioManifest = try String(contentsOf: cache.appendingPathComponent("stream_2.m3u8"), encoding: .utf8)
+        let lastAudioName = try XCTUnwrap(audioManifest.split(separator: "\n").last { $0.hasSuffix(".m4s") })
+        let lastAudio = cache.appendingPathComponent(String(lastAudioName))
+        try await wait { FileManager.default.fileExists(atPath: lastAudio.path) }
+        for (index, segment) in [(0, lastSegment), (2, lastAudio)] {
+            let initialization = try Data(contentsOf: cache.appendingPathComponent("init_\(index).mp4"))
+            let sequential = cache.appendingPathComponent(".staged/.generated").appendingPathComponent(segment.lastPathComponent)
+            let probeInput = folder.appendingPathComponent("fragment.mp4")
+            func packets(_ segment: URL) throws -> [Substring] {
+                try (initialization + Data(contentsOf: segment)).write(to: probeInput)
+                let probe = Process()
+                let output = Pipe()
+                probe.executableURL = ffprobe
+                probe.arguments = ["-v", "error", "-show_entries", "packet=stream_index,pts,dts,duration,data_hash",
+                                   "-show_data_hash", "sha256", "-of", "compact", probeInput.path]
+                probe.standardOutput = output
+                try probe.run()
+                let rows = output.fileHandleForReading.readDataToEndOfFile()
+                probe.waitUntilExit()
+                XCTAssertEqual(probe.terminationStatus, 0)
+                return String(decoding: rows, as: UTF8.self).split(separator: "\n").sorted()
+            }
+            XCTAssertTrue(try packets(segment) == packets(sequential), "Priority packets must match the sequential remux")
+        }
+        model.seek(0)
+        try await wait { player.currentTime().seconds < 1 && player.timeControlStatus == .playing }
+
+        try Data().write(to: folder.appendingPathComponent("finish-early"))
+        NotificationCenter.default.post(name: .AVPlayerItemFailedToPlayToEndTime, object: earlyItem)
+        try await wait(diagnostic: model.errorMessage ?? "") {
+            player.currentItem !== earlyItem && player.timeControlStatus == .playing && !model.isPreparing
+        }
+        XCTAssertTrue(model.isUsingHLS)
+        XCTAssertTrue(model.isVideoCopied)
+        XCTAssertEqual(player.emptyReplacements, 0)
+        XCTAssertNil(model.errorMessage)
+    }
+
+    @MainActor
     func testSelectedAirPlayRouteSurvivesStartTrackChangesAndReconnection() async throws {
         let tools = mediaTestTools()
         let ffmpeg = try XCTUnwrap(tools.ffmpegURL)
@@ -398,6 +570,17 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(player.prerollCalls, 0)
         model.airPlayPickerPresentationChanged(false)
         XCTAssertEqual(player.prerollCalls, 1, "Prime the player after a possible receiver selection")
+        XCTAssertFalse(model.isPlaying, "Play must remain available until the receiver is confirmed")
+        let preparedItem = try XCTUnwrap(player.currentItem)
+        model.togglePlay()
+        XCTAssertTrue(model.isAirPlayPickerRequested, "Pressing Play again after dismissal must open the picker immediately")
+        XCTAssertFalse(model.isConnectingAirPlay)
+        XCTAssertTrue(player.currentItem === preparedItem)
+        XCTAssertEqual(player.prerollCalls, 1)
+        XCTAssertEqual(player.playCalls, 0)
+        model.isAirPlayPickerRequested = false
+        model.airPlayPickerPresentationChanged(true)
+        model.airPlayPickerPresentationChanged(false)
         try await Task.sleep(for: .seconds(3.1))
         XCTAssertFalse(model.isAirPlayPickerRequested, "Dismissing the picker must not reopen it for the same Play request")
         XCTAssertEqual(player.currentTime().seconds, pausedTime, accuracy: 0.1, "Preroll must not advance the movie without a receiver")
@@ -406,6 +589,8 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(player.playCalls, 0)
         player.setExternalPlaybackActive(true)
         try await wait { model.isPlaying }
+        model.togglePlay()
+        try await wait { !model.isPlaying }
         model.airPlayPickerPresentationChanged(true)
         player.setExternalPlaybackActive(false)
         try await wait { !model.isPlaying && !model.isExternal }
@@ -415,7 +600,7 @@ final class PlaybackTests: XCTestCase {
         model.togglePlay()
         XCTAssertEqual(player.playCalls, callsAfterDisconnect)
         XCTAssertNil(model.errorMessage)
-        XCTAssertTrue(model.isAirPlayPickerRequested)
+        XCTAssertTrue(model.isAirPlayPickerRequested, "Deselecting a paused receiver must also allow an immediate retry")
         player.setExternalPlaybackActive(true)
         try await wait { model.isExternal && model.isPlaying }
         model.togglePlay()

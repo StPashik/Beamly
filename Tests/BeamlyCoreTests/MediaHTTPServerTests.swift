@@ -106,6 +106,31 @@ final class MediaHTTPServerTests: XCTestCase {
         XCTAssertEqual(emptyRange.statusCode, 416)
     }
 
+    func testPendingHLSSegmentKeepsServingOtherRequests() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let segment = "segment_000001.m4s"
+        let playlist = Data("#EXTM3U\n#EXTINF:10,\n\(segment)\n#EXT-X-ENDLIST\n".utf8)
+        try playlist.write(to: directory.appendingPathComponent("stream.m3u8"))
+        let server = MediaHTTPServer()
+        try await server.start()
+        defer { server.stop() }
+        let url = try loopback(server.publish(directory: directory, pendingFiles: [segment]))
+        let base = url.deletingLastPathComponent()
+        async let delayed = request(base.appendingPathComponent(segment), range: "bytes=1-2")
+        let (body, response) = try await request(url)
+        XCTAssertEqual(response.statusCode, 200)
+        XCTAssertEqual(body, playlist)
+        let (_, missing) = try await request(base.appendingPathComponent("unknown.m4s"))
+        XCTAssertEqual(missing.statusCode, 404)
+        try await Task.sleep(for: .milliseconds(150))
+        try Data([0, 1, 2, 3]).write(to: directory.appendingPathComponent(segment), options: .atomic)
+        let (bytes, partial) = try await delayed
+        XCTAssertEqual(partial.statusCode, 206)
+        XCTAssertEqual(bytes, Data([1, 2]))
+    }
+
     private func loopback(_ url: URL) throws -> URL {
         var components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
         components.host = "127.0.0.1"
