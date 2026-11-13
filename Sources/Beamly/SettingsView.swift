@@ -4,6 +4,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var updater: AppUpdater
+    @Binding var showMenuBarIcon: Bool
     @AppStorage("autoPlay") private var autoPlay = true
     @AppStorage("directPlayback") private var directPlayback = true
     @AppStorage("hardwareEncoding") private var hardwareEncoding = true
@@ -66,6 +67,8 @@ struct SettingsView: View {
                     Text("Light").tag("light")
                     Text("Dark").tag("dark")
                 }.pickerStyle(.segmented)
+                Toggle("Show icon in menu bar", isOn: $showMenuBarIcon)
+                    .toggleStyle(.checkbox)
             }
             Section("FFmpeg") {
                 LabeledContent("ffmpeg") { Text(tools.ffmpegURL?.path ?? NSLocalizedString("Not found", comment: "")).textSelection(.enabled) }
