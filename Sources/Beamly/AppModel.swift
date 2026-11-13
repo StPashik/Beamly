@@ -54,7 +54,7 @@ final class AppModel: ObservableObject {
     private var muteBeforeRouteRestart: Bool?
     private var shouldShowAirPlayPicker = false
     private var isAirPlayPickerPresented = false
-    private enum AirPlayRouteHint { case none, pickerSelection, confirmed, stopped }
+    private enum AirPlayRouteHint { case none, pickerSelection, selectionBeforePlay, confirmed, stopped }
     private var airPlayRouteHint = AirPlayRouteHint.none
     private var previewTask: Task<Void, Never>?
     private var seekPreviewTask: Task<Void, Never>?
@@ -327,7 +327,7 @@ final class AppModel: ObservableObject {
         isAirPlayPickerPresented = isPresented
         if isPresented {
             // AVKit reports presentation without saying whether the user selected a route.
-            airPlayRouteHint = .pickerSelection
+            airPlayRouteHint = player.currentItem == nil && !playRequested ? .selectionBeforePlay : .pickerSelection
             shouldShowAirPlayPicker = false
             if routePreparation != nil { cancelRoutePreparation() }
         } else if playRequested {
@@ -354,6 +354,7 @@ final class AppModel: ObservableObject {
         guard !isPreparing, player.status == .readyToPlay, player.currentItem?.status == .readyToPlay else { return }
         guard player.isExternalPlaybackActive else {
             guard airPlayRouteHint != .none, !isAirPlayPickerPresented, routePreparation == nil else { return }
+            if airPlayRouteHint == .selectionBeforePlay { airPlayRouteHint = .pickerSelection }
             isConnectingAirPlay = true
             let generation = loadID
             routePreparation = Task { [weak self] in
@@ -680,6 +681,7 @@ final class AppModel: ObservableObject {
     private func prepare(at start: Double, autoPlay: Bool, applyTrackPreferences: Bool = false, retrying: PlaybackRetry? = nil) {
         guard let movie = current else { return }
         let showPicker = shouldShowAirPlayPicker
+        let pendingStartupPicker = player.currentItem == nil && isAirPlayPickerRequested
         cancelPlayback(keepingItem: true)
         // Cancellation is cooperative; this ID also rejects callbacks from an older load.
         let generation = loadID
@@ -688,6 +690,8 @@ final class AppModel: ObservableObject {
         preparationStage = .readingFile
         playRequested = autoPlay
         shouldShowAirPlayPicker = autoPlay && showPicker
+        // A file opened by Finder can arrive before the launch picker has presented.
+        if pendingStartupPicker { isAirPlayPickerRequested = true }
         position = start
         let preferences = TrackPreferences(audio: defaults.string(forKey: "preferredAudioLanguage") ?? "default",
                                            subtitles: defaults.string(forKey: "preferredSubtitleLanguage") ?? "automatic")

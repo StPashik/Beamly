@@ -12,6 +12,7 @@ let beamlyAccentColor = Color(nsColor: beamlyAccent)
 
 struct ContentView: View {
     @ObservedObject var model: AppModel
+    var onWindowReady: () -> Void = {}
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.openWindow) private var openWindow
     @State private var dropping = false
@@ -79,7 +80,10 @@ struct ContentView: View {
             .help(model.status)
         }
         .padding(.horizontal, 16).frame(height: 48)
-        .background(WindowChrome { window = $0 })
+        .background(WindowChrome {
+            window = $0
+            onWindowReady()
+        })
     }
 
     private var emptyState: some View {

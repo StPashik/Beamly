@@ -18,7 +18,7 @@ struct BeamlyApp: App {
 
     var body: some Scene {
         Window("Beamly", id: "main") {
-            ContentView(model: model)
+            ContentView(model: model, onWindowReady: { delegate.mainWindowDidOpen(model) })
                 .environment(\.locale, Locale(identifier: language.rawValue))
                 .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
                 .onAppear { delegate.attach(model) }
@@ -79,6 +79,14 @@ struct BeamlyApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private weak var model: AppModel?
     private var pending: [URL] = []
+    private var didOpenMainWindow = false
+
+    func mainWindowDidOpen(_ model: AppModel) {
+        attach(model)
+        guard !didOpenMainWindow else { return }
+        didOpenMainWindow = true
+        if !model.player.isExternalPlaybackActive { model.isAirPlayPickerRequested = true }
+    }
 
     func attach(_ model: AppModel) {
         self.model = model

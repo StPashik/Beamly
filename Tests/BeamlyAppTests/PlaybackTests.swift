@@ -265,11 +265,22 @@ final class PlaybackTests: XCTestCase {
 
         let player = AirPlayTestPlayer()
         player.losesRouteWhenEmptied = true
-        player.setExternalPlaybackActive(true)
         let model = AppModel(stateURL: folder.appendingPathComponent("queue.json"), defaults: defaults, player: player)
         defer { model.shutdown() }
+        let delegate = AppDelegate()
+        delegate.mainWindowDidOpen(model)
+        XCTAssertTrue(model.isAirPlayPickerRequested)
+        model.isAirPlayPickerRequested = false
+        model.airPlayPickerPresentationChanged(true)
+        model.airPlayPickerPresentationChanged(false)
+        XCTAssertNil(player.currentItem)
+        XCTAssertEqual(player.playCalls, 0)
+        player.activatesRouteDuringPreroll = true
         model.add([first])
         try await wait { model.isExternal && model.isPlaying && player.currentTime().seconds > 0.1 }
+        XCTAssertEqual(player.prerollCalls, 1)
+        XCTAssertFalse(model.isAirPlayPickerRequested)
+        player.activatesRouteDuringPreroll = false
         let oldURL = try XCTUnwrap((player.currentItem?.asset as? AVURLAsset)?.url)
 
         model.clear()
@@ -358,7 +369,6 @@ final class PlaybackTests: XCTestCase {
         let player = AirPlayTestPlayer()
         player.isMuted = true
         player.losesRouteWhenEmptied = true
-        player.setExternalPlaybackActive(true)
         let model = AppModel(stateURL: state, defaults: defaults, player: player)
         defer { model.shutdown(); defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
         let session = URLSession(configuration: .ephemeral)
@@ -368,8 +378,21 @@ final class PlaybackTests: XCTestCase {
         defer { observation.cancel() }
         func readyAndPlaying() -> Bool { !model.isPreparing && player.currentItem?.status == .readyToPlay && player.rate > 0 && model.isPlaying }
 
+        // The receiver selected at launch may only become active when the first movie is ready.
+        AppDelegate().mainWindowDidOpen(model)
+        model.togglePlay()
+        XCTAssertTrue(model.isAirPlayPickerRequested, "File preparation must preserve the pending launch picker")
+        XCTAssertTrue(model.isPreparing)
+        model.togglePlay()
+        XCTAssertFalse(model.isPreparing)
+        model.isAirPlayPickerRequested = false
+        pickerRequests = 0
+        model.airPlayPickerPresentationChanged(true)
+        model.airPlayPickerPresentationChanged(false)
+        player.activatesRouteDuringPreroll = true
         model.togglePlay()
         XCTAssertTrue(model.isPreparing)
+        XCTAssertFalse(model.isAirPlayPickerRequested)
         model.togglePlay()
         XCTAssertFalse(model.isPreparing)
         XCTAssertEqual(model.position, 8, "Cancelling preparation must keep the resume position")
@@ -387,12 +410,12 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(player.currentTime().seconds, 8, accuracy: 1)
         model.togglePlay()
         try await wait { !model.isPlaying }
+        let prerollCalls = player.prerollCalls
         player.setExternalPlaybackActive(false)
         try await wait { !model.isExternal }
-        player.activatesRouteDuringPreroll = true
         model.togglePlay()
         try await wait { readyAndPlaying() }
-        XCTAssertGreaterThan(player.prerollCalls, 0, "A paused selected route can become active during rate-zero preparation")
+        XCTAssertGreaterThan(player.prerollCalls, prerollCalls, "A paused selected route can become active during rate-zero preparation")
 
         player.resetsRouteOnReplacement = true
         let fallbackPosition = model.position
