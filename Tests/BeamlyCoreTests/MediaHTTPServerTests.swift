@@ -3,15 +3,15 @@ import XCTest
 
 final class MediaHTTPServerTests: XCTestCase {
     func testByteRangeBoundaries() {
-        XCTAssertEqual(MediaHTTPServer.byteRange("bytes=2-4", size: 10), 2...4)
-        XCTAssertEqual(MediaHTTPServer.byteRange("bytes=7-", size: 10), 7...9)
-        XCTAssertEqual(MediaHTTPServer.byteRange("bytes=-3", size: 10), 7...9)
-        XCTAssertEqual(MediaHTTPServer.byteRange("bytes=-100", size: 10), 0...9)
-        XCTAssertEqual(MediaHTTPServer.byteRange("bytes=8-100", size: 10), 8...9)
+        XCTAssertEqual(MediaHTTPRequest.byteRange("bytes=2-4", size: 10), 2...4)
+        XCTAssertEqual(MediaHTTPRequest.byteRange("bytes=7-", size: 10), 7...9)
+        XCTAssertEqual(MediaHTTPRequest.byteRange("bytes=-3", size: 10), 7...9)
+        XCTAssertEqual(MediaHTTPRequest.byteRange("bytes=-100", size: 10), 0...9)
+        XCTAssertEqual(MediaHTTPRequest.byteRange("bytes=8-100", size: 10), 8...9)
         for range in ["bytes=10-", "bytes=5-2", "bytes=-0", "bytes=-", "bytes=1-2,4-5", "bytes=+1-2", "items=1-2", "bytes=18446744073709551616-"] {
-            XCTAssertNil(MediaHTTPServer.byteRange(range, size: 10), range)
+            XCTAssertNil(MediaHTTPRequest.byteRange(range, size: 10), range)
         }
-        XCTAssertNil(MediaHTTPServer.byteRange("bytes=0-", size: 0))
+        XCTAssertNil(MediaHTTPRequest.byteRange("bytes=0-", size: 0))
     }
 
     func testPublishedMovieHTTPContract() async throws {

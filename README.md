@@ -29,7 +29,7 @@ A native macOS player for sending local videos to Apple TV and other AirPlay rec
 
 Chromecast is not supported. See [video quality and AirPlay](Docs/Media-Streaming.md) for supported profiles, subtitles, audio, and verification limits.
 
-**4K HLG and HDR10 playback were tested on Apple TV 4K.** Compatibility depends on the receiver, display, network, and source file.
+Apple TV 4K trials included 4K HLG and HDR10. An HDR10 MKV nature clip played without hanging, while some synthetic 4K HDR10 MKV samples stalled at HLS startup. Compatibility depends on the receiver, display, network, and source file.
 
 ## Requirements
 
@@ -51,17 +51,17 @@ When using Beamly 1.0.0, select the `ffmpeg-full` bin folder in Settings if it i
 
 ### Download
 
-1. Download `Beamly-1.0.13-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
+1. Download `Beamly-1.1.0-universal.zip` from [Releases](https://github.com/StPashik/Beamly/releases/latest).
 2. Extract it and move **Beamly.app** to **Applications**, or to your personal `~/Applications` folder.
 3. See [First launch](#first-launch) before opening a downloaded build.
 
 To verify the app ZIP, download `SHA256SUMS` from the same release and run this in the download directory:
 
 ```sh
-awk '$2 == "Beamly-1.0.13-universal.zip"' SHA256SUMS | shasum -a 256 -c -
+awk '$2 == "Beamly-1.1.0-universal.zip"' SHA256SUMS | shasum -a 256 -c -
 ```
 
-The same checksum file also lists `Beamly-FFmpeg-Sources-1.0.13.tar.xz`, the complete corresponding source for the bundled media tools. If both archives are downloaded, `shasum -a 256 -c SHA256SUMS` verifies both.
+The same checksum file also lists `Beamly-FFmpeg-Sources-1.1.0.tar.xz`, the complete corresponding source for the bundled media tools. If both archives are downloaded, `shasum -a 256 -c SHA256SUMS` verifies both.
 
 ### Homebrew
 
@@ -79,7 +79,7 @@ The cask installs the universal app and verifies the archive's pinned SHA-256 ch
 With Node.js 18 or later and npm installed (omit `--allow-git=root` on npm 11 or earlier):
 
 ```sh
-npm install --global --allow-git=root github:StPashik/Beamly#v1.0.13
+npm install --global --allow-git=root github:StPashik/Beamly#v1.1.0
 beamly install
 beamly
 ```
@@ -99,8 +99,8 @@ Allow local-network access and incoming connections if macOS asks. An AirPlay re
 ## Use
 
 1. Connect the Mac and receiver to the same network.
-2. Click **AirPlay** in the top-right corner and select the receiver.
-3. Drop a video or folder into the window, or press **⌘O**. Playback starts only after an AirPlay device is connected; disconnecting pauses the player. Pressing Play first prepares an already selected AirPlay route without starting local playback. If no connection becomes active within three seconds, it opens the device picker; playback begins after you connect a receiver.
+2. Open Beamly and select your receiver from the AirPlay list. You can dismiss the list and reopen it anytime using **AirPlay** in the top-right corner.
+3. Drop a video or folder into the window, or press **⌘O**. Beamly plays on the selected receiver. **Clear** closes the player on Apple TV, and the next video uses the same receiver if it is still available.
 4. Use the audio and subtitles menus beside the timeline to choose tracks.
 
 Beamly finds SRT, ASS, SSA, and VTT files beside the video when their names match, for example `Movie.mkv` with `Movie.srt` or `Movie.ru.srt`. It selects an exact-basename match or the only matching file automatically. When several language files match, choose one in the subtitles menu.

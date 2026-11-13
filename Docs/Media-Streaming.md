@@ -2,11 +2,11 @@
 
 Beamly uses AVPlayer and the system AirPlay picker. The quality-preserving path targets Apple TV 4K. Receiver generations, tvOS versions, display capabilities, and network bandwidth still affect playback. A 4K output mode on the television does not by itself prove that its input stream is 4K.
 
-**4K HLG and HDR10 playback were tested on Apple TV 4K.** The HLG trial also confirmed AC-3 audio and seeking across the full timeline. Other receivers and source profiles may behave differently.
+On Apple TV 4K, a 4K HLG stream played with AC-3 audio and could seek across the full timeline. An HDR10 MKV nature clip played without hanging. Some synthetic 4K HDR10 MKV samples stalled at HLS startup. A matching HDR10 MP4 played with picture and sound, with the TV's HDR output mode unverified in that trial.
 
 ## Playback paths
 
-With **Preserve video quality** enabled (the default), compatible MP4/M4V/MOV files are published unchanged. For supported HEVC or H.264 files that use HLS, FFmpeg copies the compressed video into fragmented MP4 segments. No video encoder, resizing, color conversion, or subtitle filter runs in this path. The interface reports **Original video quality**; the metadata row describes the source file.
+With **Preserve video quality** enabled (the default), compatible MP4/M4V/MOV files are published unchanged. A player error on the direct stream retries through HLS at the current position. For supported HEVC or H.264 files that use HLS, FFmpeg copies the compressed video into fragmented MP4 segments. No video encoder, resizing, color conversion, or subtitle filter runs in this path. The interface reports **Original video quality**; the metadata row describes the source file.
 
 On the regular preparation path, Beamly can prepare a temporary MP4 for a supported H.264 MKV with a selected Dolby Digital or Dolby Digital Plus surround track when the file has no embedded text captions or compatible alternate audio, subtitles are off, and audio timing is unadjusted. FFmpeg copies the video and selected audio. The MP4 index gives AVPlayer the full movie and the saved position is applied as a seek. If the MP4 cannot be prepared or played, Beamly uses HLS.
 
@@ -22,6 +22,8 @@ The app's audio menu chooses the source track by its global stream index. When a
 
 Beamly copies compatible AAC-LC and converts other formats to stereo AAC. When conversion is needed in original-quality HLS, FFmpeg tries AudioToolbox first and then its built-in AAC encoder if AudioToolbox fails. DTS/TrueHD/Atmos conversion or passthrough is not promised. Audio conversion is independent of video and preserves its resolution.
 
+The fast HLS path checks the start and end of each Dolby track independently. It keeps the timing of compatible tracks that start slightly late and can fill a missing tail of up to two minutes on compatible 48 kHz stereo AC-3 tracks. The added fragments contain silence in the same format, and the source audio packets are copied unchanged. If an alternate track does not fit the fast path, it remains available in Beamly's audio menu. Selecting it uses regular preparation at the current position.
+
 Apple TV and Beamly can switch between the audio tracks published in the current HLS stream. Choosing a track that requires conversion in Beamly prepares a new stream at the current position. Source files are read in place.
 
 Beamly updates its audio and subtitle menus when AVPlayer reports a selection made on the receiver. This also applies to files played directly through AVPlayer.
@@ -34,7 +36,7 @@ Beamly updates its audio and subtitle menus when AVPlayer reports a selection ma
 
 Original-quality HLS includes each readable embedded text subtitle track and any selected external SRT/ASS/SSA/WebVTT file as separate named WebVTT renditions. Apple TV can switch among these tracks or turn captions off during playback. Each WebVTT file includes `X-TIMESTAMP-MAP`, keeping captions available across the full timeline. Video packets are copied. WebVTT simplifies ASS animation, fonts, and complex positioning. Bitmap formats such as PGS/VobSub require the explicit compatibility conversion and burn-in.
 
-Beamly extracts embedded text tracks in one pass. With early HLS, the caption tracks appear at startup and their contents become available when extraction finishes. Subtitle intermediates stay in the private `.inputs` directory. Beamly sets the initial caption selection in AVPlayer using the app's preferences.
+Early HLS supports selected text captions and their timing corrections. Beamly extracts embedded text tracks alongside video preparation, and reads an external subtitle file independently. If an optional caption fails to extract, Beamly preserves the advertised timeline and the movie continues. Subtitle intermediates stay in the private `.inputs` directory. Beamly sets the initial caption selection in AVPlayer using the app's preferences.
 
 When selecting a video, Beamly scans only its containing folder for readable SRT, ASS, SSA, and VTT files. Names must match the video basename exactly or append a dot-separated suffix, such as `Movie.ru.srt`; similarly prefixed movies do not match. An exact-basename file takes priority, and a single match is selected automatically. Multiple language files remain available in the subtitle menu without guessing a preferred language.
 
@@ -58,7 +60,9 @@ During playback, Beamly observes both AVPlayer's `timeControlStatus` and `reason
 
 During an item replacement, the retained AVPlayer keeps its paused current item and the old stream available until the new item is ready and its source position has been restored. This avoids clearing the selected AirPlay route between audio/subtitle changes, seeks, and queue transitions. Superseded preparation is cancelled; Stop and shutdown also revoke the retained stream.
 
-When no receiver is known, a manual Play request opens the native AirPlay picker while the movie is preparing. Beamly can prime the ready player at rate zero for up to three seconds after a possible selection or when resuming a previously confirmed route. After the picker closes without an active receiver, pressing Play again reopens it immediately and reuses any prepared stream. `AVPlayer.isExternalPlaybackActive` must confirm the external route before Beamly calls `play()`. Genuine disconnection during playback pauses and clears play intent. A temporary route transition during preparation retains that intent.
+Beamly opens the native AirPlay picker when its main window first appears. You can choose a receiver before adding a movie. When no receiver is known, a manual Play request opens the picker while the movie is preparing. Beamly can prime the ready player at rate zero for up to three seconds after a possible selection or when resuming a previously confirmed route. After the picker closes without an active receiver, pressing Play again reopens it immediately and reuses any prepared stream. Genuine disconnection during playback pauses and clears play intent. A temporary route transition during preparation retains that intent.
+
+Clear closes the Apple TV player and revokes the old stream. After clearing an active AirPlay session, Beamly can start the next item muted for up to three seconds so AVPlayer can reactivate the selected receiver. Audio resumes when AVPlayer reports active external playback. If the receiver is unavailable, Beamly pauses, restores the starting position, and opens the picker.
 
 ## Chapters and seek previews
 
@@ -102,7 +106,7 @@ Automated checks use generated media, never personal movies:
 - signed audio corrections with AAC and surround, original 4K frame/HDR metadata preservation, caption clocks, conversion, source-duration bounds, and seeks beyond shifted audio.
 - history migration, completed-video restart, queue removal/re-addition, persisted history clearing, and shared mini-remote controls/window lifecycle.
 
-Physical Apple TV 4K trials used a 1080p H.264 MKV with Dolby Digital Plus. They verified opening the AirPlay picker during preparation, resuming with sound, and seeking back to the beginning with the receiver remote. Dolby HLS trials verified audio and subtitle changes from the remote, including updates to Beamly's selection while paused. The I-frame test build showed thumbnails that changed as the viewer scrubbed with the remote. Hardware validation of 4K/HDR and Atmos speaker output remains pending.
+Physical Apple TV 4K trials used a 1080p H.264 MKV with Dolby Digital Plus. They verified opening the AirPlay picker during preparation, resuming with sound, and seeking back to the beginning with the receiver remote. Dolby HLS trials verified audio and subtitle changes from the remote, including updates to Beamly's selection while paused. The I-frame test build showed thumbnails that changed as the viewer scrubbed with the remote. Atmos speaker output remains unverified.
 
 The early HLS trial on Apple TV used a 1080p H.264 MKV with AC-3 audio. The full timeline was visible at startup, and the viewer sought near the end and back to the beginning.
 

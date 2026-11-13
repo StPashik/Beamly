@@ -7,6 +7,33 @@ import XCTest
 
 final class WindowAppearanceTests: XCTestCase {
     @MainActor
+    func testLaunchRequestsAirPlayWhenTheMainWindowFirstOpens() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-launch-picker-\(UUID())")
+        let model = AppModel(stateURL: folder.appendingPathComponent("queue.json"))
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: folder) }
+        let delegate = AppDelegate()
+
+        delegate.attach(model)
+        XCTAssertFalse(model.isAirPlayPickerRequested, "Opening the menu bar remote must leave the picker closed")
+        delegate.mainWindowDidOpen(model)
+        XCTAssertTrue(model.isAirPlayPickerRequested)
+        XCTAssertNil(model.player.currentItem)
+        XCTAssertFalse(model.isPreparing)
+        XCTAssertEqual(model.player.rate, 0)
+
+        model.isAirPlayPickerRequested = false
+        delegate.mainWindowDidOpen(model)
+        XCTAssertFalse(model.isAirPlayPickerRequested, "Reopening the main window must leave the picker closed")
+
+        let routedPlayer = AirPlayTestPlayer()
+        routedPlayer.setExternalPlaybackActive(true)
+        let routedModel = AppModel(stateURL: folder.appendingPathComponent("routed-queue.json"), player: routedPlayer)
+        defer { routedModel.shutdown() }
+        AppDelegate().mainWindowDidOpen(routedModel)
+        XCTAssertFalse(routedModel.isAirPlayPickerRequested, "An active receiver makes a launch picker unnecessary")
+    }
+
+    @MainActor
     func testHistoryUsesBeamlyWindowMaterialAndChromeInBothAppearances() async throws {
         _ = NSApplication.shared
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Beamly-history-window-\(UUID())")
