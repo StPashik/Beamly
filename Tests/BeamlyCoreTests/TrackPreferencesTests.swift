@@ -68,8 +68,8 @@ final class TrackPreferencesTests: XCTestCase {
         XCTAssertTrue(info.audioTracks[1].isDefault)
         XCTAssertTrue(info.audioTracks[1].isCommentary)
         XCTAssertTrue(info.subtitleTracks[0].isForced)
-        let arguments = HLSJob.arguments(input: URL(fileURLWithPath: "/tmp/Movie.mkv"), info: info, audioTrack: nil,
-                                         subtitleRendering: nil, startTime: 0, hardwareEncoding: false)
+        let arguments = FFmpegArguments.compatibilityHLS(input: URL(fileURLWithPath: "/tmp/Movie.mkv"), info: info, audioTrack: nil,
+            subtitleRendering: nil, startTime: 0, hardwareEncoding: false)
         XCTAssertTrue(arguments.contains("0:5"))
         XCTAssertFalse(arguments.contains("0:2"))
         let legacy = try JSONDecoder().decode(MediaTrack.self, from: Data(#"{"id":2,"codec":"aac","language":"rus"}"#.utf8))
